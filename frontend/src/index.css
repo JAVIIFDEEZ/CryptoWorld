@@ -1,0 +1,23 @@
+/* index.css — Estilos globales Tailwind + variables CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg: #0f172a;
+    --color-surface: #1e293b;
+    --color-border: #334155;
+    --color-text: #f1f5f9;
+    --color-muted: #94a3b8;
+  }
+
+  body {
+    @apply bg-slate-900 text-slate-100 font-sans;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    @apply border-slate-700;
+  }
+}

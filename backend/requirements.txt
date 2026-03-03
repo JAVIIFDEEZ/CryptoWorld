@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────
+# requirements.txt — Dependencias del backend CryptoWorld
+#
+# Organizado por categorías para facilitar mantenimiento.
+# Fijar versiones exactas garantiza reproducibilidad.
+# ─────────────────────────────────────────────────────────────────
+
+# ── Framework principal ───────────────────────────────────────────
+Django==5.0.6
+djangorestframework==3.15.2
+
+# ── Base de datos ─────────────────────────────────────────────────
+psycopg2-binary==2.9.9          # Driver PostgreSQL para Python
+
+# ── Autenticación JWT ─────────────────────────────────────────────
+djangorestframework-simplejwt==5.3.1
+
+# ── CORS ──────────────────────────────────────────────────────────
+django-cors-headers==4.4.0
+
+# ── Variables de entorno ──────────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── Testing ───────────────────────────────────────────────────────
+pytest==8.2.2
+pytest-django==4.8.0
+pytest-cov==5.0.0               # Cobertura de código
+factory-boy==3.3.1              # Generación de datos de prueba
+
+# ── Servidor de producción ────────────────────────────────────────
+gunicorn==22.0.0

@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════════
+# docker-compose.yml — Orquestación de servicios CryptoWorld
+#
+# Servicios:
+#   postgres  → Base de datos PostgreSQL
+#   backend   → API Django corriendo en puerto 8000
+#   frontend  → SPA React servida en puerto 5173 (dev) / 80 (prod)
+#
+# Uso:
+#   docker compose up --build      # Primera vez o tras cambios
+#   docker compose up              # Rearranque rápido
+#   docker compose down            # Parar y eliminar contenedores
+#   docker compose logs backend    # Ver logs del backend
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cryptoworld_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-cryptoworld_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      # Persistir datos entre reinicios
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend Django ───────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres      # Nombre del servicio Docker, no localhost
+    ports:
+      - "8000:8000"
+    volumes:
+      # Hot-reload en desarrollo: montar src local en el contenedor
+      - ./backend/src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "
+        cd src &&
+        python manage.py migrate --noinput &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+
+  # ── Frontend React (desarrollo) ──────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000/api
+    container_name: cryptoworld_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+    driver: local
