@@ -19,11 +19,47 @@ urlpatterns = [
     # ── Health ─────────────────────────────────────────────────────
     path("health/", views.HealthCheckView.as_view(), name="health-check"),
 
-    # ── Auth ────────────────────────────────────────────────────────
+    # ── Auth — Registro y login ─────────────────────────────────────
     path("auth/register/", views.RegisterView.as_view(), name="auth-register"),
     path("auth/login/", views.LoginView.as_view(), name="auth-login"),
+    path("auth/logout/", views.LogoutView.as_view(), name="auth-logout"),
+    path("auth/me/", views.MeView.as_view(), name="auth-me"),
+
     # Renovar access_token usando refresh_token (SimpleJWT built-in)
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
+
+    # ── Auth — Verificación de email ───────────────────────────────
+    path("auth/verify-email/", views.VerifyEmailView.as_view(), name="auth-verify-email"),
+    path(
+        "auth/verify-email/resend/",
+        views.ResendVerificationEmailView.as_view(),
+        name="auth-verify-email-resend",
+    ),
+
+    # ── Auth — Recuperación de contraseña ──────────────────────────
+    path(
+        "auth/password-reset/",
+        views.PasswordResetRequestView.as_view(),
+        name="auth-password-reset",
+    ),
+    path(
+        "auth/password-reset/confirm/",
+        views.PasswordResetConfirmView.as_view(),
+        name="auth-password-reset-confirm",
+    ),
+
+    # ── Auth — Cambio de contraseña (autenticado) ──────────────────
+    path(
+        "auth/change-password/",
+        views.ChangePasswordView.as_view(),
+        name="auth-change-password",
+    ),
+
+    # ── Auth — 2FA (TOTP / Google Authenticator) ───────────────────
+    path("auth/2fa/setup/", views.Setup2FAView.as_view(), name="auth-2fa-setup"),
+    path("auth/2fa/enable/", views.Enable2FAView.as_view(), name="auth-2fa-enable"),
+    path("auth/2fa/disable/", views.Disable2FAView.as_view(), name="auth-2fa-disable"),
+    path("auth/2fa/login/", views.Verify2FALoginView.as_view(), name="auth-2fa-login"),
 
     # ── Assets ──────────────────────────────────────────────────────
     path("assets/", views.AssetListView.as_view(), name="asset-list"),

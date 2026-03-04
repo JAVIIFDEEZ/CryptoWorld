@@ -15,6 +15,11 @@ psycopg2-binary==2.9.9          # Driver PostgreSQL para Python
 # ── Autenticación JWT ─────────────────────────────────────────────
 djangorestframework-simplejwt==5.3.1
 
+# ── Autenticación 2FA (TOTP — Google Authenticator) ──────────────
+pyotp==2.9.0                    # Generación y verificación de TOTP
+qrcode==7.4.2                   # Generación de QR codes
+Pillow==10.4.0                  # Dependencia de qrcode para PNG
+
 # ── CORS ──────────────────────────────────────────────────────────
 django-cors-headers==4.4.0
 

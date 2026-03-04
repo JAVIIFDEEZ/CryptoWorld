@@ -71,6 +71,31 @@ class DjangoUserRepository(IUserRepository):
     def exists_by_email(self, email: str) -> bool:
         return UserModel.objects.filter(email=email).exists()
 
+    def get_model_by_id(self, user_id: int) -> Optional[UserModel]:
+        """Devuelve el modelo ORM directamente. Útil para operaciones de bajo nivel."""
+        try:
+            return UserModel.objects.get(pk=user_id)
+        except UserModel.DoesNotExist:
+            return None
+
+    def set_email_verified(self, user_id: int) -> None:
+        """Marcar el email del usuario como verificado."""
+        UserModel.objects.filter(pk=user_id).update(is_email_verified=True)
+
+    def set_password(self, user_id: int, raw_password: str) -> None:
+        """Cambiar la contraseña de un usuario. Django hashea automáticamente."""
+        model = UserModel.objects.get(pk=user_id)
+        model.set_password(raw_password)
+        model.save(update_fields=["password"])
+
+    def set_totp_secret(self, user_id: int, secret: Optional[str]) -> None:
+        """Guardar (o borrar) el secreto TOTP de un usuario."""
+        UserModel.objects.filter(pk=user_id).update(totp_secret=secret)
+
+    def set_2fa_enabled(self, user_id: int, enabled: bool) -> None:
+        """Activar o desactivar 2FA para un usuario."""
+        UserModel.objects.filter(pk=user_id).update(is_2fa_enabled=enabled)
+
     @staticmethod
     def _to_entity(model: UserModel) -> UserEntity:
         """Convertir modelo ORM → entidad de dominio."""
@@ -80,6 +105,9 @@ class DjangoUserRepository(IUserRepository):
             username=model.username,
             is_active=model.is_active,
             is_staff=model.is_staff,
+            is_email_verified=model.is_email_verified,
+            totp_secret=model.totp_secret,
+            is_2fa_enabled=model.is_2fa_enabled,
         )
 
 

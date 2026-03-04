@@ -46,6 +46,67 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
 
+class LogoutSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/logout/."""
+    refresh_token = serializers.CharField()
+
+
+class VerifyEmailSerializer(serializers.Serializer):
+    """Valida los query params de GET /api/auth/verify-email/."""
+    uid = serializers.CharField()
+    token = serializers.CharField()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/password-reset/."""
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/password-reset/confirm/."""
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    new_password_confirm = serializers.CharField(write_only=True)
+
+    def validate(self, data: dict) -> dict:
+        if data["new_password"] != data["new_password_confirm"]:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "Las contraseñas no coinciden."}
+            )
+        return data
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/change-password/."""
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    new_password_confirm = serializers.CharField(write_only=True)
+
+    def validate(self, data: dict) -> dict:
+        if data["new_password"] != data["new_password_confirm"]:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "Las contraseñas no coinciden."}
+            )
+        return data
+
+
+class Enable2FASerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/2fa/enable/."""
+    totp_code = serializers.CharField(min_length=6, max_length=6)
+
+
+class Disable2FASerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/2fa/disable/."""
+    totp_code = serializers.CharField(min_length=6, max_length=6)
+
+
+class Verify2FALoginSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/2fa/login/."""
+    pre_auth_token = serializers.CharField()
+    totp_code = serializers.CharField(min_length=6, max_length=6)
+
+
 # ── Assets ─────────────────────────────────────────────────────────
 
 class CryptoAssetSerializer(serializers.Serializer):

@@ -57,6 +57,22 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
 
+    # ── Campos de autenticación extendida ──────────────────────────
+    is_email_verified = models.BooleanField(
+        default=False,
+        help_text="True cuando el usuario confirma su email.",
+    )
+    totp_secret = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text="Clave secreta TOTP (base32). Null si 2FA no está configurado.",
+    )
+    is_2fa_enabled = models.BooleanField(
+        default=False,
+        help_text="True cuando el usuario finaliza el setup de 2FA.",
+    )
+
     objects = UserManager()
 
     # Django usará 'email' para autenticación en lugar de 'username'

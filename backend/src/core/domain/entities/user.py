@@ -27,6 +27,10 @@ class UserEntity:
     is_staff: bool = False
     date_joined: datetime = field(default_factory=datetime.utcnow)
     id: Optional[int] = None
+    # Campos de autenticación extendida
+    is_email_verified: bool = False
+    totp_secret: Optional[str] = None
+    is_2fa_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Validaciones de negocio al crear la entidad."""

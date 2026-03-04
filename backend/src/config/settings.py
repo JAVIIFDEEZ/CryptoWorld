@@ -47,9 +47,10 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     # Terceros
-    "rest_framework",              # Django REST Framework
-    "rest_framework_simplejwt",    # Autenticación JWT
-    "corsheaders",                 # CORS para comunicación con el frontend
+    "rest_framework",                          # Django REST Framework
+    "rest_framework_simplejwt",                # Autenticación JWT
+    "rest_framework_simplejwt.token_blacklist", # Blacklist para logout seguro
+    "corsheaders",                             # CORS para comunicación con el frontend
 
     # Apps del proyecto (capa interfaces expone los endpoints)
     "core",
@@ -177,3 +178,22 @@ CORS_ALLOWED_ORIGINS = os.environ.get(
 ).split(" ")
 
 CORS_ALLOW_CREDENTIALS = True
+
+# ------------------------------------------------------------------
+# Email — Console backend en desarrollo, SMTP en producción
+# Para producción: define EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+#   + EMAIL_HOST, EMAIL_PORT, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, EMAIL_USE_TLS
+# ------------------------------------------------------------------
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",  # Imprime en logs Docker
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "noreply@cryptoworld.com")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# URL del frontend para construir links en emails
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
