@@ -209,9 +209,10 @@ class LoginView(APIView):
 class LogoutView(APIView):
     """
     POST /api/auth/logout/ — Cerrar sesión añadiendo el refresh_token a la blacklist.
-    Requiere autenticación.
+    No requiere access token válido: el propio refresh_token es prueba suficiente.
+    Esto permite hacer logout aunque el access token ya haya expirado.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
@@ -265,7 +266,6 @@ class VerifyEmailView(APIView):
         try:
             VerifyEmailUseCase().execute(
                 VerifyEmailInputDTO(
-                    uid=serializer.validated_data["uid"],
                     token=serializer.validated_data["token"],
                 )
             )

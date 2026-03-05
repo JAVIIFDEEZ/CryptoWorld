@@ -61,6 +61,19 @@ services:
         python manage.py runserver 0.0.0.0:8000
       "
 
+  # ── pgAdmin (interfaz web para PostgreSQL) ──────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: cryptoworld_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
   # ── Frontend React (desarrollo) ──────────────────────────────────
   frontend:
     build:

@@ -4,9 +4,7 @@ use_cases/send_verification_email.py — Enviar email de verificación al regist
 Puede llamarse también manualmente si el usuario solicita reenviar el email.
 """
 
-from django.contrib.auth.tokens import default_token_generator
-from django.utils.http import urlsafe_base64_encode
-from django.utils.encoding import force_bytes
+from django.core import signing
 from django.core.mail import send_mail
 from django.conf import settings
 
@@ -17,9 +15,10 @@ class SendVerificationEmailUseCase:
     """
     Enviar email de activación de cuenta al usuario.
 
-    El link incluye uid (user pk en base64) + token firmado con HMAC.
-    El token queda invalidado cuando el usuario verifica su email
-    (porque Django usa datos del usuario en la firma).
+    El link incluye un token firmado con TimestampSigner (HMAC sobre SECRET_KEY).
+    No depende de last_login ni del hash de contraseña, por lo que no se
+    invalida al hacer login. Expira tras EMAIL_VERIFICATION_TIMEOUT segundos
+    (por defecto 3 días).
     """
 
     def execute(self, user_id: int) -> None:
@@ -36,12 +35,13 @@ class SendVerificationEmailUseCase:
         if user.is_email_verified:
             return  # Ya verificado, no reenviar
 
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        signer = signing.TimestampSigner()
+        # El token codifica el pk del usuario firmado con HMAC
+        token = signer.sign(str(user.pk))
 
         verify_url = (
             f"{settings.FRONTEND_URL}/auth/verify-email/"
-            f"?uid={uid}&token={token}"
+            f"?token={token}"
         )
 
         send_mail(

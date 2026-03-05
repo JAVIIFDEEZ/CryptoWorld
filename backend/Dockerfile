@@ -1,8 +1,6 @@
 # Dockerfile — Backend Django
 #
-# Imagen multi-stage no necesaria aún para TFG, pero estructura
-# lista para escalar a producción.
-#
+# #
 # Uso:
 #   docker build -t cryptoworld-backend .
 #   docker run -p 8000:8000 cryptoworld-backend

@@ -53,7 +53,6 @@ class LogoutSerializer(serializers.Serializer):
 
 class VerifyEmailSerializer(serializers.Serializer):
     """Valida los query params de GET /api/auth/verify-email/."""
-    uid = serializers.CharField()
     token = serializers.CharField()
 
 

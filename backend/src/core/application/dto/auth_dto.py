@@ -42,9 +42,8 @@ class LogoutInputDTO:
 
 @dataclass(frozen=True)
 class VerifyEmailInputDTO:
-    """Token firmado generado por Django para verificación de email."""
-    uid: str          # user id codificado en base64
-    token: str        # token generado por default_token_generator
+    """Token TimestampSigner firmado para verificación de email."""
+    token: str        # token generado por TimestampSigner
 
 
 @dataclass(frozen=True)
