@@ -7,6 +7,7 @@ El usuario debe proporcionar su contraseña actual como verificación adicional.
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
+
 from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import ChangePasswordDTO
 

@@ -83,7 +83,8 @@ GET {{base_url}}/api/health/
 ```json
 {
     "status": "ok",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "service": "CryptoWorld API"
 }
 ```
 
@@ -270,7 +271,7 @@ Content-Type: application/json
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "Sesión cerrada correctamente."
+    "message": "Sesión cerrada correctamente."
 }
 ```
 
@@ -280,7 +281,7 @@ Content-Type: application/json
 
 ## 8. Verificación de Email
 
-### 8.1 Obtener uid y token desde los logs Docker
+### 8.1 Obtener el token de verificación desde los logs Docker
 
 El email se envía **en el momento del registro** y aparece en los logs de ese instante. Si haces `--tail 50` mucho después, es posible que ya no sea visible.
 
@@ -290,33 +291,26 @@ Usa este comando para buscar directamente en todos los logs:
 docker compose logs backend | Select-String "verify-email"
 ```
 
-O si tienes muchos logs:
-
-```powershell
-docker compose logs backend 2>&1 | Select-String "uid="
-```
-
 Busca algo como:
 ```
-http://localhost:3000/auth/verify-email/?uid=Mw&token=czpb8k-abc123...
+http://localhost:3000/auth/verify-email/?token=3:1tXyz-abc123...
 ```
 
-> **Nota:** La URL apunta al frontend (`localhost:3000`). Los parámetros `uid` y `token` son los que necesitas para llamar a la API directamente desde Postman.
+> **Nota:** La URL apunta al frontend (`localhost:3000`). Solo necesitas el parámetro `token` para llamar a la API directamente desde Postman. A diferencia del reset de contraseña, este sistema usa un `TimestampSigner` que codifica el ID del usuario dentro del propio token — no hay un `uid` separado.
 
 ### 8.2 Verificar el email
 
-El endpoint recibe **dos query params separados**: `uid` y `token`.
+El endpoint recibe **un único query param**: `token`.
 
 ```
-GET {{base_url}}/api/auth/verify-email/?uid=Mw&token=czpb8k-abc123...
+GET {{base_url}}/api/auth/verify-email/?token=3:1tXyz-abc123...
 ```
 
 En Postman, ve a la pestaña **Params** y añade:
 
 | Key | Value |
 |-----|-------|
-| `uid` | el valor de `uid` copiado del log (ej. `Mw`) |
-| `token` | el valor de `token` copiado del log (ej. `czpb8k-abc123`) |
+| `token` | el valor completo de `token` copiado del log |
 
 **Respuesta esperada (200 OK):**
 ```json
@@ -325,7 +319,7 @@ En Postman, ve a la pestaña **Params** y añade:
 }
 ```
 
-> **⚠️ Error frecuente:** no confundir los dos parámetros. Si envías solo `?token=...` sin `uid`, el serializador devolverá `400 {"uid": ["This field is required."]}`.
+> **⚠️ Error frecuente:** copiar solo parte del token (truncarlo). El token de verificación incluye el carácter `:` en su estructura (`id:timestamp:firma`), cópialo completo tal como aparece en el log.
 
 ### 8.3 Reenviar email de verificación
 
@@ -345,7 +339,7 @@ Authorization: Bearer {{access_token}}
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "Email de verificación enviado."
+    "message": "Email de verificación reenviado."
 }
 ```
 
@@ -374,7 +368,7 @@ Content-Type: application/json
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "Si el email existe, recibirás un enlace de recuperación."
+    "message": "Si el email existe, recibirás un enlace de recuperación."
 }
 ```
 
@@ -409,14 +403,15 @@ Content-Type: application/json
 {
     "uid": "MQ",
     "token": "bxyz12-abc...",
-    "new_password": "NuevaPassword456!"
+    "new_password": "NuevaPassword456!",
+    "new_password_confirm": "NuevaPassword456!" 
 }
 ```
 
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "Contraseña restablecida correctamente."
+    "message": "Contraseña restablecida correctamente."
 }
 ```
 
@@ -440,21 +435,22 @@ Content-Type: application/json
 ```json
 {
     "current_password": "MiPassword123!",
-    "new_password": "OtraPassword789!"
+    "new_password": "OtraPassword789!",
+    "new_password_confirm": "OtraPassword789!"
 }
 ```
 
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "Contraseña cambiada correctamente."
+    "message": "Contraseña cambiada correctamente."
 }
 ```
 
 **Error (400) si la contraseña actual es incorrecta:**
 ```json
 {
-    "detail": "La contraseña actual es incorrecta."
+    "error": "La contraseña actual es incorrecta."
 }
 ```
 
@@ -478,14 +474,16 @@ Authorization: Bearer {{access_token}}
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "secret": "JBSWY3DPEHPK3PXP",
-    "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+    "totp_secret": "JBSWY3DPEHPK3PXP",
+    "qr_code_uri": "otpauth://totp/CryptoWorld:usuario@ejemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=CryptoWorld",
+    "qr_code_base64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+    "message": "Escanea el QR con tu app autenticadora y luego confirma con POST /api/auth/2fa/enable/."
 }
 ```
 
 ### Cómo ver el QR en Postman
 
-1. Copia el valor de `qr_code` (incluido el prefijo `data:image/png;base64,...`).
+1. Copia el valor de `qr_code_base64` (incluido el prefijo `data:image/png;base64,...`).
 2. Abre un navegador y pega el texto en la barra de direcciones → verás la imagen del QR.
 3. Alternativamente, crea un archivo HTML con `<img src="data:image/png;base64,...">`.
 
@@ -495,7 +493,7 @@ Authorization: Bearer {{access_token}}
 2. `+` → **Escanear código QR**.
 3. Apunta la cámara al QR → se añade una cuenta llamada **CryptoWorld**.
 
-> **Guarda el `secret`**: si pierdes el móvil, necesitarás el secreto para recuperar el 2FA.
+> **Guarda el `totp_secret`**: si pierdes el móvil, necesitarás el secreto para recuperar el 2FA.
 
 ---
 
@@ -525,14 +523,14 @@ Content-Type: application/json
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "2FA activado correctamente."
+    "message": "2FA activado correctamente."
 }
 ```
 
 **Error (400) si el código es incorrecto:**
 ```json
 {
-    "detail": "Código TOTP incorrecto."
+    "error": "Código TOTP incorrecto."
 }
 ```
 
@@ -598,7 +596,10 @@ Content-Type: application/json
 ```json
 {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user_id": 3,
+    "email": "usuario@ejemplo.com",
+    "username": "usuario1"
 }
 ```
 
@@ -615,7 +616,7 @@ if (r.access_token) {
 **Error (401) si el pre_auth_token ha expirado (>5 min):**
 ```json
 {
-    "detail": "Token inválido o expirado."
+    "error": "Token inválido o expirado."
 }
 ```
 → Vuelve al Paso 1.
@@ -646,7 +647,7 @@ Content-Type: application/json
 **Respuesta esperada (200 OK):**
 ```json
 {
-    "detail": "2FA desactivado correctamente."
+    "message": "2FA desactivado correctamente."
 }
 ```
 
@@ -682,10 +683,12 @@ Content-Type: application/json
 **Body (raw JSON):**
 ```json
 {
-    "symbol": "BTC",
-    "indicator": "RSI"
+    "asset_symbol": "BTC",
+    "analysis_type": "RSI"
 }
 ```
+
+> Los valores válidos para `analysis_type` son: `RSI`, `MACD`, `SMA`, `EMA`, `BOLLINGER`.
 
 ---
 
