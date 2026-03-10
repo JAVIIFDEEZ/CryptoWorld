@@ -38,7 +38,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         return self.create_user(email, username, password, **extra_fields)
-
+                                                                          
 
 class User(AbstractBaseUser, PermissionsMixin):
     """
