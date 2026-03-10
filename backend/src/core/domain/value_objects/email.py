@@ -15,8 +15,8 @@ import re
 from dataclasses import dataclass
 
 
-# Expresión regular básica para validar formato de email
-_EMAIL_REGEX = re.compile(r"^[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}$")
+# Expresión regular para validar formato de email (soporta subdominios)
+_EMAIL_REGEX = re.compile(r"^[\w.+-]+@([\w-]+\.)+[a-zA-Z]{2,}$")
 
 
 @dataclass(frozen=True)
