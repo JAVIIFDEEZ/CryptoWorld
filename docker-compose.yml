@@ -49,8 +49,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Hot-reload en desarrollo: montar src local en el contenedor
+      # Hot-reload en desarrollo: montar src y tests locales en el contenedor
       - ./backend/src:/app/src
+      - ./backend/tests:/app/tests
+      - ./backend/pytest.ini:/app/pytest.ini
     depends_on:
       postgres:
         condition: service_healthy
