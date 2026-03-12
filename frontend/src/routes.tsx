@@ -13,6 +13,7 @@
 
 import { Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
+import RegisterPage from '@/pages/RegisterPage'
 import DashboardPage from '@/pages/DashboardPage'
 import AssetDetailPage from '@/pages/AssetDetailPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -21,8 +22,9 @@ import Navbar from '@/components/Navbar'
 function AppRoutes() {
   return (
     <Routes>
-      {/* Ruta pública: login */}
+      {/* Rutas públicas */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
 
       {/* Rutas protegidas: envueltas en el guard de autenticación */}
       <Route element={<ProtectedRoute />}>
