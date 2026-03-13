@@ -16,8 +16,11 @@ import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import DashboardPage from '@/pages/DashboardPage'
 import AssetDetailPage from '@/pages/AssetDetailPage'
+import MarketPage from '@/pages/MarketPage'
+import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
+import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
-import Navbar from '@/components/Navbar'
+import AppShell from '@/components/AppShell'
 
 function AppRoutes() {
   return (
@@ -28,9 +31,27 @@ function AppRoutes() {
 
       {/* Rutas protegidas: envueltas en el guard de autenticación */}
       <Route element={<ProtectedRoute />}>
-        {/* Navbar persiste entre páginas protegidas */}
-        <Route element={<LayoutWithNav />}>
+        {/* AppShell persiste entre páginas protegidas */}
+        <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/market" element={<MarketPage />} />
+          <Route path="/analysis" element={<TechnicalAnalysisPage />} />
+          <Route
+            path="/blockchain"
+            element={<PrototypePlaceholderPage title="Blockchain Analytics" description="Pantalla preparada para metricas on-chain del prototipo." />}
+          />
+          <Route
+            path="/portfolio"
+            element={<PrototypePlaceholderPage title="Portfolio" description="Pendiente integrar holdings reales y PnL." />}
+          />
+          <Route
+            path="/news"
+            element={<PrototypePlaceholderPage title="Noticias" description="Pendiente integrar feed de noticias y sentimiento." />}
+          />
+          <Route
+            path="/alerts"
+            element={<PrototypePlaceholderPage title="Alertas" description="Pendiente integrar reglas y notificaciones de precio." />}
+          />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
         </Route>
       </Route>
@@ -41,23 +62,6 @@ function AppRoutes() {
       {/* 404 catch-all */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
-  )
-}
-
-/**
- * Layout interno que incluye la barra de navegación.
- * Usa Outlet de React Router para renderizar la ruta hija.
- */
-import { Outlet } from 'react-router-dom'
-
-function LayoutWithNav() {
-  return (
-    <div className="min-h-screen flex flex-col">
-      <Navbar />
-      <main className="flex-1 container mx-auto px-4 py-6">
-        <Outlet />
-      </main>
-    </div>
   )
 }
 
