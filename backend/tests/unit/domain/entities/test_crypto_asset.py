@@ -15,6 +15,7 @@ from decimal import Decimal
 from core.domain.entities.crypto_asset import (
     CryptoAssetEntity,
     MarketDataSnapshotEntity,
+    PortfolioAssetEntity,
     AnalysisExecutionEntity,
 )
 
@@ -83,12 +84,20 @@ class TestCryptoAssetEntityCreation:
             market_cap=Decimal("1200000000000"),
             volume_24h=Decimal("30000000000"),
             price_change_24h=Decimal("2.5"),
+            coingecko_id="bitcoin",
+            logo_url="https://example.com/btc.png",
+            asset_address="0x123",
+            decimals=8,
             id=1,
         )
         assert asset.id == 1
         assert asset.market_cap == Decimal("1200000000000")
         assert asset.volume_24h == Decimal("30000000000")
         assert asset.price_change_24h == Decimal("2.5")
+        assert asset.coingecko_id == "bitcoin"
+        assert asset.logo_url == "https://example.com/btc.png"
+        assert asset.asset_address == "0x123"
+        assert asset.decimals == 8
 
 
 class TestCryptoAssetEntityIsBullish:
@@ -275,3 +284,63 @@ class TestAnalysisExecutionEntity:
         analysis.mark_as_running()
         analysis.fail()
         assert analysis.status == "failed"
+
+
+class TestPortfolioAssetEntity:
+    """Tests de reglas de dominio para PortfolioAssetEntity."""
+
+    @pytest.mark.unit
+    def test_avg_buy_price(self):
+        position = PortfolioAssetEntity(
+            user_id=1,
+            asset_symbol="BTC",
+            quantity=Decimal("2"),
+            purchase_value_usd=Decimal("80000"),
+        )
+        assert position.avg_buy_price_usd == Decimal("40000")
+
+    @pytest.mark.unit
+    def test_update_current_value(self):
+        position = PortfolioAssetEntity(
+            user_id=1,
+            asset_symbol="ETH",
+            quantity=Decimal("3"),
+            purchase_value_usd=Decimal("6000"),
+        )
+        position.update_current_value(Decimal("2500"))
+        assert position.current_value_usd == Decimal("7500")
+
+    @pytest.mark.unit
+    def test_unrealized_pnl(self):
+        position = PortfolioAssetEntity(
+            user_id=1,
+            asset_symbol="BTC",
+            quantity=Decimal("1"),
+            purchase_value_usd=Decimal("30000"),
+            current_value_usd=Decimal("36000"),
+        )
+        assert position.unrealized_pnl_usd == Decimal("6000")
+        assert position.unrealized_pnl_pct == Decimal("20")
+
+    @pytest.mark.unit
+    def test_add_position_accumulates(self):
+        position = PortfolioAssetEntity(
+            user_id=1,
+            asset_symbol="BTC",
+            quantity=Decimal("1"),
+            purchase_value_usd=Decimal("30000"),
+        )
+        position.add_position(Decimal("0.5"), Decimal("18000"))
+        assert position.quantity == Decimal("1.5")
+        assert position.purchase_value_usd == Decimal("48000")
+
+    @pytest.mark.unit
+    def test_add_position_rejects_non_positive_quantity(self):
+        position = PortfolioAssetEntity(
+            user_id=1,
+            asset_symbol="BTC",
+            quantity=Decimal("1"),
+            purchase_value_usd=Decimal("30000"),
+        )
+        with pytest.raises(ValueError, match="positiva"):
+            position.add_position(Decimal("0"), Decimal("1000"))
