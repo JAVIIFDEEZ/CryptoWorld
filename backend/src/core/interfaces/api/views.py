@@ -37,6 +37,13 @@ from core.interfaces.api.serializers import (
     CryptoAssetSerializer,
     AnalysisRequestSerializer,
     AnalysisOutputSerializer,
+    MarketOverviewSerializer,
+    OhlcvQuerySerializer,
+    OhlcvCandleSerializer,
+    OnChainQuerySerializer,
+    OnChainMetricPointSerializer,
+    NewsQuerySerializer,
+    NewsItemSerializer,
 )
 from core.application.use_cases.register_user import RegisterUserUseCase
 from core.application.use_cases.get_assets import GetAssetsUseCase
@@ -51,6 +58,10 @@ from core.application.use_cases.setup_2fa import Setup2FAUseCase
 from core.application.use_cases.enable_2fa import Enable2FAUseCase
 from core.application.use_cases.disable_2fa import Disable2FAUseCase
 from core.application.use_cases.verify_2fa_login import Verify2FALoginUseCase, PreAuthToken
+from core.application.use_cases.get_market_overview import GetMarketOverviewUseCase
+from core.application.use_cases.get_asset_ohlcv import GetAssetOhlcvUseCase
+from core.application.use_cases.get_onchain_metrics import GetOnChainMetricsUseCase
+from core.application.use_cases.get_news_feed import GetNewsFeedUseCase
 from core.application.dto.auth_dto import (
     RegisterUserInputDTO,
     LoginInputDTO,
@@ -551,6 +562,91 @@ class RunAnalysisView(APIView):
 
         out_serializer = AnalysisOutputSerializer(vars(output_dto))
         return Response(out_serializer.data, status=status.HTTP_202_ACCEPTED)
+
+
+# ── Market Intelligence Views ─────────────────────────────────────
+
+class MarketOverviewView(APIView):
+    """
+    GET /api/market/overview/ — Resumen global del mercado.
+    Requiere autenticación JWT.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        output_dto = GetMarketOverviewUseCase().execute()
+        serializer = MarketOverviewSerializer(vars(output_dto))
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AssetOhlcvView(APIView):
+    """
+    GET /api/assets/<symbol>/ohlcv/ — Serie de velas para gráficos interactivos.
+    Requiere autenticación JWT.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, symbol: str):
+        query_serializer = OhlcvQuerySerializer(data=request.query_params)
+        if not query_serializer.is_valid():
+            return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        q = query_serializer.validated_data
+        candles = GetAssetOhlcvUseCase().execute(
+            symbol=symbol,
+            interval=q["interval"],
+            limit=q["limit"],
+        )
+        serializer = OhlcvCandleSerializer([vars(c) for c in candles], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class BlockchainMetricsView(APIView):
+    """
+    GET /api/blockchain/metrics/ — Métricas on-chain filtrables.
+    Requiere autenticación JWT.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query_serializer = OnChainQuerySerializer(data=request.query_params)
+        if not query_serializer.is_valid():
+            return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        q = query_serializer.validated_data
+        points = GetOnChainMetricsUseCase().execute(
+            symbol=q["symbol"],
+            metric=q["metric"],
+            days=q["days"],
+        )
+        serializer = OnChainMetricPointSerializer([vars(p) for p in points], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NewsFeedView(APIView):
+    """
+    GET /api/news/ — Feed de noticias con filtro de sentimiento.
+    Requiere autenticación JWT.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query_serializer = NewsQuerySerializer(data=request.query_params)
+        if not query_serializer.is_valid():
+            return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        q = query_serializer.validated_data
+        items = GetNewsFeedUseCase().execute(
+            query=q["q"],
+            sentiment=q["sentiment"],
+            limit=q["limit"],
+        )
+        serializer = NewsItemSerializer([vars(i) for i in items], many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ── Mock data ──────────────────────────────────────────────────────

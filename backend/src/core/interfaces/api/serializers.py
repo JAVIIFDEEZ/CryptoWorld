@@ -137,3 +137,75 @@ class AnalysisOutputSerializer(serializers.Serializer):
     analysis_type = serializers.CharField()
     status = serializers.CharField()
     result = serializers.DictField(allow_null=True)
+
+
+# ── Market Intelligence ───────────────────────────────────────────
+
+class MarketOverviewSerializer(serializers.Serializer):
+    """Serializa la respuesta de GET /api/market/overview/."""
+    total_market_cap_usd = serializers.CharField()
+    total_volume_24h_usd = serializers.CharField()
+    btc_dominance_pct = serializers.CharField()
+    fear_greed_index = serializers.IntegerField(min_value=0, max_value=100)
+    updated_at = serializers.CharField()
+
+
+class OhlcvQuerySerializer(serializers.Serializer):
+    """Valida query params de GET /api/assets/<symbol>/ohlcv/."""
+    interval = serializers.ChoiceField(
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        default="1h",
+        required=False,
+    )
+    limit = serializers.IntegerField(min_value=10, max_value=500, default=120, required=False)
+
+
+class OhlcvCandleSerializer(serializers.Serializer):
+    """Serializa una vela OHLCV."""
+    open_time = serializers.CharField()
+    open = serializers.CharField()
+    high = serializers.CharField()
+    low = serializers.CharField()
+    close = serializers.CharField()
+    volume = serializers.CharField()
+
+
+class OnChainQuerySerializer(serializers.Serializer):
+    """Valida query params de GET /api/blockchain/metrics/."""
+    symbol = serializers.CharField(max_length=20, required=False, default="BTC")
+    metric = serializers.ChoiceField(
+        choices=["active_addresses", "hashrate", "tx_count", "gas_price"],
+        required=False,
+        default="active_addresses",
+    )
+    days = serializers.IntegerField(min_value=7, max_value=365, default=30, required=False)
+
+
+class OnChainMetricPointSerializer(serializers.Serializer):
+    """Serializa un punto temporal on-chain."""
+    metric = serializers.CharField()
+    symbol = serializers.CharField()
+    timestamp = serializers.CharField()
+    value = serializers.CharField()
+    source = serializers.CharField()
+
+
+class NewsQuerySerializer(serializers.Serializer):
+    """Valida query params de GET /api/news/."""
+    q = serializers.CharField(required=False, allow_blank=True, default="")
+    sentiment = serializers.ChoiceField(
+        choices=["all", "positive", "neutral", "negative"],
+        required=False,
+        default="all",
+    )
+    limit = serializers.IntegerField(min_value=1, max_value=100, default=20, required=False)
+
+
+class NewsItemSerializer(serializers.Serializer):
+    """Serializa una noticia del feed."""
+    title = serializers.CharField()
+    url = serializers.CharField()
+    source = serializers.CharField()
+    published_at = serializers.CharField()
+    sentiment = serializers.CharField()
+    relevance_score = serializers.FloatField(allow_null=True)

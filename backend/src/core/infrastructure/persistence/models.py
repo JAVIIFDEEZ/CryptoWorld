@@ -107,6 +107,32 @@ class CryptoAsset(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ── Campos para integración con CoinGecko y datos on-chain ─────
+    coingecko_id = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="ID del activo en CoinGecko (ej: 'bitcoin'). Necesario para llamadas a la API.",
+    )
+    logo_url = models.URLField(
+        max_length=500,
+        null=True,
+        blank=True,
+        help_text="URL del logotipo del activo (provisto por CoinGecko).",
+    )
+    asset_address = models.CharField(
+        max_length=200,
+        null=True,
+        blank=True,
+        help_text="Dirección del contrato inteligente en la blockchain (para activos ERC-20 y similares).",
+    )
+    decimals = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Precisión decimal del token (ej: 18 para ETH). Necesario para cálculos on-chain.",
+    )
+
     class Meta:
         db_table = "crypto_assets"
         verbose_name = "Activo Criptográfico"
@@ -134,6 +160,24 @@ class MarketDataSnapshot(models.Model):
     volume = models.DecimalField(max_digits=30, decimal_places=2)
     timestamp = models.DateTimeField(db_index=True)
 
+    # ── Datos de capitalización y supply ───────────────────────────
+    market_cap = models.DecimalField(max_digits=38, decimal_places=2, null=True, blank=True)
+    fully_diluted_valuation = models.DecimalField(max_digits=38, decimal_places=4, null=True, blank=True)
+    circulating_supply = models.DecimalField(max_digits=38, decimal_places=4, null=True, blank=True)
+    total_supply = models.DecimalField(max_digits=38, decimal_places=4, null=True, blank=True)
+    max_supply = models.DecimalField(max_digits=38, decimal_places=4, null=True, blank=True)
+
+    # ── All-Time High / All-Time Low ───────────────────────────────
+    ath = models.DecimalField(max_digits=38, decimal_places=8, null=True, blank=True)
+    ath_date = models.DateTimeField(null=True, blank=True)
+    atl = models.DecimalField(max_digits=38, decimal_places=8, null=True, blank=True)
+    atl_date = models.DateTimeField(null=True, blank=True)
+
+    # ── Cambios de precio adicionales ─────────────────────────────
+    price_change_24h_pct = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
+    price_change_7d_pct = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
+    price_change_30d_pct = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
+
     class Meta:
         db_table = "market_data_snapshots"
         verbose_name = "Snapshot de Mercado"
@@ -142,6 +186,57 @@ class MarketDataSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.asset.symbol} @ {self.timestamp}"
+
+
+class PortfolioAsset(models.Model):
+    """
+    Posición de un activo en el portfolio de un usuario.
+
+    Registra cuánto posee el usuario de un activo, cuánto pagó
+    y cuál es el valor actual calculado. Soporta compras acumulativas:
+    si el usuario ya tiene el activo, se suma la cantidad y el coste.
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="portfolio_assets",
+        db_index=True,
+    )
+    asset = models.ForeignKey(
+        CryptoAsset,
+        on_delete=models.CASCADE,
+        related_name="portfolio_entries",
+    )
+    quantity = models.DecimalField(
+        max_digits=38,
+        decimal_places=18,
+        help_text="Cantidad poseída del activo.",
+    )
+    purchase_value_usd = models.DecimalField(
+        max_digits=38,
+        decimal_places=18,
+        help_text="Coste total de adquisición en USD (puede acumularse en compras sucesivas).",
+    )
+    current_value_usd = models.DecimalField(
+        max_digits=38,
+        decimal_places=18,
+        null=True,
+        blank=True,
+        help_text="Valor actual calculado en USD (quantity × precio_actual).",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "portfolio_assets"
+        verbose_name = "Posición de Portfolio"
+        verbose_name_plural = "Posiciones de Portfolio"
+        # Un usuario no puede tener el mismo activo duplicado
+        unique_together = [("user", "asset")]
+
+    def __str__(self) -> str:
+        return f"{self.user.email} — {self.asset.symbol} ({self.quantity})"
 
 
 class AnalysisExecution(models.Model):

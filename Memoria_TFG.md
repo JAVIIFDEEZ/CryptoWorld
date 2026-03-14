@@ -1714,6 +1714,10 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 | POST | `/api/auth/2fa/login/` | No | ✅ Funcional |
 | GET | `/api/assets/` | Sí | ⚠️ Datos mock |
 | POST | `/api/analysis/run/` | Sí | ⚠️ Stub (retorna pending) |
+| GET | `/api/market/overview/` | Sí | ✅ Contract-first (mock estructurado) |
+| GET | `/api/assets/{symbol}/ohlcv/` | Sí | ✅ Contract-first (velas sintéticas) |
+| GET | `/api/blockchain/metrics/` | Sí | ✅ Contract-first (serie on-chain sintética) |
+| GET | `/api/news/` | Sí | ✅ Contract-first (feed filtrable) |
 
 **Capas implementadas:**
 | Capa | Estado |
@@ -1726,14 +1730,20 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 | Application — DTOs | ✅ Completo |
 | Infrastructure — ORM Models | ✅ Completo (4 modelos, 2 migraciones) |
 | Infrastructure — Repositories impl | ✅ Completo |
-| Infrastructure — External APIs | ❌ Pendiente (CoinGecko) |
-| Interfaces — API (17 endpoints) | ✅ Completo |
+| Infrastructure — External APIs | ⚠️ En preparación (contract-first activo) |
+| Interfaces — API (21 endpoints) | ✅ Completo |
 | Frontend — Auth flow | ✅ Completo |
 | Frontend — Dashboard | ⚠️ Parcial (sin datos reales) |
 | Tests unitarios | ✅ Implementados y pasando |
 | Tests integración | ✅ Implementados y pasando |
 
 ### Roadmap de fases futuras
+
+**Sprint 0.5** — Contratos de datos y preparación de integración
+- Definición de DTOs para `market overview`, `ohlcv`, `on-chain` y `news`
+- Implementación de casos de uso `contract-first` con datos estructurados de transición
+- Publicación de endpoints backend para desacoplar frontend de la fuente final
+- Objetivo: permitir migrar UI avanzada sin bloquearse por la integración externa
 
 **Sprint 1** — Integración CoinGecko API
 - Crear `infrastructure/external_apis/coingecko_client.py`
@@ -1760,6 +1770,36 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 - Sistema de alertas (precio objetivo, % de cambio)
 - Historial de análisis ejecutados por usuario
 
+### Proceso seguido en esta iteración (Marzo 2026)
+
+Se aplicó un enfoque incremental orientado a minimizar riesgo técnico y mantener la coherencia con Clean Architecture:
+
+1. **Diseño del contrato antes que el proveedor externo**
+  - Se definieron DTOs de salida estables para cuatro dominios funcionales: mercado global, velas OHLCV, métricas on-chain y noticias/sentimiento.
+  - Esto permite que frontend y backend evolucionen en paralelo sin bloquearse por la API definitiva.
+
+2. **Casos de uso contract-first en Application**
+  - Se añadieron casos de uso específicos (`GetMarketOverviewUseCase`, `GetAssetOhlcvUseCase`, `GetOnChainMetricsUseCase`, `GetNewsFeedUseCase`) con respuestas estructuradas.
+  - En esta fase devuelven datos sintéticos válidos para validación funcional de interfaz y contratos.
+
+3. **Exposición de endpoints REST nuevos en Interfaces**
+  - Se añadieron los endpoints:
+    - `GET /api/market/overview/`
+    - `GET /api/assets/{symbol}/ohlcv/`
+    - `GET /api/blockchain/metrics/`
+    - `GET /api/news/`
+  - Cada endpoint incluye serializadores de validación de query params para asegurar entrada acotada y predecible.
+
+4. **Preparación para integración real (siguiente iteración)**
+  - Los casos de uso quedan listos para sustituir internamente la fuente mock por adaptadores reales:
+    - CoinGecko (market overview)
+    - Binance (OHLCV)
+    - CoinMetrics (on-chain)
+    - GDELT (news)
+  - Esta sustitución no requiere cambios en frontend ni en contrato HTTP.
+
+Este enfoque mejora la trazabilidad académica del TFG porque separa claramente: **contrato de sistema**, **lógica de orquestación** y **adaptadores de infraestructura**.
+
 ---
 
 ## 12. REGISTRO DE PROBLEMAS RESUELTOS
@@ -1780,7 +1820,7 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 ---
 
 *Documento técnico completo del proyecto CryptoWorld — Estado v1.2.0 — Marzo 2026*  
-*Última actualización: 12 de marzo de 2026*
+*Última actualización: 14 de marzo de 2026*
 
 <!-- FIN DEL DOCUMENTO -->
 <!-- TODO: borrar todo lo que hay debajo de esta línea (contenido antiguo del diario de desarrollo)

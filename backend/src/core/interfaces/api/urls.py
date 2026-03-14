@@ -63,7 +63,13 @@ urlpatterns = [
 
     # ── Assets ──────────────────────────────────────────────────────
     path("assets/", views.AssetListView.as_view(), name="asset-list"),
+    path("assets/<str:symbol>/ohlcv/", views.AssetOhlcvView.as_view(), name="asset-ohlcv"),
 
     # ── Analysis ────────────────────────────────────────────────────
     path("analysis/run/", views.RunAnalysisView.as_view(), name="analysis-run"),
+
+    # ── Market Intelligence ─────────────────────────────────────────
+    path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
+    path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
+    path("news/", views.NewsFeedView.as_view(), name="news-feed"),
 ]
