@@ -17,6 +17,10 @@ class CryptoAssetOutputDTO:
     market_cap: Optional[str]
     volume_24h: Optional[str]
     price_change_24h: Optional[str]
+    coingecko_id: Optional[str]
+    logo_url: Optional[str]
+    asset_address: Optional[str]
+    decimals: Optional[int]
     is_bullish_24h: bool
 
 

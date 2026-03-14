@@ -136,6 +136,10 @@ class DjangoCryptoAssetRepository(ICryptoAssetRepository):
                 "market_cap": asset.market_cap,
                 "volume_24h": asset.volume_24h,
                 "price_change_24h": asset.price_change_24h,
+                "coingecko_id": asset.coingecko_id,
+                "logo_url": asset.logo_url,
+                "asset_address": asset.asset_address,
+                "decimals": asset.decimals,
             }
         )
         return self._to_entity(model)
@@ -151,4 +155,8 @@ class DjangoCryptoAssetRepository(ICryptoAssetRepository):
             market_cap=Decimal(str(model.market_cap)) if model.market_cap else None,
             volume_24h=Decimal(str(model.volume_24h)) if model.volume_24h else None,
             price_change_24h=Decimal(str(model.price_change_24h)) if model.price_change_24h else None,
+            coingecko_id=model.coingecko_id,
+            logo_url=model.logo_url,
+            asset_address=model.asset_address,
+            decimals=model.decimals,
         )

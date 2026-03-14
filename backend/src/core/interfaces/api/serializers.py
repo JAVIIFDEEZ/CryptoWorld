@@ -117,6 +117,10 @@ class CryptoAssetSerializer(serializers.Serializer):
     market_cap = serializers.CharField(allow_null=True)
     volume_24h = serializers.CharField(allow_null=True)
     price_change_24h = serializers.CharField(allow_null=True)
+    coingecko_id = serializers.CharField(allow_null=True)
+    logo_url = serializers.CharField(allow_null=True)
+    asset_address = serializers.CharField(allow_null=True)
+    decimals = serializers.IntegerField(allow_null=True)
     is_bullish_24h = serializers.BooleanField()
 
 

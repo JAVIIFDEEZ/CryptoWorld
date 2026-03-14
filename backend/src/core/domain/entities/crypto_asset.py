@@ -29,6 +29,10 @@ class CryptoAssetEntity:
     market_cap: Optional[Decimal] = None
     volume_24h: Optional[Decimal] = None
     price_change_24h: Optional[Decimal] = None
+    coingecko_id: Optional[str] = None
+    logo_url: Optional[str] = None
+    asset_address: Optional[str] = None
+    decimals: Optional[int] = None
     id: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -56,7 +60,60 @@ class MarketDataSnapshotEntity:
     price: Decimal
     volume: Decimal
     timestamp: str   # ISO 8601
+    market_cap: Optional[Decimal] = None
+    fully_diluted_valuation: Optional[Decimal] = None
+    circulating_supply: Optional[Decimal] = None
+    total_supply: Optional[Decimal] = None
+    max_supply: Optional[Decimal] = None
+    ath: Optional[Decimal] = None
+    ath_date: Optional[str] = None
+    atl: Optional[Decimal] = None
+    atl_date: Optional[str] = None
+    price_change_24h_pct: Optional[Decimal] = None
+    price_change_7d_pct: Optional[Decimal] = None
+    price_change_30d_pct: Optional[Decimal] = None
     id: Optional[int] = None
+
+
+@dataclass
+class PortfolioAssetEntity:
+    """
+    Entidad de dominio para una posición de portfolio.
+    """
+
+    user_id: int
+    asset_symbol: str
+    quantity: Decimal
+    purchase_value_usd: Decimal
+    current_value_usd: Optional[Decimal] = None
+    id: Optional[int] = None
+
+    @property
+    def avg_buy_price_usd(self) -> Optional[Decimal]:
+        if self.quantity == 0:
+            return None
+        return self.purchase_value_usd / self.quantity
+
+    @property
+    def unrealized_pnl_usd(self) -> Optional[Decimal]:
+        if self.current_value_usd is None:
+            return None
+        return self.current_value_usd - self.purchase_value_usd
+
+    @property
+    def unrealized_pnl_pct(self) -> Optional[Decimal]:
+        if self.current_value_usd is None or self.purchase_value_usd == 0:
+            return None
+        return ((self.current_value_usd - self.purchase_value_usd) / self.purchase_value_usd) * Decimal("100")
+
+    def update_current_value(self, current_price: Decimal) -> None:
+        self.current_value_usd = self.quantity * current_price
+
+    def add_position(self, quantity: Decimal, purchase_value_usd: Decimal) -> None:
+        if quantity <= 0:
+            raise ValueError("La cantidad a agregar debe ser positiva.")
+        self.quantity += quantity
+        self.purchase_value_usd += purchase_value_usd
 
 
 @dataclass

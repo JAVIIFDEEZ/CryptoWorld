@@ -6,7 +6,6 @@ transforma en DTOs de salida para la capa de interfaces.
 """
 
 from typing import List
-from decimal import Decimal
 
 from core.domain.repositories.crypto_asset_repository import ICryptoAssetRepository
 from core.application.dto.asset_dto import CryptoAssetOutputDTO
@@ -38,6 +37,10 @@ class GetAssetsUseCase:
                 market_cap=str(asset.market_cap) if asset.market_cap else None,
                 volume_24h=str(asset.volume_24h) if asset.volume_24h else None,
                 price_change_24h=str(asset.price_change_24h) if asset.price_change_24h else None,
+                coingecko_id=asset.coingecko_id,
+                logo_url=asset.logo_url,
+                asset_address=asset.asset_address,
+                decimals=asset.decimals,
                 is_bullish_24h=asset.is_bullish_24h,
             )
             for asset in assets
