@@ -54,7 +54,7 @@ function RegisterPage() {
       })
       // Redirigir al login con mensaje de éxito
       navigate('/login', {
-        state: { message: '¡Cuenta creada correctamente! Ya puedes iniciar sesión.' },
+        state: { message: 'Cuenta creada. Verifica tu email antes de iniciar sesión. Luego podras activar 2FA en Seguridad.' },
       })
     } catch (err: unknown) {
       // El backend puede devolver errores de validación en el cuerpo

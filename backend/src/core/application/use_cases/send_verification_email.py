@@ -40,7 +40,7 @@ class SendVerificationEmailUseCase:
         token = signer.sign(str(user.pk))
 
         verify_url = (
-            f"{settings.FRONTEND_URL}/auth/verify-email/"
+            f"{settings.FRONTEND_URL}/auth/verify-email"
             f"?token={token}"
         )
 
@@ -50,7 +50,7 @@ class SendVerificationEmailUseCase:
                 f"Hola {user.username},\n\n"
                 f"Gracias por registrarte en CryptoWorld.\n\n"
                 f"Confirma tu email haciendo clic en el siguiente enlace:\n{verify_url}\n\n"
-                f"El enlace es válido durante 24 horas.\n\n"
+                f"El enlace es válido durante 3 días.\n\n"
                 f"El equipo de CryptoWorld"
             ),
             from_email=settings.DEFAULT_FROM_EMAIL,

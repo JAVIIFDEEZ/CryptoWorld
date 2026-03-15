@@ -34,7 +34,8 @@ interface AuthContextType {
   token: string | null
   isAuthenticated: boolean
   isLoading: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<{ requires2FA: boolean; preAuthToken?: string }>
+  verify2FALogin: (preAuthToken: string, totpCode: string) => Promise<void>
   logout: () => void
 }
 
@@ -61,6 +62,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const [isLoading, setIsLoading] = useState(false)
 
+  function applyAuthenticatedSession(accessToken: string, authUser: AuthUser) {
+    setToken(accessToken)
+    setUser(authUser)
+    localStorage.setItem(TOKEN_KEY, accessToken)
+    localStorage.setItem(USER_KEY, JSON.stringify(authUser))
+  }
+
   /**
    * login — Autenticar con la API y almacenar los tokens.
    *
@@ -71,15 +79,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
     try {
       const response = await authService.login({ email, password })
-      setToken(response.access_token)
+
+      // Paso 1 del flujo 2FA: credenciales correctas, pendiente TOTP.
+      if (response.requires_2fa) {
+        return { requires2FA: true, preAuthToken: response.pre_auth_token }
+      }
+
       const authUser: AuthUser = {
         id: response.user_id,
         email: response.email,
         username: response.username,
       }
-      setUser(authUser)
-      localStorage.setItem(TOKEN_KEY, response.access_token)
-      localStorage.setItem(USER_KEY, JSON.stringify(authUser))
+      applyAuthenticatedSession(response.access_token, authUser)
+      return { requires2FA: false }
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  const verify2FALogin = useCallback(async (preAuthToken: string, totpCode: string) => {
+    setIsLoading(true)
+    try {
+      const response = await authService.verify2FALogin(preAuthToken, totpCode)
+      const authUser: AuthUser = {
+        id: response.user_id,
+        email: response.email,
+        username: response.username,
+      }
+      applyAuthenticatedSession(response.access_token, authUser)
     } finally {
       setIsLoading(false)
     }
@@ -104,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!token && !!user,
         isLoading,
         login,
+        verify2FALogin,
         logout,
       },
     },

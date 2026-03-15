@@ -24,6 +24,7 @@ const navItems: NavItem[] = [
   { path: '/portfolio', label: 'Portfolio', shortLabel: 'Port' },
   { path: '/news', label: 'Noticias', shortLabel: 'News' },
   { path: '/alerts', label: 'Alertas', shortLabel: 'Alerts' },
+  { path: '/security/2fa', label: 'Seguridad 2FA', shortLabel: '2FA' },
 ]
 
 function AppShell() {

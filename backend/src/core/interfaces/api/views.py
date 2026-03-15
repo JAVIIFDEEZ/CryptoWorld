@@ -29,6 +29,7 @@ from core.interfaces.api.serializers import (
     LogoutSerializer,
     VerifyEmailSerializer,
     PasswordResetRequestSerializer,
+    ResendVerificationRequestSerializer,
     PasswordResetConfirmSerializer,
     ChangePasswordSerializer,
     Enable2FASerializer,
@@ -189,6 +190,16 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Política de seguridad: no permitir login hasta verificar email
+        if not user.is_email_verified:
+            return Response(
+                {
+                    "error": "Debes verificar tu email antes de iniciar sesión.",
+                    "error_code": "email_not_verified",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Si 2FA está activo, emitir token temporal de pre-autenticación
         if user.is_2fa_enabled:
             pre_auth = PreAuthToken()
@@ -292,18 +303,24 @@ class VerifyEmailView(APIView):
 class ResendVerificationEmailView(APIView):
     """
     POST /api/auth/verify-email/resend/ — Reenviar email de verificación.
-    Requiere autenticación (el usuario ya está logueado pero no verificó el email).
+    No requiere autenticación para no bloquear el flujo cuando se exige
+    email verificado antes de permitir login.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        try:
-            SendVerificationEmailUseCase().execute(request.user.pk)
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = ResendVerificationRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Respuesta indistinguible para evitar enumeración de emails.
+        from core.infrastructure.persistence.models import User as UserModel
+        user = UserModel.objects.filter(email=serializer.validated_data["email"]).first()
+        if user and not user.is_email_verified:
+            SendVerificationEmailUseCase().execute(user.pk)
 
         return Response(
-            {"message": "Email de verificación reenviado."},
+            {"message": "Si el email existe y no está verificado, recibirás un enlace."},
             status=status.HTTP_200_OK,
         )
 

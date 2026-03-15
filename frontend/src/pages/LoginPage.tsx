@@ -10,20 +10,27 @@
  */
 
 import { useState, type FormEvent } from 'react'
-import { useNavigate, useLocation, Link } from 'react-router-dom'
+import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { authService } from '@/services/authService'
 
 function LoginPage() {
-  const { login, isAuthenticated, isLoading } = useAuth()
+  const { login, verify2FALogin, isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [preAuthToken, setPreAuthToken] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [errorCode, setErrorCode] = useState<string | null>(null)
+  const [resendInfo, setResendInfo] = useState<string | null>(null)
 
   // Mensaje de éxito proveniente del registro
   const successMessage = (location.state as { message?: string } | null)?.message ?? null
+  const nextPath = searchParams.get('next') ?? undefined
 
   // Si ya está autenticado, redirigir directamente
   if (isAuthenticated) {
@@ -34,14 +41,55 @@ function LoginPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    setErrorCode(null)
+    setResendInfo(null)
 
     try {
-      await login(email, password)
+      if (preAuthToken) {
+        await verify2FALogin(preAuthToken, totpCode)
+        const from = nextPath ?? (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
+        navigate(from, { replace: true })
+        return
+      }
+
+      const result = await login(email, password)
+
+      if (result.requires2FA) {
+        setPreAuthToken(result.preAuthToken ?? null)
+        return
+      }
+
       // Redirigir a la ruta que intentaba acceder antes del login
-      const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
+      const from = nextPath ?? (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
       navigate(from, { replace: true })
+    } catch (err: unknown) {
+      const axiosError = err as { response?: { status?: number; data?: { error?: string; error_code?: string } } }
+      const backendError = axiosError?.response?.data?.error
+      const backendCode = axiosError?.response?.data?.error_code
+
+      if (backendCode) {
+        setErrorCode(backendCode)
+      }
+
+      setError(backendError ?? 'Credenciales incorrectas. Verifica tu email y contraseña.')
+    }
+  }
+
+  async function handleResendVerification() {
+    setError(null)
+    setErrorCode(null)
+    setResendInfo(null)
+
+    if (!email) {
+      setError('Introduce tu email y pulsa de nuevo para reenviar la verificación.')
+      return
+    }
+
+    try {
+      const response = await authService.resendVerificationEmail(email)
+      setResendInfo(response.message)
     } catch {
-      setError('Credenciales incorrectas. Verifica tu email y contraseña.')
+      setError('No se pudo reenviar el email de verificación. Inténtalo más tarde.')
     }
   }
 
@@ -78,6 +126,21 @@ function LoginPage() {
           {error && (
             <div className="bg-red-900/30 border border-red-700/60 rounded-lg px-4 py-3 mb-5">
               <p className="text-red-400 text-sm">{error}</p>
+              {errorCode === 'email_not_verified' && (
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  className="mt-2 text-xs text-blue-300 hover:text-blue-200 underline"
+                >
+                  Reenviar email de verificación
+                </button>
+              )}
+            </div>
+          )}
+
+          {resendInfo && (
+            <div className="bg-emerald-900/30 border border-emerald-700/60 rounded-lg px-4 py-3 mb-5">
+              <p className="text-emerald-400 text-sm">{resendInfo}</p>
             </div>
           )}
 
@@ -112,12 +175,31 @@ function LoginPage() {
               />
             </div>
 
+            {preAuthToken && (
+              <div>
+                <label htmlFor="totp" className="block text-sm font-medium text-slate-300 mb-1.5">
+                  Codigo de autenticacion (2FA)
+                </label>
+                <input
+                  id="totp"
+                  type="text"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  required
+                  minLength={6}
+                  maxLength={6}
+                  placeholder="123456"
+                  className="w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                />
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isLoading}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 disabled:from-blue-800 disabled:to-blue-800 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl transition-all text-sm mt-2 shadow-lg shadow-blue-500/20"
             >
-              {isLoading ? 'Entrando...' : 'Entrar'}
+              {isLoading ? 'Entrando...' : preAuthToken ? 'Validar 2FA' : 'Entrar'}
             </button>
           </form>
 

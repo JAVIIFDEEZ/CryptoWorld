@@ -14,11 +14,13 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
+import VerifyEmailPage from '@/pages/VerifyEmailPage'
 import DashboardPage from '@/pages/DashboardPage'
 import AssetDetailPage from '@/pages/AssetDetailPage'
 import MarketPage from '@/pages/MarketPage'
 import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
 import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
+import Security2FAPage from '@/pages/Security2FAPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AppShell from '@/components/AppShell'
 
@@ -28,6 +30,7 @@ function AppRoutes() {
       {/* Rutas públicas */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
 
       {/* Rutas protegidas: envueltas en el guard de autenticación */}
       <Route element={<ProtectedRoute />}>
@@ -52,6 +55,7 @@ function AppRoutes() {
             path="/alerts"
             element={<PrototypePlaceholderPage title="Alertas" description="Pendiente integrar reglas y notificaciones de precio." />}
           />
+          <Route path="/security/2fa" element={<Security2FAPage />} />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
         </Route>
       </Route>
