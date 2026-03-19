@@ -68,6 +68,14 @@ class DjangoUserRepository(IUserRepository):
 
         return self._to_entity(model)
 
+    def delete(self, user_id: int) -> None:
+        """Eliminar el usuario dado su ID en la base de datos."""
+        try:
+            model = UserModel.objects.get(pk=user_id)
+            model.delete()
+        except UserModel.DoesNotExist:
+            pass
+
     def exists_by_email(self, email: str) -> bool:
         return UserModel.objects.filter(email=email).exists()
 

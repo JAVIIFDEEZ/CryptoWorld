@@ -146,6 +146,18 @@ export const authService = {
   },
 
   /**
+   * Cambiar contraseña del usuario autenticado.
+   * POST /api/auth/change-password/
+   */
+  async changePassword(old_password: string, new_password: string): Promise<{ message: string }> {
+    const { data } = await apiClient.post<{ message: string }>('/auth/change-password/', {
+      old_password,
+      new_password,
+    })
+    return data
+  },
+
+  /**
    * Iniciar setup de 2FA (devuelve QR y secreto).
    * POST /api/auth/2fa/setup/
    */
@@ -170,5 +182,13 @@ export const authService = {
   async disable2FA(totp_code: string): Promise<{ message: string }> {
     const { data } = await apiClient.post<{ message: string }>('/auth/2fa/disable/', { totp_code })
     return data
+  },
+
+  /**
+   * Eliminar la cuenta de usuario de forma permanente.
+   * DELETE /api/auth/delete-account/
+   */
+  async deleteAccount(password: string): Promise<void> {
+    await apiClient.delete('/auth/delete-account/', { data: { password } })
   },
 }

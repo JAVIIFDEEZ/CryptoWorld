@@ -38,6 +38,11 @@ class IUserRepository(ABC):
         ...
 
     @abstractmethod
+    def delete(self, user_id: int) -> None:
+        """Eliminar un usuario del sistema por su ID."""
+        ...
+
+    @abstractmethod
     def exists_by_email(self, email: str) -> bool:
         """Comprobar si existe un usuario con ese email."""
         ...

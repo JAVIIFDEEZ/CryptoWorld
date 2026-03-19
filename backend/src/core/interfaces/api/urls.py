@@ -53,8 +53,12 @@ urlpatterns = [
         "auth/change-password/",
         views.ChangePasswordView.as_view(),
         name="auth-change-password",
+    ),    
+    path(
+        "auth/delete-account/",
+        views.DeleteAccountView.as_view(),
+        name="auth-delete-account",
     ),
-
     # ── Auth — 2FA (TOTP / Google Authenticator) ───────────────────
     path("auth/2fa/setup/", views.Setup2FAView.as_view(), name="auth-2fa-setup"),
     path("auth/2fa/enable/", views.Enable2FAView.as_view(), name="auth-2fa-enable"),

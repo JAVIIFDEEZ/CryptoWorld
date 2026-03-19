@@ -21,6 +21,7 @@ import MarketPage from '@/pages/MarketPage'
 import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
 import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
 import Security2FAPage from '@/pages/Security2FAPage'
+import SettingsPage from '@/pages/SettingsPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AppShell from '@/components/AppShell'
 
@@ -56,6 +57,7 @@ function AppRoutes() {
             element={<PrototypePlaceholderPage title="Alertas" description="Pendiente integrar reglas y notificaciones de precio." />}
           />
           <Route path="/security/2fa" element={<Security2FAPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
         </Route>
       </Route>

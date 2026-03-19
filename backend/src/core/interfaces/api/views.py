@@ -1,17 +1,17 @@
-"""
-interfaces/api/views.py — Controladores HTTP (DRF Views).
+﻿"""
+interfaces/api/views.py â€” Controladores HTTP (DRF Views).
 
-Esta es la única capa que sabe de HTTP.
+Esta es la Ãºnica capa que sabe de HTTP.
 Responsabilidades:
-  1. Recibir y validar la petición HTTP (usando serializers)
+  1. Recibir y validar la peticiÃ³n HTTP (usando serializers)
   2. Construir el DTO de entrada
   3. Invocar el caso de uso correspondiente (capa application)
-  4. Serializar el DTO de salida → respuesta HTTP
+  4. Serializar el DTO de salida â†’ respuesta HTTP
 
 Lo que las views NUNCA deben hacer:
-  - Lógica de negocio
+  - LÃ³gica de negocio
   - Consultas directas a la base de datos
-  - Operaciones matemáticas o financieras
+  - Operaciones matemÃ¡ticas o financieras
 
 Principio aplicado: Single Responsibility + Clean Architecture.
 """
@@ -83,12 +83,12 @@ from core.infrastructure.persistence.repositories_impl import (
 from core.domain.services.user_domain_service import UserDomainService
 
 
-# ── Health Check ───────────────────────────────────────────────────
+# â”€â”€ Health Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class HealthCheckView(APIView):
     """
-    GET /api/health — Endpoint de comprobación de estado del servidor.
-    No requiere autenticación. Útil para monitorización y Docker healthcheck.
+    GET /api/health â€” Endpoint de comprobaciÃ³n de estado del servidor.
+    No requiere autenticaciÃ³n. Ãštil para monitorizaciÃ³n y Docker healthcheck.
     """
     permission_classes = [AllowAny]
 
@@ -99,17 +99,17 @@ class HealthCheckView(APIView):
         )
 
 
-# ── Auth Views ─────────────────────────────────────────────────────
+# â”€â”€ Auth Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class RegisterView(APIView):
     """
-    POST /api/auth/register — Registrar un nuevo usuario.
+    POST /api/auth/register â€” Registrar un nuevo usuario.
 
     Flujo:
       1. Validar datos de entrada con RegisterSerializer
       2. Construir DTO de entrada
       3. Delegar al caso de uso RegisterUserUseCase
-      4. Enviar email de verificación
+      4. Enviar email de verificaciÃ³n
       5. Devolver respuesta 201 con datos del usuario creado
     """
     permission_classes = [AllowAny]
@@ -138,7 +138,7 @@ class RegisterView(APIView):
             user_model.set_password(validated["password"])
             user_model.save()
 
-            # Enviar email de verificación (se imprime en consola en desarrollo)
+            # Enviar email de verificaciÃ³n (se imprime en consola en desarrollo)
             SendVerificationEmailUseCase().execute(output_dto.id)
 
         except ValueError as exc:
@@ -157,7 +157,7 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     """
-    POST /api/auth/login — Autenticar usuario y devolver tokens JWT.
+    POST /api/auth/login â€” Autenticar usuario y devolver tokens JWT.
 
     Si el usuario tiene 2FA activo, devuelve un token temporal (pre_auth_token)
     en lugar de los tokens completos. El cliente debe completar el segundo factor
@@ -180,7 +180,7 @@ class LoginView(APIView):
 
         if user is None:
             return Response(
-                {"error": "Credenciales inválidas."},
+                {"error": "Credenciales invÃ¡lidas."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
@@ -190,17 +190,17 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Política de seguridad: no permitir login hasta verificar email
+        # PolÃ­tica de seguridad: no permitir login hasta verificar email
         if not user.is_email_verified:
             return Response(
                 {
-                    "error": "Debes verificar tu email antes de iniciar sesión.",
+                    "error": "Debes verificar tu email antes de iniciar sesiÃ³n.",
                     "error_code": "email_not_verified",
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Si 2FA está activo, emitir token temporal de pre-autenticación
+        # Si 2FA estÃ¡ activo, emitir token temporal de pre-autenticaciÃ³n
         if user.is_2fa_enabled:
             pre_auth = PreAuthToken()
             pre_auth["user_id"] = user.pk
@@ -230,8 +230,8 @@ class LoginView(APIView):
 
 class LogoutView(APIView):
     """
-    POST /api/auth/logout/ — Cerrar sesión añadiendo el refresh_token a la blacklist.
-    No requiere access token válido: el propio refresh_token es prueba suficiente.
+    POST /api/auth/logout/ â€” Cerrar sesiÃ³n aÃ±adiendo el refresh_token a la blacklist.
+    No requiere access token vÃ¡lido: el propio refresh_token es prueba suficiente.
     Esto permite hacer logout aunque el access token ya haya expirado.
     """
     permission_classes = [AllowAny]
@@ -248,12 +248,12 @@ class LogoutView(APIView):
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"message": "Sesión cerrada correctamente."}, status=status.HTTP_200_OK)
+        return Response({"message": "SesiÃ³n cerrada correctamente."}, status=status.HTTP_200_OK)
 
 
 class MeView(APIView):
     """
-    GET /api/auth/me/ — Devolver los datos del usuario autenticado.
+    GET /api/auth/me/ â€” Devolver los datos del usuario autenticado.
     """
     permission_classes = [IsAuthenticated]
 
@@ -276,7 +276,7 @@ class MeView(APIView):
 class VerifyEmailView(APIView):
     """
     GET /api/auth/verify-email/?uid=xxx&token=xxx
-    Confirmar dirección de email usando el link enviado por correo.
+    Confirmar direcciÃ³n de email usando el link enviado por correo.
     """
     permission_classes = [AllowAny]
 
@@ -302,8 +302,8 @@ class VerifyEmailView(APIView):
 
 class ResendVerificationEmailView(APIView):
     """
-    POST /api/auth/verify-email/resend/ — Reenviar email de verificación.
-    No requiere autenticación para no bloquear el flujo cuando se exige
+    POST /api/auth/verify-email/resend/ â€” Reenviar email de verificaciÃ³n.
+    No requiere autenticaciÃ³n para no bloquear el flujo cuando se exige
     email verificado antes de permitir login.
     """
     permission_classes = [AllowAny]
@@ -313,22 +313,22 @@ class ResendVerificationEmailView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Respuesta indistinguible para evitar enumeración de emails.
+        # Respuesta indistinguible para evitar enumeraciÃ³n de emails.
         from core.infrastructure.persistence.models import User as UserModel
         user = UserModel.objects.filter(email=serializer.validated_data["email"]).first()
         if user and not user.is_email_verified:
             SendVerificationEmailUseCase().execute(user.pk)
 
         return Response(
-            {"message": "Si el email existe y no está verificado, recibirás un enlace."},
+            {"message": "Si el email existe y no estÃ¡ verificado, recibirÃ¡s un enlace."},
             status=status.HTTP_200_OK,
         )
 
 
 class PasswordResetRequestView(APIView):
     """
-    POST /api/auth/password-reset/ — Solicitar link de recuperación por email.
-    No requiere autenticación. No revela si el email existe.
+    POST /api/auth/password-reset/ â€” Solicitar link de recuperaciÃ³n por email.
+    No requiere autenticaciÃ³n. No revela si el email existe.
     """
     permission_classes = [AllowAny]
 
@@ -343,14 +343,14 @@ class PasswordResetRequestView(APIView):
 
         # Respuesta siempre igual para no revelar si el email existe
         return Response(
-            {"message": "Si el email existe, recibirás un enlace de recuperación."},
+            {"message": "Si el email existe, recibirÃ¡s un enlace de recuperaciÃ³n."},
             status=status.HTTP_200_OK,
         )
 
 
 class PasswordResetConfirmView(APIView):
     """
-    POST /api/auth/password-reset/confirm/ — Establecer nueva contraseña con el token del email.
+    POST /api/auth/password-reset/confirm/ â€” Establecer nueva contraseÃ±a con el token del email.
     """
     permission_classes = [AllowAny]
 
@@ -372,15 +372,15 @@ class PasswordResetConfirmView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
-            {"message": "Contraseña restablecida correctamente."},
+            {"message": "ContraseÃ±a restablecida correctamente."},
             status=status.HTTP_200_OK,
         )
 
 
 class ChangePasswordView(APIView):
     """
-    POST /api/auth/change-password/ — Cambiar contraseña estando autenticado.
-    Requiere la contraseña actual como verificación adicional.
+    POST /api/auth/change-password/ â€” Cambiar contraseÃ±a estando autenticado.
+    Requiere la contraseÃ±a actual como verificaciÃ³n adicional.
     """
     permission_classes = [IsAuthenticated]
 
@@ -402,16 +402,16 @@ class ChangePasswordView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
-            {"message": "Contraseña cambiada correctamente."},
+            {"message": "ContraseÃ±a cambiada correctamente."},
             status=status.HTTP_200_OK,
         )
 
 
-# ── 2FA Views ──────────────────────────────────────────────────────
+# â”€â”€ 2FA Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class Setup2FAView(APIView):
     """
-    POST /api/auth/2fa/setup/ — Iniciar configuración de 2FA.
+    POST /api/auth/2fa/setup/ â€” Iniciar configuraciÃ³n de 2FA.
 
     Devuelve el secreto TOTP y el QR en base64 para que el usuario
     escanee con Google Authenticator / Authy.
@@ -440,7 +440,7 @@ class Setup2FAView(APIView):
 
 class Enable2FAView(APIView):
     """
-    POST /api/auth/2fa/enable/ — Activar 2FA confirmando el primer código TOTP.
+    POST /api/auth/2fa/enable/ â€” Activar 2FA confirmando el primer cÃ³digo TOTP.
     """
     permission_classes = [IsAuthenticated]
 
@@ -467,7 +467,7 @@ class Enable2FAView(APIView):
 
 class Disable2FAView(APIView):
     """
-    POST /api/auth/2fa/disable/ — Desactivar 2FA (requiere código TOTP vigente).
+    POST /api/auth/2fa/disable/ â€” Desactivar 2FA (requiere cÃ³digo TOTP vigente).
     """
     permission_classes = [IsAuthenticated]
 
@@ -494,10 +494,10 @@ class Disable2FAView(APIView):
 
 class Verify2FALoginView(APIView):
     """
-    POST /api/auth/2fa/login/ — Segunda fase del login con 2FA.
+    POST /api/auth/2fa/login/ â€” Segunda fase del login con 2FA.
 
-    Recibe el pre_auth_token (obtenido del login normal) y el código TOTP.
-    Si ambos son válidos, devuelve los tokens JWT completos.
+    Recibe el pre_auth_token (obtenido del login normal) y el cÃ³digo TOTP.
+    Si ambos son vÃ¡lidos, devuelve los tokens JWT completos.
     """
     permission_classes = [AllowAny]
 
@@ -529,12 +529,12 @@ class Verify2FALoginView(APIView):
         )
 
 
-# ── Assets Views ───────────────────────────────────────────────────
+# â”€â”€ Assets Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class AssetListView(APIView):
     """
-    GET /api/assets — Listar todos los activos criptográficos.
-    Requiere autenticación JWT (Authorization: Bearer <token>).
+    GET /api/assets â€” Listar todos los activos criptogrÃ¡ficos.
+    Requiere autenticaciÃ³n JWT (Authorization: Bearer <token>).
     """
     permission_classes = [IsAuthenticated]
 
@@ -554,12 +554,12 @@ class AssetListView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# ── Analysis Views ─────────────────────────────────────────────────
+# â”€â”€ Analysis Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class RunAnalysisView(APIView):
     """
-    POST /api/analysis/run — Solicitar ejecución de análisis técnico.
-    Requiere autenticación JWT.
+    POST /api/analysis/run â€” Solicitar ejecuciÃ³n de anÃ¡lisis tÃ©cnico.
+    Requiere autenticaciÃ³n JWT.
     """
     permission_classes = [IsAuthenticated]
 
@@ -581,12 +581,12 @@ class RunAnalysisView(APIView):
         return Response(out_serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
-# ── Market Intelligence Views ─────────────────────────────────────
+# â”€â”€ Market Intelligence Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class MarketOverviewView(APIView):
     """
-    GET /api/market/overview/ — Resumen global del mercado.
-    Requiere autenticación JWT.
+    GET /api/market/overview/ â€” Resumen global del mercado.
+    Requiere autenticaciÃ³n JWT.
     """
 
     permission_classes = [IsAuthenticated]
@@ -599,8 +599,8 @@ class MarketOverviewView(APIView):
 
 class AssetOhlcvView(APIView):
     """
-    GET /api/assets/<symbol>/ohlcv/ — Serie de velas para gráficos interactivos.
-    Requiere autenticación JWT.
+    GET /api/assets/<symbol>/ohlcv/ â€” Serie de velas para grÃ¡ficos interactivos.
+    Requiere autenticaciÃ³n JWT.
     """
 
     permission_classes = [IsAuthenticated]
@@ -622,8 +622,8 @@ class AssetOhlcvView(APIView):
 
 class BlockchainMetricsView(APIView):
     """
-    GET /api/blockchain/metrics/ — Métricas on-chain filtrables.
-    Requiere autenticación JWT.
+    GET /api/blockchain/metrics/ â€” MÃ©tricas on-chain filtrables.
+    Requiere autenticaciÃ³n JWT.
     """
 
     permission_classes = [IsAuthenticated]
@@ -645,8 +645,8 @@ class BlockchainMetricsView(APIView):
 
 class NewsFeedView(APIView):
     """
-    GET /api/news/ — Feed de noticias con filtro de sentimiento.
-    Requiere autenticación JWT.
+    GET /api/news/ â€” Feed de noticias con filtro de sentimiento.
+    Requiere autenticaciÃ³n JWT.
     """
 
     permission_classes = [IsAuthenticated]
@@ -666,10 +666,10 @@ class NewsFeedView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# ── Mock data ──────────────────────────────────────────────────────
+# â”€â”€ Mock data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _get_mock_assets() -> list:
-    """Datos de ejemplo para desarrollo cuando la BD está vacía."""
+    """Datos de ejemplo para desarrollo cuando la BD estÃ¡ vacÃ­a."""
     return [
         {
             "id": 1, "symbol": "BTC", "name": "Bitcoin",
@@ -690,3 +690,31 @@ def _get_mock_assets() -> list:
             "is_bullish_24h": True,
         },
     ]
+
+
+from core.application.use_cases.delete_user_account import DeleteUserAccountUseCase
+from core.interfaces.api.serializers import DeleteAccountSerializer
+
+class DeleteAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        serializer = DeleteAccountSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = authenticate(email=request.user.email, password=serializer.validated_data['password'])
+        if user is None:
+            return Response({'error': 'Contrasena incorrecta'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.infrastructure.persistence.repositories_impl import DjangoUserRepository
+        repo = DjangoUserRepository()
+        use_case = DeleteUserAccountUseCase(repo)
+        result = use_case.execute(request.user.id)
+
+        if result.get('success'):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'error': result.get('error')}, status=status.HTTP_400_BAD_REQUEST)
+
+
+

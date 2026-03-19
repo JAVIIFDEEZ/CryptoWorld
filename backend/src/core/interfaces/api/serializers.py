@@ -218,3 +218,7 @@ class NewsItemSerializer(serializers.Serializer):
     published_at = serializers.CharField()
     sentiment = serializers.CharField()
     relevance_score = serializers.FloatField(allow_null=True)
+
+class DeleteAccountSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True)
+
