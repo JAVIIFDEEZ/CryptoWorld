@@ -107,7 +107,7 @@ function Security2FAPage() {
             {qrCodeBase64 && (
               <div className="space-y-3">
                 <img
-                  src={`data:image/png;base64,${qrCodeBase64}`}
+                  src={qrCodeBase64}
                   alt="QR 2FA"
                   className="w-52 h-52 bg-white p-2 rounded-lg"
                 />
