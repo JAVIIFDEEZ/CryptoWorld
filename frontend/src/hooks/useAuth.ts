@@ -27,6 +27,7 @@ export interface AuthUser {
   id: number
   email: string
   username: string
+  role: 'user' | 'admin'
 }
 
 interface AuthContextType {
@@ -34,6 +35,7 @@ interface AuthContextType {
   token: string | null
   isAuthenticated: boolean
   isLoading: boolean
+  isAdmin: boolean
   login: (email: string, password: string) => Promise<{ requires2FA: boolean; preAuthToken?: string }>
   verify2FALogin: (preAuthToken: string, totpCode: string) => Promise<void>
   logout: () => void
@@ -89,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: response.user_id,
         email: response.email,
         username: response.username,
+        role: response.role ?? 'user',
       }
       applyAuthenticatedSession(response.access_token, authUser)
       return { requires2FA: false }
@@ -105,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: response.user_id,
         email: response.email,
         username: response.username,
+        role: response.role ?? 'user',
       }
       applyAuthenticatedSession(response.access_token, authUser)
     } finally {
@@ -130,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token,
         isAuthenticated: !!token && !!user,
         isLoading,
+        isAdmin: user?.role === 'admin',
         login,
         verify2FALogin,
         logout,

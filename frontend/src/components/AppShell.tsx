@@ -27,7 +27,7 @@ const navItems: NavItem[] = [
 ]
 
 function AppShell() {
-  const { user, logout } = useAuth()
+  const { user, logout, isAdmin } = useAuth()
   const navigate = useNavigate()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -83,6 +83,39 @@ function AppShell() {
                 {item.label}
               </NavLink>
             ))}
+
+            {/* Sección de admin: solo visible para administradores */}
+            {isAdmin && (
+              <>
+                <div className="pt-3 pb-1 px-1">
+                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
+                    Administración
+                  </p>
+                </div>
+                {([
+                  { path: '/admin', label: 'Panel Admin', exact: true },
+                  { path: '/admin/users', label: 'Usuarios' },
+                  { path: '/admin/assets', label: 'Criptoactivos' },
+                ] as NavItem[]).map((item) => (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMobileMenuOpen(false)}
+                    end={item.exact}
+                    className={({ isActive }) =>
+                      [
+                        'block rounded-lg px-3 py-2 text-sm transition-colors',
+                        isActive
+                          ? 'bg-yellow-600 text-white'
+                          : 'text-yellow-300/70 hover:bg-white/10 hover:text-yellow-200',
+                      ].join(' ')
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </>
+            )}
           </nav>
 
           <div className="mt-auto p-3 border-t border-white/10 flex flex-col gap-2">

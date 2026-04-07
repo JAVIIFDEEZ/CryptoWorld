@@ -36,6 +36,7 @@ export interface AuthResponse {
   user_id: number
   email: string
   username: string
+  role: 'user' | 'admin'
 }
 
 export interface LoginRequires2FAResponse {
@@ -62,6 +63,7 @@ export interface UserMeResponse {
   is_active: boolean
   is_email_verified: boolean
   is_2fa_enabled: boolean
+  role: 'user' | 'admin'
   date_joined: string
 }
 
