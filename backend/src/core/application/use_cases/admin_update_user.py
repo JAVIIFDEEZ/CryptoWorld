@@ -32,9 +32,9 @@ class AdminUpdateUserUseCase:
 
         saved = self._user_repo.save(user)
 
-        # Sync is_email_verified through the dedicated method if changed
-        if input_dto.is_email_verified is not None:
-            self._user_repo.set_email_verified(saved.id) if input_dto.is_email_verified else None
+        # Sync is_email_verified through the dedicated ORM method
+        if input_dto.is_email_verified is True:
+            self._user_repo.set_email_verified(saved.id)
 
         return AdminUserOutputDTO(
             id=saved.id,
@@ -43,7 +43,7 @@ class AdminUpdateUserUseCase:
             is_active=saved.is_active,
             is_staff=saved.is_staff,
             role=saved.role,
-            is_email_verified=saved.is_email_verified if input_dto.is_email_verified is None else input_dto.is_email_verified,
+            is_email_verified=saved.is_email_verified,
             is_2fa_enabled=saved.is_2fa_enabled,
             date_joined=saved.date_joined.isoformat() if hasattr(saved.date_joined, 'isoformat') else str(saved.date_joined),
         )
