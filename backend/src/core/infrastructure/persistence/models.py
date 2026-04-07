@@ -37,6 +37,7 @@ class UserManager(BaseUserManager):
     def create_superuser(self, email: str, username: str, password: str, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("role", "admin")
         return self.create_user(email, username, password, **extra_fields)
                                                                           
 
@@ -51,11 +52,23 @@ class User(AbstractBaseUser, PermissionsMixin):
     PermissionsMixin: provee sistema de grupos y permisos de Django.
     """
 
+    ROLE_CHOICES = [
+        ("user", "Usuario"),
+        ("admin", "Administrador"),
+    ]
+
     email = models.EmailField(unique=True, db_index=True)
     username = models.CharField(max_length=150, unique=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
+    role = models.CharField(
+        max_length=10,
+        choices=ROLE_CHOICES,
+        default="user",
+        db_index=True,
+        help_text="Rol del usuario en el sistema: 'user' o 'admin'.",
+    )
 
     # ── Campos de autenticación extendida ──────────────────────────
     is_email_verified = models.BooleanField(

@@ -21,6 +21,11 @@ class ICryptoAssetRepository(ABC):
         ...
 
     @abstractmethod
+    def get_by_id(self, asset_id: int) -> Optional[CryptoAssetEntity]:
+        """Obtener un activo por su ID."""
+        ...
+
+    @abstractmethod
     def get_by_symbol(self, symbol: str) -> Optional[CryptoAssetEntity]:
         """Obtener un activo por su ticker (BTC, ETH, ...)."""
         ...
@@ -28,4 +33,9 @@ class ICryptoAssetRepository(ABC):
     @abstractmethod
     def save(self, asset: CryptoAssetEntity) -> CryptoAssetEntity:
         """Persistir o actualizar un activo criptográfico."""
+        ...
+
+    @abstractmethod
+    def delete(self, asset_id: int) -> None:
+        """Eliminar un activo criptográfico del sistema."""
         ...

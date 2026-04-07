@@ -9,7 +9,7 @@ Principio aplicado: Inversión de Dependencias (DIP).
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional
 from core.domain.entities.user import UserEntity
 
 
@@ -30,6 +30,11 @@ class IUserRepository(ABC):
     @abstractmethod
     def get_by_email(self, email: str) -> Optional[UserEntity]:
         """Obtener usuario por email (usado en autenticación)."""
+        ...
+
+    @abstractmethod
+    def get_all(self) -> List[UserEntity]:
+        """Obtener todos los usuarios del sistema."""
         ...
 
     @abstractmethod

@@ -46,6 +46,11 @@ class DjangoUserRepository(IUserRepository):
         except UserModel.DoesNotExist:
             return None
 
+    def get_all(self) -> List[UserEntity]:
+        """Obtener todos los usuarios del sistema."""
+        models = UserModel.objects.all().order_by("-date_joined")
+        return [self._to_entity(m) for m in models]
+
     def save(self, user: UserEntity) -> UserEntity:
         """
         Persistir una entidad de usuario.
@@ -57,6 +62,7 @@ class DjangoUserRepository(IUserRepository):
             model.username = user.username
             model.is_active = user.is_active
             model.is_staff = user.is_staff
+            model.role = user.role
             model.save()
         else:
             # create_user gestiona el hash de contraseña automáticamente
@@ -64,6 +70,7 @@ class DjangoUserRepository(IUserRepository):
             model = UserModel.objects.create_user(
                 email=user.email,
                 username=user.username,
+                role=user.role,
             )
 
         return self._to_entity(model)
@@ -116,6 +123,7 @@ class DjangoUserRepository(IUserRepository):
             is_email_verified=model.is_email_verified,
             totp_secret=model.totp_secret,
             is_2fa_enabled=model.is_2fa_enabled,
+            role=model.role,
         )
 
 
@@ -127,6 +135,13 @@ class DjangoCryptoAssetRepository(ICryptoAssetRepository):
     def get_all(self) -> List[CryptoAssetEntity]:
         models = CryptoAssetModel.objects.all()
         return [self._to_entity(m) for m in models]
+
+    def get_by_id(self, asset_id: int) -> Optional[CryptoAssetEntity]:
+        try:
+            model = CryptoAssetModel.objects.get(pk=asset_id)
+            return self._to_entity(model)
+        except CryptoAssetModel.DoesNotExist:
+            return None
 
     def get_by_symbol(self, symbol: str) -> Optional[CryptoAssetEntity]:
         try:
@@ -151,6 +166,14 @@ class DjangoCryptoAssetRepository(ICryptoAssetRepository):
             }
         )
         return self._to_entity(model)
+
+    def delete(self, asset_id: int) -> None:
+        """Eliminar un activo criptográfico del sistema."""
+        try:
+            model = CryptoAssetModel.objects.get(pk=asset_id)
+            model.delete()
+        except CryptoAssetModel.DoesNotExist:
+            pass
 
     @staticmethod
     def _to_entity(model: CryptoAssetModel) -> CryptoAssetEntity:

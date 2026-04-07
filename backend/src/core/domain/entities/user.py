@@ -31,6 +31,8 @@ class UserEntity:
     is_email_verified: bool = False
     totp_secret: Optional[str] = None
     is_2fa_enabled: bool = False
+    # Rol del usuario
+    role: str = "user"
 
     def __post_init__(self) -> None:
         """Validaciones de negocio al crear la entidad."""
@@ -38,6 +40,8 @@ class UserEntity:
             raise ValueError(f"Email inválido: '{self.email}'")
         if not self.username or len(self.username) < 3:
             raise ValueError("El nombre de usuario debe tener al menos 3 caracteres.")
+        if self.role not in ("user", "admin"):
+            raise ValueError(f"Rol inválido: '{self.role}'. Debe ser 'user' o 'admin'.")
 
     def deactivate(self) -> None:
         """Operación de dominio: desactivar cuenta."""
@@ -46,3 +50,16 @@ class UserEntity:
     def promote_to_staff(self) -> None:
         """Operación de dominio: promover a staff."""
         self.is_staff = True
+
+    def is_admin(self) -> bool:
+        """Comprobar si el usuario tiene rol de administrador."""
+        return self.role == "admin"
+
+    def promote_to_admin(self) -> None:
+        """Operación de dominio: promover a administrador."""
+        self.role = "admin"
+        self.is_staff = True
+
+    def demote_to_user(self) -> None:
+        """Operación de dominio: degradar a usuario regular."""
+        self.role = "user"
