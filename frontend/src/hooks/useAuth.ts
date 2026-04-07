@@ -27,6 +27,7 @@ export interface AuthUser {
   id: number
   email: string
   username: string
+  isAdmin: boolean
 }
 
 interface AuthContextType {
@@ -89,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: response.user_id,
         email: response.email,
         username: response.username,
+        isAdmin: !!response.is_admin,
       }
       applyAuthenticatedSession(response.access_token, authUser)
       return { requires2FA: false }
@@ -105,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: response.user_id,
         email: response.email,
         username: response.username,
+        isAdmin: !!response.is_admin,
       }
       applyAuthenticatedSession(response.access_token, authUser)
     } finally {

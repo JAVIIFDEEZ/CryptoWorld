@@ -83,6 +83,24 @@ function AppShell() {
                 {item.label}
               </NavLink>
             ))}
+
+            {/* Enlace Admin — solo visible para administradores */}
+            {user?.isAdmin && (
+              <NavLink
+                to="/admin"
+                onClick={() => setMobileMenuOpen(false)}
+                className={({ isActive }) =>
+                  [
+                    'block rounded-lg px-3 py-2 text-sm transition-colors mt-4 border border-fuchsia-500/30',
+                    isActive
+                      ? 'bg-fuchsia-600 text-white'
+                      : 'text-fuchsia-400 hover:bg-fuchsia-500/10 hover:text-fuchsia-300',
+                  ].join(' ')
+                }
+              >
+                🛡️ Panel Admin
+              </NavLink>
+            )}
           </nav>
 
           <div className="mt-auto p-3 border-t border-white/10 flex flex-col gap-2">

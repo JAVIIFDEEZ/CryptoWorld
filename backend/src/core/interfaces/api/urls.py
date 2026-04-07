@@ -14,6 +14,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from core.interfaces.api import views
+from core.interfaces.api import admin_views
 
 urlpatterns = [
     # ── Health ─────────────────────────────────────────────────────
@@ -76,4 +77,9 @@ urlpatterns = [
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
     path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
+
+    # ── Admin ───────────────────────────────────────────────────────
+    path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),
+    path("admin/users/<int:user_id>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),
+    path("admin/market/sync/", admin_views.AdminMarketSyncView.as_view(), name="admin-market-sync"),
 ]

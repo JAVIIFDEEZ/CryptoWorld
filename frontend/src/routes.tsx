@@ -23,7 +23,9 @@ import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
 import Security2FAPage from '@/pages/Security2FAPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import { AdminRoute } from '@/components/AdminRoute'
 import AppShell from '@/components/AppShell'
+import AdminDashboardPage from '@/pages/AdminDashboardPage'
 
 function AppRoutes() {
   return (
@@ -59,6 +61,14 @@ function AppRoutes() {
           <Route path="/security/2fa" element={<Security2FAPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
+          <Route
+            path="/admin"
+            element={
+              <AdminRoute>
+                <AdminDashboardPage />
+              </AdminRoute>
+            }
+          />
         </Route>
       </Route>
 

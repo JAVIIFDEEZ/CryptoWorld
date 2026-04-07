@@ -79,4 +79,5 @@ class Verify2FALoginUseCase:
             user_id=user.pk,
             email=user.email,
             username=user.username,
+            is_admin=user.is_staff or user.is_superuser,
         )

@@ -103,6 +103,7 @@ class AuthTokenOutputDTO:
     user_id: int
     username: str
     email: str
+    is_admin: bool = False
 
 
 @dataclass(frozen=True)
