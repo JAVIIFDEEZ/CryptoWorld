@@ -11,6 +11,7 @@ Convención REST aplicada:
 """
 
 from django.urls import path
+from django.urls import include
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from core.interfaces.api import views
@@ -76,4 +77,7 @@ urlpatterns = [
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
     path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
+
+    # ── Admin ──────────────────────────────────────────────────────
+    path("admin/", include("core.interfaces.api.admin_urls")),
 ]

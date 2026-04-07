@@ -27,10 +27,14 @@ class InMemoryCryptoAssetRepository(ICryptoAssetRepository):
 
     def __init__(self):
         self._store: dict[str, CryptoAssetEntity] = {}
+        self._id_store: dict[int, CryptoAssetEntity] = {}
         self._next_id: int = 1
 
     def get_all(self) -> List[CryptoAssetEntity]:
         return list(self._store.values())
+
+    def get_by_id(self, asset_id: int) -> Optional[CryptoAssetEntity]:
+        return self._id_store.get(asset_id)
 
     def get_by_symbol(self, symbol: str) -> Optional[CryptoAssetEntity]:
         return self._store.get(symbol.upper())
@@ -41,7 +45,13 @@ class InMemoryCryptoAssetRepository(ICryptoAssetRepository):
             asset = replace(asset, id=self._next_id)
             self._next_id += 1
         self._store[asset.symbol] = asset
+        self._id_store[asset.id] = asset
         return asset
+
+    def delete(self, asset_id: int) -> None:
+        asset = self._id_store.pop(asset_id, None)
+        if asset:
+            self._store.pop(asset.symbol, None)
 
 
 # ── Tests del contrato abstracto ──────────────────────────────────

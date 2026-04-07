@@ -37,9 +37,15 @@ class StubUserRepository(IUserRepository):
     def get_by_email(self, email: str) -> Optional[UserEntity]:
         return None
 
+    def get_all(self):
+        return []
+
     def save(self, user: UserEntity) -> UserEntity:
         self._emails.add(user.email)
         return user
+
+    def delete(self, user_id: int) -> None:
+        pass
 
 
 # ── TestUserDomainService ──────────────────────────────────────────

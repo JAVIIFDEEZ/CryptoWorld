@@ -222,6 +222,7 @@ class LoginView(APIView):
                 "user_id": user.pk,
                 "email": user.email,
                 "username": user.username,
+                "role": user.role,
                 "requires_2fa": False,
             },
             status=status.HTTP_200_OK,
@@ -267,6 +268,7 @@ class MeView(APIView):
                 "is_active": user.is_active,
                 "is_email_verified": user.is_email_verified,
                 "is_2fa_enabled": user.is_2fa_enabled,
+                "role": user.role,
                 "date_joined": user.date_joined.isoformat(),
             },
             status=status.HTTP_200_OK,
@@ -524,6 +526,7 @@ class Verify2FALoginView(APIView):
                 "user_id": output_dto.user_id,
                 "email": output_dto.email,
                 "username": output_dto.username,
+                "role": output_dto.role,
             },
             status=status.HTTP_200_OK,
         )

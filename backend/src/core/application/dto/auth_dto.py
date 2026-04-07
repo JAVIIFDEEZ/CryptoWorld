@@ -103,6 +103,7 @@ class AuthTokenOutputDTO:
     user_id: int
     username: str
     email: str
+    role: str = "user"
 
 
 @dataclass(frozen=True)
