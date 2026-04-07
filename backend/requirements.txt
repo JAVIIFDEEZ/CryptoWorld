@@ -26,6 +26,9 @@ django-cors-headers==4.4.0
 # ── Variables de entorno ──────────────────────────────────────────
 python-dotenv==1.0.1
 
+# ── HTTP client (Binance & CoinGecko) ─────────────────────────────
+requests==2.32.3
+
 # ── Testing ───────────────────────────────────────────────────────
 pytest==8.2.2
 pytest-django==4.8.0
