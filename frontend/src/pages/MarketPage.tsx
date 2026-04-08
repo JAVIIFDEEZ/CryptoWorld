@@ -80,7 +80,7 @@ function MarketPage() {
       <header>
         <h1 className="text-2xl font-bold text-white">Mercado</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Vista inspirada en el prototipo Figma y conectada al endpoint real de activos.
+          Catálogo completo de activos. Busca, ordena y accede al detalle de cada criptomoneda.
         </p>
       </header>
 
@@ -97,7 +97,7 @@ function MarketPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por simbolo o nombre..."
+            placeholder="Buscar por símbolo o nombre..."
             className="w-full md:w-72 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -113,6 +113,7 @@ function MarketPage() {
                   <HeaderCell label="Activo" onClick={() => handleSort('symbol')} />
                   <HeaderCell label="Precio" align="right" onClick={() => handleSort('price')} />
                   <HeaderCell label="24h" align="right" onClick={() => handleSort('change')} />
+                  <HeaderCell label="Volumen 24h" align="right" onClick={() => handleSort('marketCap')} />
                   <HeaderCell label="Cap. mercado" align="right" onClick={() => handleSort('marketCap')} />
                   <th className="px-4 py-3 text-center">Detalle</th>
                 </tr>
@@ -127,9 +128,13 @@ function MarketPage() {
                     <tr key={asset.id} className="hover:bg-slate-700/25 transition-colors">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-slate-700 text-blue-400 text-xs font-bold flex items-center justify-center">
-                            {asset.symbol.slice(0, 2)}
-                          </div>
+                          {asset.logo_url ? (
+                            <img src={asset.logo_url} alt={asset.symbol} className="w-8 h-8 rounded-full" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-slate-700 text-blue-400 text-xs font-bold flex items-center justify-center">
+                              {asset.symbol.slice(0, 2)}
+                            </div>
+                          )}
                           <div>
                             <p className="font-medium text-white">{asset.symbol}</p>
                             <p className="text-xs text-slate-500">{asset.name}</p>
@@ -141,6 +146,11 @@ function MarketPage() {
                       </td>
                       <td className={`px-4 py-3 text-right font-mono ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
                         {isPositive ? '+' : ''}{change.toFixed(2)}%
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">
+                        {asset.volume_24h && parseFloat(asset.volume_24h) > 0
+                          ? `$${(parseFloat(asset.volume_24h) / 1e9).toFixed(2)}B`
+                          : '—'}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300 font-mono">
                         {marketCap > 0 ? `$${(marketCap / 1e9).toFixed(2)}B` : '—'}
