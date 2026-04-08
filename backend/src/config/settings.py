@@ -199,6 +199,6 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
 # ── APIs externas ──────────────────────────────────────────────────
-# CoinGecko Demo (gratuito) — 30 req/min por defecto sin clave
-# Registrarse en https://www.coingecko.com/en/api para obtener clave
+# CoinGecko Demo (gratuito) — 30 req/min sin clave, ~500 req/min con clave.
+# Definir COINGECKO_API_KEY en .env (nunca hardcodear en código fuente).
 COINGECKO_API_KEY = os.environ.get("COINGECKO_API_KEY", "")
