@@ -24,6 +24,7 @@ export interface CryptoAsset {
   volume_24h: string | null
   price_change_24h: string | null
   is_bullish_24h: boolean
+  logo_url: string | null
 }
 
 export interface AnalysisRequest {

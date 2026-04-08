@@ -1,20 +1,14 @@
 /**
  * pages/AssetDetailPage.tsx — Detalle de un activo criptográfico.
  *
- * Responsabilidad: mostrar información detallada de un activo
- * e iniciar análisis técnicos sobre él.
- *
- * El símbolo del activo llega por parámetro de ruta (:symbol).
- *
- * Estructura base lista para ampliar con:
- *   - Gráfico de precio histórico
- *   - Indicadores técnicos calculados por el backend
- *   - Panel de resultados de análisis
+ * Muestra información detallada del activo, gráfico OHLCV en tiempo real
+ * (datos de Binance vía backend) y análisis técnico.
  */
 
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset, type AnalysisResult } from '@/services/analysisService'
+import OhlcvChart from '@/components/OhlcvChart'
 
 type AnalysisType = 'RSI' | 'MACD' | 'SMA' | 'EMA' | 'BOLLINGER'
 
@@ -86,9 +80,13 @@ function AssetDetailPage() {
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 mb-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center text-lg font-bold text-blue-400">
-              {asset.symbol.slice(0, 2)}
-            </div>
+            {asset.logo_url ? (
+              <img src={asset.logo_url} alt={asset.symbol} className="w-12 h-12 rounded-full" />
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center text-lg font-bold text-blue-400">
+                {asset.symbol.slice(0, 2)}
+              </div>
+            )}
             <div>
               <h1 className="text-2xl font-bold text-white">{asset.name}</h1>
               <p className="text-slate-400 text-sm">{asset.symbol}</p>
@@ -109,6 +107,11 @@ function AssetDetailPage() {
           <Metric label="Volumen 24h" value={asset.volume_24h ? `$${(parseFloat(asset.volume_24h) / 1e9).toFixed(2)}B` : '—'} />
           <Metric label="Tendencia" value={asset.is_bullish_24h ? '📈 Alcista' : '📉 Bajista'} />
         </div>
+      </div>
+
+      {/* Gráfico de velas OHLCV */}
+      <div className="mb-6">
+        <OhlcvChart symbol={asset.symbol} initialInterval="1h" />
       </div>
 
       {/* Panel de análisis */}

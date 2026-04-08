@@ -40,20 +40,25 @@
 
 **CryptoWorld** es una plataforma web de análisis de criptomonedas desarrollada como Trabajo de Fin de Grado. El proyecto combina un backend API REST con un frontend Single Page Application (SPA).
 
-### Funcionalidades implementadas (Marzo 2026)
+### Funcionalidades implementadas (Julio 2026)
 - Sistema de autenticación completo: registro, login, logout seguro
 - Verificación de email mediante token HMAC
 - Recuperación y cambio de contraseña
 - Autenticación de Doble Factor (2FA) mediante TOTP (compatible con Google Authenticator)
-- Listado de activos criptográficos (datos mock, pendiente integración real)
+- **Sincronización de catálogo de activos desde CoinGecko** (top N por market cap, logos, precios)
+- **Datos OHLCV reales con volumen desde Binance** (sin API key, ~600 req/min)
+- **Métricas globales del mercado** (market cap total, volumen 24h, dominancia BTC, Fear & Greed Index)
+- **Gráfico de velas interactivo** (TradingView Lightweight Charts v4, selector de intervalos)
+- **Panel de administración** con gestión de usuarios y sincronización de mercado
+- Dashboard frontend con datos reales, logos y métricas en tiempo real
 - Infraestructura de análisis técnico (stub preparado para RSI, MACD, Bollinger)
-- Dashboard frontend con rutas protegidas por JWT
 
 ### Funcionalidades pendientes (roadmap)
-- Integración con CoinGecko API para datos de mercado reales
 - Análisis técnico: RSI, MACD, Bandas de Bollinger, Medias Móviles
 - Gestión de portfolio personal
 - Sistema de alertas configurables
+- Noticias y sentimiento (feed real)
+- Métricas on-chain (datos reales)
 - Historial de análisis ejecutados
 
 ---
@@ -75,6 +80,7 @@
 | Pillow | 10.4.0 | Dependencia de qrcode para renderizado de imágenes |
 | python-dotenv | 1.0.1 | Carga de variables de entorno desde .env |
 | gunicorn | 22.0.0 | Servidor WSGI para producción |
+| requests | 2.32.3 | Cliente HTTP para APIs externas (Binance, CoinGecko, Alternative.me) |
 | pytest | 8.2.2 | Framework de testing |
 | pytest-django | 4.8.0 | Integración pytest con Django |
 
@@ -87,6 +93,7 @@
 | react-router-dom | 6.24.0 | Enrutamiento SPA con rutas protegidas |
 | Axios | 1.7.2 | Cliente HTTP con interceptores JWT automáticos |
 | TailwindCSS | 3.4.6 | Framework CSS utility-first |
+| TradingView Lightweight Charts | 4.2.0 | Gráficos financieros de velas (candlestick) interactivos |
 
 ### Infraestructura
 | Componente | Versión | Propósito |
@@ -1684,40 +1691,51 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 
 ## 11. ESTADO ACTUAL Y ROADMAP
 
-### Estado actual — Marzo 2026
+### Estado actual — Julio 2026 (v2.0.0 — Datos reales + Gráficos interactivos)
 
 **Servicios Docker activos:**
 | Contenedor | Puerto | Estado |
 |---|---|---|
-| cryptoworld_db (PostgreSQL) | 5432 | Running (healthy) |
-| cryptoworld_backend (Django) | 8000 | Running |
-| cryptoworld_frontend (React/Vite) | 5173 | Running |
+| cryptoworld_db (PostgreSQL 16) | 5432 | Running (healthy) |
+| cryptoworld_backend (Django 5.0.6) | 8000 | Running |
+| cryptoworld_frontend (React 18 + Vite) | 5173 | Running |
 | cryptoworld_pgadmin | 5050 | Running |
 
+**APIs externas integradas:**
+| Proveedor | Endpoint Base | Auth | Límite | Uso en el proyecto |
+|---|---|---|---|---|
+| Binance Public | `data-api.binance.vision` | Sin API key | ~600 req/min | OHLCV (velas de precio con volumen) |
+| CoinGecko v3 | `api.coingecko.com/api/v3` | Opcional (demo key) | 30 req/min (free) | Catálogo de activos, métricas globales |
+| Alternative.me | `api.alternative.me/fng/` | Sin auth | Libre | Fear & Greed Index |
+
 **Endpoints implementados y validados:**
-| Método | Ruta | Auth | Estado |
-|---|---|---|---|
-| GET | `/api/health/` | No | ✅ Funcional |
-| POST | `/api/auth/register/` | No | ✅ Funcional |
-| POST | `/api/auth/login/` | No | ✅ Funcional (soporta 2FA) |
-| POST | `/api/auth/logout/` | Sí | ✅ Funcional (blacklist) |
-| GET | `/api/auth/me/` | Sí | ✅ Funcional |
-| POST | `/api/auth/token/refresh/` | No | ✅ Funcional |
-| GET | `/api/auth/verify-email/` | No | ✅ Funcional |
-| POST | `/api/auth/verify-email/resend/` | Sí | ✅ Funcional |
-| POST | `/api/auth/password-reset/` | No | ✅ Funcional |
-| POST | `/api/auth/password-reset/confirm/` | No | ✅ Funcional |
-| POST | `/api/auth/change-password/` | Sí | ✅ Funcional |
-| POST | `/api/auth/2fa/setup/` | Sí | ✅ Funcional |
-| POST | `/api/auth/2fa/enable/` | Sí | ✅ Funcional |
-| POST | `/api/auth/2fa/disable/` | Sí | ✅ Funcional |
-| POST | `/api/auth/2fa/login/` | No | ✅ Funcional |
-| GET | `/api/assets/` | Sí | ⚠️ Datos mock |
-| POST | `/api/analysis/run/` | Sí | ⚠️ Stub (retorna pending) |
-| GET | `/api/market/overview/` | Sí | ✅ Contract-first (mock estructurado) |
-| GET | `/api/assets/{symbol}/ohlcv/` | Sí | ✅ Contract-first (velas sintéticas) |
-| GET | `/api/blockchain/metrics/` | Sí | ✅ Contract-first (serie on-chain sintética) |
-| GET | `/api/news/` | Sí | ✅ Contract-first (feed filtrable) |
+| Método | Ruta | Auth | Estado | Fuente |
+|---|---|---|---|---|
+| GET | `/api/health/` | No | ✅ Funcional | — |
+| POST | `/api/auth/register/` | No | ✅ Funcional | DB |
+| POST | `/api/auth/login/` | No | ✅ Funcional (soporta 2FA) | DB |
+| POST | `/api/auth/logout/` | Sí | ✅ Funcional (blacklist) | DB |
+| GET | `/api/auth/me/` | Sí | ✅ Funcional | DB |
+| POST | `/api/auth/token/refresh/` | No | ✅ Funcional | SimpleJWT |
+| GET | `/api/auth/verify-email/` | No | ✅ Funcional | DB + HMAC |
+| POST | `/api/auth/verify-email/resend/` | Sí | ✅ Funcional | Email |
+| POST | `/api/auth/password-reset/` | No | ✅ Funcional | Email + HMAC |
+| POST | `/api/auth/password-reset/confirm/` | No | ✅ Funcional | DB + HMAC |
+| POST | `/api/auth/change-password/` | Sí | ✅ Funcional | DB |
+| POST | `/api/auth/2fa/setup/` | Sí | ✅ Funcional | pyotp |
+| POST | `/api/auth/2fa/enable/` | Sí | ✅ Funcional | pyotp |
+| POST | `/api/auth/2fa/disable/` | Sí | ✅ Funcional | pyotp |
+| POST | `/api/auth/2fa/login/` | No | ✅ Funcional | pyotp + JWT |
+| GET | `/api/assets/` | Sí | ✅ **Datos reales** | DB (sync CoinGecko) |
+| POST | `/api/analysis/run/` | Sí | ⚠️ Stub (retorna pending) | — |
+| GET | `/api/market/overview/` | Sí | ✅ **Datos reales** | CoinGecko /global + Alternative.me |
+| GET | `/api/assets/{symbol}/ohlcv/` | Sí | ✅ **Datos reales** | Binance /klines |
+| GET | `/api/blockchain/metrics/` | Sí | ⚠️ Stub (datos sintéticos) | — |
+| GET | `/api/news/` | Sí | ⚠️ Stub (3 noticias fijas) | — |
+| GET | `/api/admin/users/` | Admin | ✅ Funcional | DB |
+| POST | `/api/admin/users/` | Admin | ✅ Funcional | DB |
+| PATCH | `/api/admin/users/{id}/` | Admin | ✅ Funcional | DB |
+| POST | `/api/admin/market/sync/` | Admin | ✅ **Datos reales** | CoinGecko /coins/markets |
 
 **Capas implementadas:**
 | Capa | Estado |
@@ -1726,79 +1744,147 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 | Domain — Repository interfaces | ✅ Completo |
 | Domain — Value Objects | ✅ Completo |
 | Domain — Services | ✅ Completo |
-| Application — 13 casos de uso | ✅ Completo (auth completo, assets/análisis parcial) |
-| Application — DTOs | ✅ Completo |
-| Infrastructure — ORM Models | ✅ Completo (4 modelos, 2 migraciones) |
+| Application — 16+ casos de uso | ✅ Auth completo, market data real, OHLCV real, sync real |
+| Application — DTOs | ✅ Completo (auth, asset, market_intelligence) |
+| Infrastructure — ORM Models | ✅ Completo (5 modelos, 3 migraciones) |
 | Infrastructure — Repositories impl | ✅ Completo |
-| Infrastructure — External APIs | ⚠️ En preparación (contract-first activo) |
-| Interfaces — API (21 endpoints) | ✅ Completo |
+| Infrastructure — External APIs | ✅ **BinancePublicClient + CoinGeckoClient** |
+| Interfaces — API (25+ endpoints) | ✅ Completo |
 | Frontend — Auth flow | ✅ Completo |
-| Frontend — Dashboard | ⚠️ Parcial (sin datos reales) |
+| Frontend — Dashboard con datos reales | ✅ **Completo (overview + tabla activos + logos)** |
+| Frontend — Gráfico OHLCV interactivo | ✅ **Completo (lightweight-charts v4)** |
+| Frontend — Panel Admin con sync | ✅ **Completo (feedback de resultados)** |
 | Tests unitarios | ✅ Implementados y pasando |
 | Tests integración | ✅ Implementados y pasando |
 
+### Validación de la integración de datos reales (Julio 2026)
+
+Pruebas ejecutadas contra los contenedores Docker en ejecución:
+
+| Test | Comando | Resultado |
+|---|---|---|
+| Sync de mercado | `POST /api/admin/market/sync/` con `per_page=20` | `assets_created: 20, assets_updated: 0, snapshots_created: 20, errors: []` |
+| Market overview | `GET /api/market/overview/` | `total_market_cap_usd: "2531262966084"`, `btc_dominance_pct: "56.87"`, `fear_greed_index: 17` |
+| Assets reales | `GET /api/assets/` | 20 activos reales con logos, precios y market caps de CoinGecko |
+| OHLCV Binance | `GET /api/assets/BTC/ohlcv/?interval=1h&limit=10` | 10 velas reales con open, high, low, close, volume |
+
+### Archivos nuevos y modificados (Fase de datos reales + gráficos)
+
+#### Backend — Nuevos adaptadores de APIs externas
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `infrastructure/external_apis/binance_client.py` | Nuevo | Cliente HTTP para Binance Public API. Método `get_klines()` → OHLCV con volumen. Sin API key. |
+| `infrastructure/external_apis/coingecko_client.py` | Nuevo | Cliente HTTP para CoinGecko API v3. Métodos `get_markets()` (catálogo) y `get_global()` (métricas globales). Sesión con API key opcional. |
+
+#### Backend — Nuevos casos de uso
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `application/use_cases/sync_market_data.py` | Nuevo | `SyncMarketDataUseCase` — Obtiene top N de CoinGecko, hace upsert en `CryptoAsset` y crea `MarketDataSnapshot`. Devuelve `SyncResultDTO` con estadísticas. |
+| `application/use_cases/get_asset_ohlcv.py` | Reescrito | `GetAssetOhlcvUseCase` — Ahora usa `BinancePublicClient` para datos OHLCV reales (con volumen), con fallback a datos sintéticos. |
+| `application/use_cases/get_market_overview.py` | Reescrito | `GetMarketOverviewUseCase` — Ahora usa CoinGecko `/global` + Alternative.me Fear & Greed Index, con fallbacks. |
+
+#### Backend — Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `interfaces/api/admin_views.py` | `AdminMarketSyncView` conectado al `SyncMarketDataUseCase` real. Validación de `per_page`. |
+| `config/settings.py` | Añadido `COINGECKO_API_KEY` (variable de entorno opcional). |
+| `requirements.txt` | Añadido `requests==2.32.3`. |
+
+#### Frontend — Nuevos componentes y servicios
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `components/OhlcvChart.tsx` | Nuevo | Componente de gráfico de velas con TradingView Lightweight Charts v4. Selector de intervalos (1m/15m/1h/4h/1d/1w), dark theme, responsive. |
+| `services/marketService.ts` | Nuevo | Servicio con `getOhlcv()` y `getMarketOverview()`. Tipado: `OhlcvCandle`, `MarketOverview`, `OhlcvInterval`. |
+
+#### Frontend — Archivos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `package.json` | Añadida dependencia `lightweight-charts ^4.2.0`. |
+| `pages/AssetDetailPage.tsx` | Integrado `OhlcvChart` entre header y panel de análisis. Logos reales cuando disponibles. |
+| `pages/DashboardPage.tsx` | Widget de Market Overview (4 tarjetas: cap total, vol 24h, BTC dominance, Fear & Greed). Logos reales en la tabla de activos. |
+| `pages/AdminDashboardPage.tsx` | Botón de sync con loading state y tarjeta de resultados (created/updated/snapshots/errors). |
+| `services/analysisService.ts` | Interfaz `CryptoAsset` ampliada con campo `logo_url`. |
+
+### Patrón Adapter aplicado a las APIs externas
+
+Los clientes de APIs externas (`BinancePublicClient`, `CoinGeckoClient`) siguen el **Adapter Pattern** de Arquitectura Hexagonal:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Capa de Aplicación (use_cases/)                     │
+│                                                      │
+│  GetAssetOhlcvUseCase ◄── BinancePublicClient        │
+│  SyncMarketDataUseCase ◄── CoinGeckoClient           │
+│  GetMarketOverviewUseCase ◄── CoinGeckoClient        │
+│                              + Alternative.me (HTTP)  │
+└─────────────────────────────────────────────────────┘
+```
+
+Cada cliente encapsula:
+- URL base y configuración de timeout
+- Sesión HTTP reutilizable (`requests.Session`)
+- Manejo de errores específico (`BinanceClientError`, `CoinGeckoClientError`)
+- Logging estructurado
+
+Si en el futuro se cambia Binance por otro proveedor OHLCV, solo se sustituye el adaptador; el caso de uso y el frontend no cambian.
+
 ### Roadmap de fases futuras
 
-**Sprint 0.5** — Contratos de datos y preparación de integración
-- Definición de DTOs para `market overview`, `ohlcv`, `on-chain` y `news`
-- Implementación de casos de uso `contract-first` con datos estructurados de transición
-- Publicación de endpoints backend para desacoplar frontend de la fuente final
-- Objetivo: permitir migrar UI avanzada sin bloquearse por la integración externa
+**Completado:**
+- ~~Sprint 0.5 — Contratos de datos contract-first~~ ✅
+- ~~Sprint 1 — Integración CoinGecko API (sync de catálogo + métricas globales)~~ ✅
+- ~~Sprint 1b — Integración Binance API (OHLCV real con volumen)~~ ✅
+- ~~Sprint 3 (parcial) — Frontend con gráficos interactivos y datos reales~~ ✅
 
-**Sprint 1** — Integración CoinGecko API
-- Crear `infrastructure/external_apis/coingecko_client.py`
-- Definir `ICoinGeckoRepository` en el dominio
-- Implementar `GetLiveMarketDataUseCase`
-- Conectar `GET /api/assets/` con datos reales
-- Caché de respuestas para evitar rate-limiting
-
-**Sprint 2** — Análisis Técnico
-- RSI (Relative Strength Index) en `domain/services/`
+**Próximo — Sprint 2: Análisis Técnico**
+- RSI (Relative Strength Index) calculado sobre velas OHLCV de Binance
 - MACD (Moving Average Convergence Divergence)
 - Bandas de Bollinger
 - Medias Móviles (SMA, EMA)
-- Completar `RunAnalysisUseCase` con lógica real
+- Completar `RunAnalysisUseCase` con lógica real en `domain/services/`
 
-**Sprint 3** — Frontend con datos reales
-- Gráficos de precios históricos
-- Tabla de mercado paginada con datos CoinGecko
-- Flujo 2FA completo en el frontend (formulario TOTP)
-- Verificación de email integrada en registro
-
-**Sprint 4** — Portfolio y Alertas
+**Sprint 4 — Portfolio y Alertas**
 - CRUD de portfolio personal (posiciones, precio de entrada, P&L)
+- Modelo `PortfolioAsset` ya existe en BD — falta crear endpoints
 - Sistema de alertas (precio objetivo, % de cambio)
 - Historial de análisis ejecutados por usuario
 
-### Proceso seguido en esta iteración (Marzo 2026)
+**Sprint 5 — Datos restantes**
+- Sustituir stub de `get_news_feed.py` por feed real (GDELT, CryptoPanic o RSS)
+- Sustituir stub de `get_onchain_metrics.py` por datos reales (CoinMetrics, Glassnode)
+- Scheduling automático del sync de mercado (cron/Celery)
 
-Se aplicó un enfoque incremental orientado a minimizar riesgo técnico y mantener la coherencia con Clean Architecture:
+### Proceso seguido en esta iteración (Julio 2026)
 
-1. **Diseño del contrato antes que el proveedor externo**
-  - Se definieron DTOs de salida estables para cuatro dominios funcionales: mercado global, velas OHLCV, métricas on-chain y noticias/sentimiento.
-  - Esto permite que frontend y backend evolucionen en paralelo sin bloquearse por la API definitiva.
+Se aplicó un enfoque incremental orientado a sustituir los stubs contract-first por adaptadores reales, manteniendo la separación de capas:
 
-2. **Casos de uso contract-first en Application**
-  - Se añadieron casos de uso específicos (`GetMarketOverviewUseCase`, `GetAssetOhlcvUseCase`, `GetOnChainMetricsUseCase`, `GetNewsFeedUseCase`) con respuestas estructuradas.
-  - En esta fase devuelven datos sintéticos válidos para validación funcional de interfaz y contratos.
+1. **Adaptadores de APIs externas (Infrastructure)**
+  - Se crearon `BinancePublicClient` y `CoinGeckoClient` como adaptadores HTTP en la capa de infraestructura.
+  - Cada cliente gestiona su propia sesión, timeout y manejo de errores.
+  - Se aplicó el Adapter Pattern de Arquitectura Hexagonal: los casos de uso no conocen los detalles HTTP.
 
-3. **Exposición de endpoints REST nuevos en Interfaces**
-  - Se añadieron los endpoints:
-    - `GET /api/market/overview/`
-    - `GET /api/assets/{symbol}/ohlcv/`
-    - `GET /api/blockchain/metrics/`
-    - `GET /api/news/`
-  - Cada endpoint incluye serializadores de validación de query params para asegurar entrada acotada y predecible.
+2. **Casos de uso reescritos (Application)**
+  - `GetAssetOhlcvUseCase` ahora usa Binance como fuente primaria, con fallback a datos sintéticos.
+  - `GetMarketOverviewUseCase` combina CoinGecko `/global` + Alternative.me Fear & Greed, con fallbacks.
+  - `SyncMarketDataUseCase` (nuevo) sincroniza el catálogo de activos desde CoinGecko → `CryptoAsset` + `MarketDataSnapshot`.
 
-4. **Preparación para integración real (siguiente iteración)**
-  - Los casos de uso quedan listos para sustituir internamente la fuente mock por adaptadores reales:
-    - CoinGecko (market overview)
-    - Binance (OHLCV)
-    - CoinMetrics (on-chain)
-    - GDELT (news)
-  - Esta sustitución no requiere cambios en frontend ni en contrato HTTP.
+3. **Panel de administración conectado**
+  - `AdminMarketSyncView` ahora ejecuta el caso de uso real y devuelve estadísticas del sync.
+  - Validación del parámetro `per_page` con límites [1, 250].
 
-Este enfoque mejora la trazabilidad académica del TFG porque separa claramente: **contrato de sistema**, **lógica de orquestación** y **adaptadores de infraestructura**.
+4. **Frontend con gráficos interactivos**
+  - Se integró TradingView Lightweight Charts v4 (`OhlcvChart.tsx`) con selector de intervalos.
+  - El dashboard muestra un widget de Market Overview con 4 métricas globales en tiempo real.
+  - Los logos reales de las criptomonedas se muestran cuando están disponibles (campo `logo_url` de CoinGecko).
+
+5. **Principio de sustitución confirmado**
+  - Los stubs fueron reemplazados por adaptadores reales **sin cambiar ni una línea** en las vistas HTTP ni en el frontend.
+  - Esto valida la decisión de usar Clean Architecture con DTOs estables como contrato entre capas.
 
 ---
 
@@ -1819,8 +1905,8 @@ Este enfoque mejora la trazabilidad académica del TFG porque separa claramente:
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v1.2.0 — Marzo 2026*  
-*Última actualización: 14 de marzo de 2026*
+*Documento técnico completo del proyecto CryptoWorld — Estado v2.0.0 — Julio 2026*  
+*Última actualización: julio de 2026*
 
 <!-- FIN DEL DOCUMENTO -->
 <!-- TODO: borrar todo lo que hay debajo de esta línea (contenido antiguo del diario de desarrollo)

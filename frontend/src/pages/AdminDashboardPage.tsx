@@ -2,10 +2,20 @@ import React, { useState, useEffect } from 'react'
 import apiClient from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 
+interface SyncResult {
+  message: string
+  assets_created: number
+  assets_updated: number
+  snapshots_created: number
+  errors: string[]
+}
+
 export default function AdminDashboardPage() {
   const { user } = useAuth()
   const [users, setUsers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [formData, setFormData] = useState({ email: '', username: '', password: '' })
@@ -53,13 +63,17 @@ export default function AdminDashboardPage() {
 
   const syncMarketData = async () => {
     try {
-      if(confirm('¿Forzar sincronización de datos de mercado? Esto puede tardar.')) {
-        await apiClient.post('/admin/market/sync/')
-        alert('Sincronización completada.')
+      if(confirm('¿Forzar sincronización de datos de mercado? Esto puede tardar ~10s.')) {
+        setIsSyncing(true)
+        setSyncResult(null)
+        const resp = await apiClient.post('/admin/market/sync/')
+        setSyncResult(resp.data as SyncResult)
       }
     } catch (err) {
       console.error('Error', err)
       alert('Error sincronizando mercado.')
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -71,7 +85,7 @@ export default function AdminDashboardPage() {
       setUsers([resp.data.user, ...users])
       setShowCreateModal(false)
       setFormData({ email: '', username: '', password: '' })
-      alert('Administrador creado existosamente.')
+      alert('Administrador creado exitosamente.')
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { error?: string } } }
       setCreateError(axiosErr.response?.data?.error || 'Error al crear el administrador.')
@@ -96,12 +110,39 @@ export default function AdminDashboardPage() {
           </button>
           <button
             onClick={syncMarketData}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition text-sm flex items-center gap-2"
+            disabled={isSyncing}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-lg transition text-sm flex items-center gap-2"
           >
-            Forzar Sinc. Mercado
+            {isSyncing ? 'Sincronizando...' : 'Forzar Sinc. Mercado'}
           </button>
         </div>
       </div>
+
+      {/* Resultado del último sync */}
+      {syncResult && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 my-4">
+          <h3 className="text-sm font-semibold text-white mb-3">Resultado de la sincronización</h3>
+          <div className="grid grid-cols-3 gap-4 text-center">
+            <div>
+              <p className="text-2xl font-bold text-green-400">{syncResult.assets_created}</p>
+              <p className="text-xs text-slate-400 mt-1">Activos creados</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-blue-400">{syncResult.assets_updated}</p>
+              <p className="text-xs text-slate-400 mt-1">Activos actualizados</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-purple-400">{syncResult.snapshots_created}</p>
+              <p className="text-xs text-slate-400 mt-1">Snapshots creados</p>
+            </div>
+          </div>
+          {syncResult.errors.length > 0 && (
+            <div className="mt-3 bg-red-900/30 border border-red-700 rounded-lg px-3 py-2">
+              <p className="text-xs text-red-400">{syncResult.errors.length} error(es): {syncResult.errors.slice(0, 3).join(', ')}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-700">

@@ -197,3 +197,8 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # URL del frontend para construir links en emails
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+
+# ── APIs externas ──────────────────────────────────────────────────
+# CoinGecko Demo (gratuito) — 30 req/min por defecto sin clave
+# Registrarse en https://www.coingecko.com/en/api para obtener clave
+COINGECKO_API_KEY = os.environ.get("COINGECKO_API_KEY", "")

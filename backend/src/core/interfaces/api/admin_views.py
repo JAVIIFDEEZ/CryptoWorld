@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 from core.infrastructure.persistence.models import User, CryptoAsset
+from core.application.use_cases.sync_market_data import SyncMarketDataUseCase
 
 class AdminUserListView(APIView):
     permission_classes = [IsAdminUser]
@@ -79,6 +80,22 @@ class AdminMarketSyncView(APIView):
     permission_classes = [IsAdminUser]
 
     def post(self, request):
-        # Aquí se integraría la llamada real a CoinGecko o al proveedor de market data
-        # Simularemos una operación de éxito.
-        return Response({"message": "Data de mercado sincronizada..."}, status=status.HTTP_200_OK)
+        try:
+            per_page = int(request.data.get("per_page", 100))
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "per_page debe ser un número entero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        per_page = max(1, min(per_page, 250))
+        result = SyncMarketDataUseCase().execute(per_page=per_page)
+        return Response(
+            {
+                "message": "Sincronización completada.",
+                "assets_created": result.assets_created,
+                "assets_updated": result.assets_updated,
+                "snapshots_created": result.snapshots_created,
+                "errors": result.errors,
+            },
+            status=status.HTTP_200_OK,
+        )
