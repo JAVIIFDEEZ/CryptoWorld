@@ -8,6 +8,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import TickerBar from '@/components/TickerBar'
 
 type NavItem = {
   path: string
@@ -37,7 +38,10 @@ function AppShell() {
   }
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-slate-900 text-slate-100">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-slate-900 text-slate-100 flex flex-col">
+      {/* Ticker bar — cotizaciones en tiempo real */}
+      <TickerBar />
+
       {mobileMenuOpen && (
         <button
           className="fixed inset-0 z-30 bg-black/50 lg:hidden"
@@ -46,7 +50,7 @@ function AppShell() {
         />
       )}
 
-      <div className="flex h-full">
+      <div className="flex flex-1 min-h-0">
         <aside
           className={`
             fixed lg:relative z-40 inset-y-0 left-0 w-64
