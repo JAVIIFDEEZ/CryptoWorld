@@ -1,46 +1,90 @@
 """
-run_analysis.py — Caso de uso: Ejecutar análisis cuantitativo.
+run_analysis.py — Caso de uso: Ejecutar análisis técnico con cálculos reales.
 
-Estructura base preparada para ampliar en fases posteriores del TFG.
-Por ahora crea y persiste el registro del análisis en estado 'pending'.
-
-En fases siguientes aquí se invocarán los servicios de análisis:
-RSI, MACD, Bollinger Bands, etc.
+Obtiene datos OHLCV de Binance, calcula el indicador solicitado usando
+pandas-ta, y devuelve los resultados numéricos reales con interpretación.
 """
 
-from core.domain.entities.crypto_asset import AnalysisExecutionEntity
+import logging
+
+import pandas as pd
+
 from core.application.dto.asset_dto import AnalysisRequestInputDTO, AnalysisOutputDTO
+from core.infrastructure.external_apis.binance_client import (
+    BinancePublicClient,
+    BinanceClientError,
+)
+from core.domain.services.technical_analysis_service import calculate_indicator
+
+logger = logging.getLogger(__name__)
 
 
 class RunAnalysisUseCase:
     """
-    Caso de uso: iniciar ejecución de un análisis técnico.
+    Caso de uso: calcular un indicador técnico individual sobre un activo.
 
-    Estructura vacía preparada para recibir implementación en
-    fases de análisis cuantitativo del TFG.
+    Flujo:
+      1. Obtiene velas OHLCV de Binance.
+      2. Las convierte a DataFrame de pandas.
+      3. Ejecuta el cálculo del indicador solicitado.
+      4. Devuelve el resultado con valores reales y señal.
     """
 
+    def __init__(self, client: BinancePublicClient | None = None) -> None:
+        self._client = client or BinancePublicClient()
+
     def execute(self, input_dto: AnalysisRequestInputDTO) -> AnalysisOutputDTO:
-        """
-        Registrar solicitud de análisis.
+        symbol = input_dto.asset_symbol.upper()
+        binance_symbol = f"{symbol}USDT"
+        interval = getattr(input_dto, "interval", "1h") or "1h"
+        limit = getattr(input_dto, "limit", 300) or 300
 
-        En este momento solo crea la entidad en estado 'pending'.
-        La lógica de análisis real se implementará en futuras iteraciones.
-        """
-        # Crear entidad de ejecución en el dominio
-        execution = AnalysisExecutionEntity(
-            asset_symbol=input_dto.asset_symbol,
-            analysis_type=input_dto.analysis_type,
-            status="pending",
-        )
+        try:
+            raw = self._client.get_klines(
+                symbol=binance_symbol,
+                interval=interval,
+                limit=limit,
+            )
+            df = self._klines_to_dataframe(raw)
 
-        # TODO: Inyectar repositorio y persistir la ejecución
-        # TODO: Disparar tarea asíncrona (Celery) con el análisis real
+            if df.empty or len(df) < 20:
+                return AnalysisOutputDTO(
+                    id=0,
+                    asset_symbol=symbol,
+                    analysis_type=input_dto.analysis_type,
+                    status="failed",
+                    result={"error": "Datos insuficientes para el análisis."},
+                )
 
-        return AnalysisOutputDTO(
-            id=0,  # Placeholder hasta implementar persistencia
-            asset_symbol=execution.asset_symbol,
-            analysis_type=execution.analysis_type,
-            status=execution.status,
-            result=None,
-        )
+            result = calculate_indicator(df, input_dto.analysis_type)
+
+            return AnalysisOutputDTO(
+                id=0,
+                asset_symbol=symbol,
+                analysis_type=input_dto.analysis_type,
+                status="completed",
+                result=result,
+            )
+
+        except BinanceClientError as exc:
+            logger.error("Error obteniendo datos de Binance para %s: %s", symbol, exc)
+            return AnalysisOutputDTO(
+                id=0,
+                asset_symbol=symbol,
+                analysis_type=input_dto.analysis_type,
+                status="failed",
+                result={"error": f"Error de conexión con Binance: {exc}"},
+            )
+
+    @staticmethod
+    def _klines_to_dataframe(raw: list) -> pd.DataFrame:
+        """Convierte klines de Binance a DataFrame OHLCV."""
+        df = pd.DataFrame(raw, columns=[
+            "open_time", "open", "high", "low", "close", "volume",
+            "close_time", "quote_volume", "num_trades",
+            "taker_buy_base", "taker_buy_quote", "ignore",
+        ])
+        for col in ("open", "high", "low", "close", "volume"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["open", "high", "low", "close", "volume"])
+        return df[["open", "high", "low", "close", "volume"]].reset_index(drop=True)
