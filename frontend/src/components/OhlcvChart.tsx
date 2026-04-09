@@ -518,7 +518,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
       </div>
 
       {/* ── Barra de herramientas de dibujo ──────────────────────── */}
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-slate-700/60 bg-slate-800/40 overflow-x-auto">
+      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-slate-700/60 bg-slate-800/40 flex-wrap">
 
         {/* Category dropdowns */}
         {TOOL_CATEGORIES.map((cat) => (
@@ -537,7 +537,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
             </button>
 
             {openDropdown === cat.key && (
-              <div className="absolute left-0 top-full mt-0.5 w-52 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 py-1">
+              <div className="absolute left-0 bottom-full mb-0.5 w-52 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-[9999] py-1">
                 {cat.tools.map((tool) => (
                   <button
                     key={tool.id}
