@@ -29,6 +29,12 @@ python-dotenv==1.0.1
 # ── HTTP client (Binance & CoinGecko) ─────────────────────────────
 requests==2.32.3
 
+# ── Análisis técnico y Machine Learning ───────────────────────────
+pandas==2.2.2
+numpy==1.26.4
+ta==0.11.0                      # Technical Analysis library (indicadores)
+scikit-learn==1.5.1             # ML para predicción de precio
+
 # ── Testing ───────────────────────────────────────────────────────
 pytest==8.2.2
 pytest-django==4.8.0
