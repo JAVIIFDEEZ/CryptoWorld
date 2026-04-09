@@ -720,4 +720,146 @@ class DeleteAccountView(APIView):
         return Response({'error': result.get('error')}, status=status.HTTP_400_BAD_REQUEST)
 
 
+# ── Analysis avanzado Views ────────────────────────────────────────
+
+from core.interfaces.api.serializers import (
+    CalculateAnalysisSerializer,
+    SignalsRequestSerializer,
+    PredictionRequestSerializer,
+    PatternsRequestSerializer,
+    BacktestRequestSerializer,
+)
+from core.application.dto.asset_dto import (
+    SignalsRequestDTO,
+    PredictionRequestDTO,
+    PatternsRequestDTO,
+    BacktestRequestDTO,
+)
+from core.application.use_cases.get_signals_dashboard import GetSignalsDashboardUseCase
+from core.application.use_cases.predict_price import PredictPriceUseCase
+from core.application.use_cases.detect_patterns import DetectPatternsUseCase
+from core.application.use_cases.run_backtest import RunBacktestUseCase
+
+
+class CalculateAnalysisView(APIView):
+    """
+    POST /api/analysis/calculate/ — Calcula un indicador técnico con datos reales.
+    Reemplaza al antiguo RunAnalysisView con cálculos reales.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = CalculateAnalysisSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        use_case = RunAnalysisUseCase()
+        input_dto = AnalysisRequestInputDTO(
+            asset_symbol=v["asset_symbol"],
+            analysis_type=v["analysis_type"],
+            interval=v.get("interval", "1h"),
+            limit=v.get("limit", 300),
+        )
+        output = use_case.execute(input_dto)
+        return Response(vars(output), status=status.HTTP_200_OK)
+
+
+class SignalsDashboardView(APIView):
+    """
+    POST /api/analysis/signals/ — Panel multi-indicador con semáforos.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = SignalsRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        result = GetSignalsDashboardUseCase().execute(
+            SignalsRequestDTO(
+                asset_symbol=v["asset_symbol"],
+                interval=v.get("interval", "1h"),
+            )
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class PredictPriceView(APIView):
+    """
+    POST /api/analysis/predict/ — Predicción ML de dirección de precio.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PredictionRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        result = PredictPriceUseCase().execute(
+            PredictionRequestDTO(
+                asset_symbol=v["asset_symbol"],
+                interval=v.get("interval", "1h"),
+                horizon=v.get("horizon", 5),
+            )
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class DetectPatternsView(APIView):
+    """
+    POST /api/analysis/patterns/ — Detección de patrones de velas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PatternsRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        result = DetectPatternsUseCase().execute(
+            PatternsRequestDTO(
+                asset_symbol=v["asset_symbol"],
+                interval=v.get("interval", "1h"),
+            )
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class RunBacktestView(APIView):
+    """
+    POST /api/analysis/backtest/ — Backtesting de estrategias.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = BacktestRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        result = RunBacktestUseCase().execute(
+            BacktestRequestDTO(
+                asset_symbol=v["asset_symbol"],
+                strategy=v["strategy"],
+                interval=v.get("interval", "1h"),
+                limit=v.get("limit", 500),
+                initial_capital=v.get("initial_capital", 10000.0),
+            )
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class AvailableStrategiesView(APIView):
+    """
+    GET /api/analysis/strategies/ — Lista estrategias disponibles para backtesting.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        strategies = RunBacktestUseCase.get_available_strategies()
+        return Response(strategies, status=status.HTTP_200_OK)
 
