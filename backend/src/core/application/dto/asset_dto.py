@@ -1,9 +1,8 @@
 """
-asset_dto.py — DTOs para operaciones con activos criptográficos.
+asset_dto.py — DTOs para operaciones con activos criptográficos y análisis técnico.
 """
 
-from dataclasses import dataclass
-from decimal import Decimal
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -26,12 +25,11 @@ class CryptoAssetOutputDTO:
 
 @dataclass(frozen=True)
 class AnalysisRequestInputDTO:
-    """
-    Datos para solicitar la ejecución de un análisis.
-    Estructura base; se amplía en fases posteriores del TFG.
-    """
+    """Datos para solicitar la ejecución de un análisis."""
     asset_symbol: str
-    analysis_type: str          # "RSI", "MACD", "SMA", etc.
+    analysis_type: str          # "RSI", "MACD", "SMA", "EMA", "BOLLINGER"
+    interval: str = "1h"
+    limit: int = 300
 
 
 @dataclass(frozen=True)
@@ -42,3 +40,38 @@ class AnalysisOutputDTO:
     analysis_type: str
     status: str
     result: Optional[dict]
+
+
+@dataclass(frozen=True)
+class SignalsRequestDTO:
+    """Datos para solicitar el panel multi-indicador."""
+    asset_symbol: str
+    interval: str = "1h"
+    limit: int = 300
+
+
+@dataclass(frozen=True)
+class PredictionRequestDTO:
+    """Datos para solicitar predicción ML."""
+    asset_symbol: str
+    interval: str = "1h"
+    horizon: int = 5
+    limit: int = 500
+
+
+@dataclass(frozen=True)
+class PatternsRequestDTO:
+    """Datos para solicitar detección de patrones."""
+    asset_symbol: str
+    interval: str = "1h"
+    limit: int = 300
+
+
+@dataclass(frozen=True)
+class BacktestRequestDTO:
+    """Datos para solicitar backtesting."""
+    asset_symbol: str
+    strategy: str
+    interval: str = "1h"
+    limit: int = 500
+    initial_capital: float = 10000.0
