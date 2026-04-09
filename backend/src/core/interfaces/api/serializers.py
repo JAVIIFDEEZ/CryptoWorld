@@ -222,3 +222,65 @@ class NewsItemSerializer(serializers.Serializer):
 class DeleteAccountSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
+
+# ── Analysis avanzado ──────────────────────────────────────────────
+
+class CalculateAnalysisSerializer(serializers.Serializer):
+    """Valida POST /api/analysis/calculate/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    analysis_type = serializers.ChoiceField(
+        choices=["RSI", "MACD", "SMA", "EMA", "BOLLINGER"],
+    )
+    interval = serializers.ChoiceField(
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        default="1h",
+        required=False,
+    )
+    limit = serializers.IntegerField(min_value=50, max_value=500, default=300, required=False)
+
+
+class SignalsRequestSerializer(serializers.Serializer):
+    """Valida POST /api/analysis/signals/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        default="1h",
+        required=False,
+    )
+
+
+class PredictionRequestSerializer(serializers.Serializer):
+    """Valida POST /api/analysis/predict/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        default="1h",
+        required=False,
+    )
+    horizon = serializers.IntegerField(min_value=1, max_value=20, default=5, required=False)
+
+
+class PatternsRequestSerializer(serializers.Serializer):
+    """Valida POST /api/analysis/patterns/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        default="1h",
+        required=False,
+    )
+
+
+class BacktestRequestSerializer(serializers.Serializer):
+    """Valida POST /api/analysis/backtest/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    strategy = serializers.ChoiceField(
+        choices=["rsi_reversal", "macd_crossover", "bollinger_bounce", "sma_crossover", "ema_trend"],
+    )
+    interval = serializers.ChoiceField(
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        default="1h",
+        required=False,
+    )
+    limit = serializers.IntegerField(min_value=60, max_value=1000, default=500, required=False)
+    initial_capital = serializers.FloatField(min_value=100, max_value=1000000, default=10000, required=False)
+

@@ -72,6 +72,12 @@ urlpatterns = [
 
     # ── Analysis ────────────────────────────────────────────────────
     path("analysis/run/", views.RunAnalysisView.as_view(), name="analysis-run"),
+    path("analysis/calculate/", views.CalculateAnalysisView.as_view(), name="analysis-calculate"),
+    path("analysis/signals/", views.SignalsDashboardView.as_view(), name="analysis-signals"),
+    path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
+    path("analysis/patterns/", views.DetectPatternsView.as_view(), name="analysis-patterns"),
+    path("analysis/backtest/", views.RunBacktestView.as_view(), name="analysis-backtest"),
+    path("analysis/strategies/", views.AvailableStrategiesView.as_view(), name="analysis-strategies"),
 
     # ── Market Intelligence ─────────────────────────────────────────
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
