@@ -7,10 +7,9 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { analysisService, type CryptoAsset, type AnalysisResult } from '@/services/analysisService'
+import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import OhlcvChart from '@/components/OhlcvChart'
-
-type AnalysisType = 'RSI' | 'MACD' | 'SMA' | 'EMA' | 'BOLLINGER'
+import AnalysisPanel from '@/components/AnalysisPanel'
 
 function AssetDetailPage() {
   const { symbol } = useParams<{ symbol: string }>()
@@ -18,9 +17,6 @@ function AssetDetailPage() {
 
   const [asset, setAsset] = useState<CryptoAsset | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [selectedAnalysis, setSelectedAnalysis] = useState<AnalysisType>('RSI')
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
-  const [isRunningAnalysis, setIsRunningAnalysis] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -38,20 +34,6 @@ function AssetDetailPage() {
     }
     load()
   }, [symbol, navigate])
-
-  async function handleRunAnalysis() {
-    if (!symbol) return
-    setIsRunningAnalysis(true)
-    try {
-      const result = await analysisService.runAnalysis({
-        asset_symbol: symbol.toUpperCase(),
-        analysis_type: selectedAnalysis,
-      })
-      setAnalysisResult(result)
-    } finally {
-      setIsRunningAnalysis(false)
-    }
-  }
 
   if (isLoading) {
     return (
@@ -114,45 +96,8 @@ function AssetDetailPage() {
         <OhlcvChart symbol={asset.symbol} initialInterval="1h" />
       </div>
 
-      {/* Panel de análisis */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-        <h2 className="text-base font-semibold text-white mb-4">Análisis técnico</h2>
-
-        <div className="flex flex-wrap gap-2 mb-4">
-          {(['RSI', 'MACD', 'SMA', 'EMA', 'BOLLINGER'] as AnalysisType[]).map((type) => (
-            <button
-              key={type}
-              onClick={() => setSelectedAnalysis(type)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                selectedAnalysis === type
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-              }`}
-            >
-              {type}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={handleRunAnalysis}
-          disabled={isRunningAnalysis}
-          className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
-          {isRunningAnalysis ? 'Ejecutando...' : `Ejecutar análisis ${selectedAnalysis}`}
-        </button>
-
-        {analysisResult && (
-          <div className="mt-4 bg-slate-700/50 rounded-lg p-4 font-mono text-xs text-slate-300">
-            <p className="text-slate-400 mb-2">Resultado del análisis:</p>
-            <pre>{JSON.stringify(analysisResult, null, 2)}</pre>
-          </div>
-        )}
-
-        <p className="text-slate-500 text-xs mt-4">
-          Los análisis cuantitativos completos se implementarán en fases posteriores del TFG.
-        </p>
-      </div>
+      {/* Panel de análisis técnico avanzado */}
+      <AnalysisPanel symbol={asset.symbol} />
     </div>
   )
 }
