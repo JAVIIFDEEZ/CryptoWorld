@@ -4,7 +4,7 @@
 **Autor:** Javier  
 **Titulación:** 4º Ingeniería Informática  
 **Universidad:** Universidad de Castilla-La Mancha  
-**Fecha del documento:** Marzo 2026  
+**Fecha del documento:** Abril 2026 (v3.0.0)  
 
 > **NOTA PARA LA IA REDACTORA:** Este documento es un briefing técnico completo del proyecto CryptoWorld tal como está implementado en marzo de 2026. Contiene el código real de los archivos más importantes, la justificación de cada decisión de diseño, y todos los detalles técnicos necesarios para redactar una memoria académica de TFG. No es necesario inferir nada—todo lo que existe en el proyecto está documentado aquí. El objetivo es una memoria académica formal para un TFG de Ingeniería Informática en la UCLM.
 
@@ -40,26 +40,27 @@
 
 **CryptoWorld** es una plataforma web de análisis de criptomonedas desarrollada como Trabajo de Fin de Grado. El proyecto combina un backend API REST con un frontend Single Page Application (SPA).
 
-### Funcionalidades implementadas (Julio 2026)
+### Funcionalidades implementadas (Abril 2026)
 - Sistema de autenticación completo: registro, login, logout seguro
 - Verificación de email mediante token HMAC
 - Recuperación y cambio de contraseña
 - Autenticación de Doble Factor (2FA) mediante TOTP (compatible con Google Authenticator)
 - **Sincronización de catálogo de activos desde CoinGecko** (top N por market cap, logos, precios)
-- **Datos OHLCV reales con volumen desde Binance** (sin API key, ~600 req/min)
+- **Datos OHLCV reales con cadena de fuentes** (Strategy Pattern: Binance → CoinGecko fallback → HTTP 404)
 - **Métricas globales del mercado** (market cap total, volumen 24h, dominancia BTC, Fear & Greed Index)
-- **Gráfico de velas interactivo** (TradingView Lightweight Charts v4, selector de intervalos)
+- **Gráfico de velas interactivo profesional** (KLineChart v9: 15 herramientas de dibujo, 20+ indicadores técnicos, redimensionable)
 - **Panel de administración** con gestión de usuarios y sincronización de mercado
 - Dashboard frontend con datos reales, logos y métricas en tiempo real
-- Infraestructura de análisis técnico (stub preparado para RSI, MACD, Bollinger)
+- **Análisis técnico implementado con datos reales**: RSI, MACD, Bollinger, MA, EMA, SAR, señales multi-indicador, backtesting y predicción
+- **Badge de fuente de datos**: el frontend indica visualmente si el gráfico usa datos de Binance o CoinGecko
+- **Indicadores de volumen desactivados automáticamente** cuando la fuente es CoinGecko (API no provee volumen)
 
 ### Funcionalidades pendientes (roadmap)
-- Análisis técnico: RSI, MACD, Bandas de Bollinger, Medias Móviles
 - Gestión de portfolio personal
 - Sistema de alertas configurables
-- Noticias y sentimiento (feed real)
-- Métricas on-chain (datos reales)
-- Historial de análisis ejecutados
+- Noticias y sentimiento (feed real, actualmente 3 noticias fijas)
+- Métricas on-chain (datos reales, actualmente stub)
+- Historial de análisis ejecutados por usuario
 
 ---
 
@@ -93,7 +94,7 @@
 | react-router-dom | 6.24.0 | Enrutamiento SPA con rutas protegidas |
 | Axios | 1.7.2 | Cliente HTTP con interceptores JWT automáticos |
 | TailwindCSS | 3.4.6 | Framework CSS utility-first |
-| TradingView Lightweight Charts | 4.2.0 | Gráficos financieros de velas (candlestick) interactivos |
+| KLineChart | 9.x | Gráficos financieros de velas profesionales: 15 herramientas de dibujo built-in, 20+ indicadores técnicos toggleables, tema oscuro configurable, redimensionable |
 
 ### Infraestructura
 | Componente | Versión | Propósito |
@@ -376,10 +377,17 @@ application/
 │   ├── disable_2fa.py            ← Desactivar 2FA
 │   ├── verify_2fa_login.py       ← Segunda fase del login con 2FA
 │   ├── get_assets.py             ← Listar activos criptográficos
-│   └── run_analysis.py           ← Ejecutar análisis técnico (stub)
+│   ├── get_asset_ohlcv.py        ← OHLCV con Strategy Pattern (Binance → CoinGecko → 404)
+│   ├── ohlcv_fetcher.py          ← Servicio compartido de obtención de DataFrames OHLCV
+│   ├── run_analysis.py           ← Calcular un indicador técnico individual (real)
+│   ├── get_signals_dashboard.py  ← Panel multi-indicador con veredicto compra/venta/neutral
+│   ├── predict_price.py          ← Predicción de precio con regresión lineal
+│   ├── detect_patterns.py        ← Detección de patrones chartistas (cabeza y hombros, etc.)
+│   └── run_backtest.py           ← Backtesting de estrategias simple/doble cruce de medias
 └── dto/
     ├── auth_dto.py               ← 13 DTOs de autenticación
-    └── asset_dto.py              ← DTOs de activos y análisis
+    ├── asset_dto.py              ← DTOs de activos y análisis
+    └── market_intelligence_dto.py← DTOs de OHLCV (con campo `source`), overview, noticias
 ```
 
 #### DTOs — Data Transfer Objects
@@ -532,31 +540,102 @@ class GetAssetsUseCase:
         ]
 ```
 
-#### Caso de Uso de Análisis (stub)
+#### Caso de Uso de OHLCV — Strategy Pattern (código real)
 
-**`application/use_cases/run_analysis.py` — estructura preparada (código real):**
+**`application/use_cases/get_asset_ohlcv.py` — fragmento:**
 ```python
-from core.domain.entities.crypto_asset import AnalysisExecutionEntity
-from core.application.dto.asset_dto import AnalysisRequestInputDTO, AnalysisOutputDTO
+class OhlcvNotAvailableError(Exception):
+    """Ninguna fuente de datos pudo servir OHLCV para el activo."""
 
+class GetAssetOhlcvUseCase:
+    """
+    Devuelve velas OHLCV para un activo criptográfico.
+    Estrategia: Binance → CoinGecko OHLC → error.
+    Elimina completamente los datos sintéticos/falsos.
+    """
+
+    def execute(self, symbol: str, interval: str, limit: int
+    ) -> tuple[list[OhlcvCandleOutputDTO], str]:
+        """
+        Devuelve (candles, source) donde source es "binance" o "coingecko".
+        Lanza OhlcvNotAvailableError si ninguna fuente tiene datos.
+        """
+        symbol = symbol.upper()
+
+        # ── 1. Intentar Binance ─────────────────────────────────
+        candles = self._try_binance(symbol, interval, limit)
+        if candles:
+            return candles, "binance"
+
+        # ── 2. Fallback CoinGecko OHLC ─────────────────────────
+        candles = self._try_coingecko(symbol, interval, limit)
+        if candles:
+            return candles, "coingecko"
+
+        # ── 3. Ninguna fuente disponible → error honesto ────────
+        raise OhlcvNotAvailableError(f"No hay datos OHLCV disponibles para {symbol}.")
+```
+
+**Por qué se eliminaron los datos sintéticos:** la versión anterior de este caso de uso tenía un método `_synthetic_fallback()` que generaba velas falsas con precio fijo (`$3.200`) cuando Binance no listaba el par. Tokens como HYPE o BGB (no cotizados en Binance Spot) recibían precios inventados, lo que invalida cualquier análisis técnico posterior. El Strategy Pattern garantiza que solo se devuelven datos reales o se informa explícitamente de la ausencia de datos.
+
+#### Servicio Compartido `ohlcv_fetcher.py`
+
+Para evitar duplicar la misma cadena Binance → CoinGecko en los 5 casos de uso de análisis, se extrajo en un servicio compartido:
+
+**`application/use_cases/ohlcv_fetcher.py` — fragmento:**
+```python
+class OhlcvFetchResult:
+    """Resultado de la obtención de OHLCV con metadatos de fuente."""
+    def __init__(self, df: pd.DataFrame, source: str) -> None:
+        self.df = df        # DataFrame con columnas [open, high, low, close, volume]
+        self.source = source  # "binance" | "coingecko"
+
+def fetch_ohlcv_dataframe(
+    symbol: str, interval: str = "1h", limit: int = 300, ...
+) -> Optional[OhlcvFetchResult]:
+    """
+    Obtiene un DataFrame OHLCV. Cadena: Binance → CoinGecko → None.
+    Devuelve None si ninguna fuente sirve datos.
+    """
+```
+
+Los 5 casos de uso de análisis (`run_analysis.py`, `get_signals_dashboard.py`, `predict_price.py`, `detect_patterns.py`, `run_backtest.py`) delegan en `fetch_ohlcv_dataframe()` y propagan el campo `data_source` en su respuesta.
+
+#### Caso de Uso de Análisis Técnico (implementación real)
+
+**`application/use_cases/run_analysis.py` (código real):**
+```python
 class RunAnalysisUseCase:
+    """
+    Caso de uso: calcular un indicador técnico individual.
+    Usa la cadena Binance → CoinGecko para obtener OHLCV.
+    """
+
     def execute(self, input_dto: AnalysisRequestInputDTO) -> AnalysisOutputDTO:
-        # Crear entidad en estado 'pending'
-        execution = AnalysisExecutionEntity(
-            asset_symbol=input_dto.asset_symbol,
-            analysis_type=input_dto.analysis_type,
-            status="pending",
-        )
-        # TODO: Inyectar repositorio y persistir
-        # TODO: Disparar tarea asíncrona (Celery) con el análisis real (RSI, MACD, etc.)
+        symbol = input_dto.asset_symbol.upper()
+
+        result = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
+
+        if result is None or result.df.empty or len(result.df) < 20:
+            return AnalysisOutputDTO(
+                id=0, asset_symbol=symbol,
+                analysis_type=input_dto.analysis_type,
+                status="failed",
+                result={"error": "Datos insuficientes o activo no disponible."},
+            )
+
+        indicator_result = calculate_indicator(result.df, input_dto.analysis_type)
+        indicator_result["data_source"] = result.source  # "binance" | "coingecko"
+
         return AnalysisOutputDTO(
-            id=0,
-            asset_symbol=execution.asset_symbol,
-            analysis_type=execution.analysis_type,
-            status=execution.status,
-            result=None,
+            id=0, asset_symbol=symbol,
+            analysis_type=input_dto.analysis_type,
+            status="completed",
+            result=indicator_result,
         )
 ```
+
+**Diferencia clave respecto al stub anterior:** En v2.0.0, `RunAnalysisUseCase.execute()` devolvía inmediatamente `status="pending"` con `result=None`, sin calcular nada. Ahora obtiene datos OHLCV reales, los pasa al `TechnicalAnalysisService` y devuelve el indicador calculado con `status="completed"`. Si la fuente es CoinGecko, el campo `data_source="coingecko"` advierte que el volumen es cero.
 
 ---
 
@@ -570,7 +649,9 @@ infrastructure/
 ├── persistence/
 │   ├── models.py              ← Modelos Django ORM (4 tablas)
 │   └── repositories_impl.py  ← DjangoUserRepository, DjangoCryptoAssetRepository
-└── external_apis/             ← (pendiente) Cliente CoinGecko API
+└── external_apis/
+    ├── binance_client.py      ← Cliente Binance Public API (klines OHLCV, sin auth)
+    └── coingecko_client.py    ← Cliente CoinGecko API v3 (markets, global, ohlc)
 ```
 
 #### Modelos ORM — `infrastructure/persistence/models.py`
@@ -1687,11 +1768,46 @@ El flujo de doble factor requiere dos peticiones HTTP. El problema de estado se 
 
 El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o no. Esto previene ataques de enumeración de usuarios (OWASP A01: Broken Access Control). Un atacante no puede determinar qué emails están registrados en el sistema.
 
+### 10.8 Por qué Strategy Pattern (Binance → CoinGecko) en lugar de un único proveedor
+
+El problema que motivó este cambio es concreto: tokens como HYPE (Hyperliquid) o BGB (Bitget) no cotizan en Binance Spot —el par `HYPEUSDT` o `BGBUSDT` simplemente no existe—, pero sí tienen liquidez real en otros mercados. La versión anterior resolvía esto con un `_synthetic_fallback()` que devolvía velas con precio inventado (`$3.200`), lo que invalidaba silenciosamente cualquier análisis técnico posterior.
+
+Se evaluaron cinco soluciones posibles:
+- **A) Solo Binance, sin fallback** — No cubre tokens no listados.
+- **B) Solo CoinGecko OHLC** — No incluye volumen, granularidad limitada en plan gratuito.
+- **C) Mantener datos sintéticos** — Sin integridad de datos, inadmisible.
+- **D) Base de datos propia con ticks** — Infraestructura excesiva para el alcance del TFG.
+- **E) Strategy Pattern: Binance → CoinGecko → 404** — Datos reales con transparencia total.
+
+La opción E es la más equilibrada para el contexto del TFG:
+- Binance proporciona OHLCV completo (con volumen) sin API key para los ~200 tokens del top de capitalización.
+- CoinGecko OHLC cubre prácticamente la totalidad del universo crypto conocido, aunque sin volumen.
+- Si ambos fallan, se lanza `OhlcvNotAvailableError` → HTTP 404, que es un error honesto y trazable.
+- El campo `source` propagado hasta el frontend informa al usuario de qué proveedor sirvió los datos.
+
+**Consecuencia para los indicadores de volumen:** CoinGecko OHLC no incluye volumen en su respuesta. Se introduce `volume=0` para mantener la estructura del DataFrame, y el frontend desactiva automáticamente los indicadores dependientes del volumen (VOL, OBV, PVT, VR, EMV) cuando `source="coingecko"`, mostrando un aviso visual.
+
+### 10.9 Por qué `ohlcv_fetcher.py` como servicio compartido en lugar de herencia
+
+Los cinco casos de uso de análisis (`run_analysis`, `get_signals_dashboard`, `predict_price`, `detect_patterns`, `run_backtest`) necesitan exactamente la misma lógica de obtención de datos OHLCV. La alternativa de herencia habría creado una jerarquía de clases artificial (`BaseAnalysisUseCase`) que complica la comprensión sin añadir valor semántico.
+
+Se optó por composición mediante una función standalone `fetch_ohlcv_dataframe()` en `ohlcv_fetcher.py`. Es una dependencia explícita, no implícita: cada caso de uso la importa directamente y puede inyectar clientes mock para tests. El resultado `OhlcvFetchResult` encapsula tanto el DataFrame como el metadato de fuente, lo que permite propagar `data_source` hasta la respuesta JSON sin tener que pasarlo como parámetro adicional entre capas.
+
+### 10.10 Por qué KLineChart en lugar de TradingView Lightweight Charts
+
+TradingView Lightweight Charts v4 fue la librería inicial para gráficos financieros. Se migró a KLineChart v9 por las siguientes razones técnicas:
+
+- **Indicadores técnicos built-in**: KLineChart incluye nativamente RSI, MACD, Bollinger, MA, EMA, SAR, KDJ, OBV y 15+ más. Con Lightweight Charts, cada indicador requiere implementación manual en el cliente.
+- **Herramientas de dibujo**: KLineChart proporciona 15 overlays vectoriales (tendencias, fibonacci, canales, anotaciones) sin código adicional. Lightweight Charts carece de esta funcionalidad.
+- **Gestión de sub-paneles**: KLineChart gestiona automáticamente el layout de sub-paneles para indicadores de sub-gráfico (RSI, MACD), con separadores arrastrables para redimensionar.
+- **Modo imán**: KLineChart incluye modo imán (snap a OHLC) y comandos de deshacer, que son funcionalidades esperadas en una herramienta de análisis técnico profesional.
+- **Licencia MIT**: KLineChart es MIT, sin restricciones de uso en proyectos educativos o comerciales.
+
 ---
 
 ## 11. ESTADO ACTUAL Y ROADMAP
 
-### Estado actual — Julio 2026 (v2.0.0 — Datos reales + Gráficos interactivos)
+### Estado actual — Abril 2026 (v3.0.0 — Análisis Técnico Real + Strategy Pattern OHLCV)
 
 **Servicios Docker activos:**
 | Contenedor | Puerto | Estado |
@@ -1704,8 +1820,8 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 **APIs externas integradas:**
 | Proveedor | Endpoint Base | Auth | Límite | Uso en el proyecto |
 |---|---|---|---|---|
-| Binance Public | `data-api.binance.vision` | Sin API key | ~600 req/min | OHLCV (velas de precio con volumen) |
-| CoinGecko v3 | `api.coingecko.com/api/v3` | Opcional (demo key) | 30 req/min (free) | Catálogo de activos, métricas globales |
+| Binance Public | `data-api.binance.vision` | Sin API key | ~600 req/min | OHLCV primario (velas con volumen) |
+| CoinGecko v3 | `api.coingecko.com/api/v3` | Opcional (demo key) | 30 req/min (free) | Catálogo de activos, métricas globales, OHLC fallback |
 | Alternative.me | `api.alternative.me/fng/` | Sin auth | Libre | Fear & Greed Index |
 
 **Endpoints implementados y validados:**
@@ -1727,9 +1843,15 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 | POST | `/api/auth/2fa/disable/` | Sí | ✅ Funcional | pyotp |
 | POST | `/api/auth/2fa/login/` | No | ✅ Funcional | pyotp + JWT |
 | GET | `/api/assets/` | Sí | ✅ **Datos reales** | DB (sync CoinGecko) |
-| POST | `/api/analysis/run/` | Sí | ⚠️ Stub (retorna pending) | — |
+| GET | `/api/assets/{symbol}/ohlcv/` | Sí | ✅ **Strategy Pattern** | Binance → CoinGecko → 404 |
+| POST | `/api/analysis/run/` | Sí | ✅ **Datos reales** | Binance/CoinGecko + TechnicalAnalysisService |
+| POST | `/api/analysis/calculate/` | Sí | ✅ **Datos reales** | Binance/CoinGecko + indicadores |
+| GET | `/api/analysis/signals/` | Sí | ✅ **Datos reales** | Binance/CoinGecko (señales multi-indicador) |
+| GET | `/api/analysis/predict/` | Sí | ✅ **Datos reales** | Regresión lineal sobre OHLCV real |
+| GET | `/api/analysis/patterns/` | Sí | ✅ **Datos reales** | Detección de patrones chartistas |
+| GET | `/api/analysis/backtest/` | Sí | ✅ **Datos reales** | Backtesting cruce de medias |
+| GET | `/api/analysis/strategies/` | Sí | ✅ Funcional | Lista estática |
 | GET | `/api/market/overview/` | Sí | ✅ **Datos reales** | CoinGecko /global + Alternative.me |
-| GET | `/api/assets/{symbol}/ohlcv/` | Sí | ✅ **Datos reales** | Binance /klines |
 | GET | `/api/blockchain/metrics/` | Sí | ⚠️ Stub (datos sintéticos) | — |
 | GET | `/api/news/` | Sí | ⚠️ Stub (3 noticias fijas) | — |
 | GET | `/api/admin/users/` | Admin | ✅ Funcional | DB |
@@ -1743,30 +1865,34 @@ El endpoint siempre devuelve HTTP 200 independientemente de si el email existe o
 | Domain — Entities (4 entidades) | ✅ Completo |
 | Domain — Repository interfaces | ✅ Completo |
 | Domain — Value Objects | ✅ Completo |
-| Domain — Services | ✅ Completo |
-| Application — 16+ casos de uso | ✅ Auth completo, market data real, OHLCV real, sync real |
-| Application — DTOs | ✅ Completo (auth, asset, market_intelligence) |
+| Domain — Services (técnico + usuario) | ✅ Completo (TechnicalAnalysisService con indicadores reales) |
+| Application — 20+ casos de uso | ✅ Auth completo, market data real, OHLCV real (Strategy Pattern), análisis técnico real |
+| Application — DTOs | ✅ Completo (auth, asset, market_intelligence con campo `source`) |
 | Infrastructure — ORM Models | ✅ Completo (5 modelos, 3 migraciones) |
 | Infrastructure — Repositories impl | ✅ Completo |
-| Infrastructure — External APIs | ✅ **BinancePublicClient + CoinGeckoClient** |
-| Interfaces — API (25+ endpoints) | ✅ Completo |
+| Infrastructure — External APIs | ✅ **BinancePublicClient + CoinGeckoClient** (incl. `get_ohlc()`) |
+| Interfaces — API (31 endpoints) | ✅ Completo |
 | Frontend — Auth flow | ✅ Completo |
 | Frontend — Dashboard con datos reales | ✅ **Completo (overview + tabla activos + logos)** |
-| Frontend — Gráfico OHLCV interactivo | ✅ **Completo (lightweight-charts v4)** |
+| Frontend — Gráfico OHLCV profesional | ✅ **KLineChart v9 (15 herramientas, 20+ indicadores, badge de fuente)** |
+| Frontend — Panel de análisis técnico | ✅ **Completo (señales, RSI, MACD, predicción, patrones, backtesting)** |
 | Frontend — Panel Admin con sync | ✅ **Completo (feedback de resultados)** |
 | Tests unitarios | ✅ Implementados y pasando |
 | Tests integración | ✅ Implementados y pasando |
 
-### Validación de la integración de datos reales (Julio 2026)
+### Validación de la integración de datos reales (Abril 2026)
 
 Pruebas ejecutadas contra los contenedores Docker en ejecución:
 
-| Test | Comando | Resultado |
-|---|---|---|
-| Sync de mercado | `POST /api/admin/market/sync/` con `per_page=20` | `assets_created: 20, assets_updated: 0, snapshots_created: 20, errors: []` |
-| Market overview | `GET /api/market/overview/` | `total_market_cap_usd: "2531262966084"`, `btc_dominance_pct: "56.87"`, `fear_greed_index: 17` |
-| Assets reales | `GET /api/assets/` | 20 activos reales con logos, precios y market caps de CoinGecko |
-| OHLCV Binance | `GET /api/assets/BTC/ohlcv/?interval=1h&limit=10` | 10 velas reales con open, high, low, close, volume |
+| Test | Resultado |
+|---|---|
+| `POST /api/admin/market/sync/` con `per_page=20` | `assets_created: 20, errors: []` |
+| `GET /api/market/overview/` | `total_market_cap_usd: "2531262966084"`, `fear_greed_index: 17` |
+| `GET /api/assets/BTC/ohlcv/?interval=1h&limit=10` | `{"source":"binance","candles":10}`, precio ~$71.534 |
+| `GET /api/assets/HYPE/ohlcv/?interval=1h&limit=48` | `{"source":"coingecko","candles":48}`, precio ~$38-39 (antes devolvía $3.200 falso) |
+| `GET /api/assets/BGB/ohlcv/?interval=1h&limit=48` | `{"source":"coingecko","candles":48}`, precio ~$1.89 (antes crasheaba) |
+| `GET /api/assets/FAKECOIN/ohlcv/` | HTTP 404 (antes devolvía datos inventados) |
+| `GET /api/analysis/signals/?symbol=HYPE&interval=1h` | `{"data_source":"coingecko","verdict":"COMPRA","rsi":65.84}` |
 
 ### Archivos nuevos y modificados (Fase de datos reales + gráficos)
 
@@ -1797,18 +1923,53 @@ Pruebas ejecutadas contra los contenedores Docker en ejecución:
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
-| `components/OhlcvChart.tsx` | Nuevo | Componente de gráfico de velas con TradingView Lightweight Charts v4. Selector de intervalos (1m/15m/1h/4h/1d/1w), dark theme, responsive. |
-| `services/marketService.ts` | Nuevo | Servicio con `getOhlcv()` y `getMarketOverview()`. Tipado: `OhlcvCandle`, `MarketOverview`, `OhlcvInterval`. |
+| `components/OhlcvChart.tsx` | Nuevo | Componente de gráfico con KLineChart v9. 15 herramientas de dibujo, 20+ indicadores técnicos, resizable, dark theme, badge de fuente de datos. |
+| `services/marketService.ts` | Nuevo | Servicio con `getOhlcv()` (devuelve `OhlcvResponse` con `source` + `candles`) y `getMarketOverview()`. |
 
 #### Frontend — Archivos modificados
 
 | Archivo | Cambio |
 |---|---|
-| `package.json` | Añadida dependencia `lightweight-charts ^4.2.0`. |
+| `package.json` | Dependencia `klinecharts ^9` (reemplaza `lightweight-charts`). |
 | `pages/AssetDetailPage.tsx` | Integrado `OhlcvChart` entre header y panel de análisis. Logos reales cuando disponibles. |
 | `pages/DashboardPage.tsx` | Widget de Market Overview (4 tarjetas: cap total, vol 24h, BTC dominance, Fear & Greed). Logos reales en la tabla de activos. |
 | `pages/AdminDashboardPage.tsx` | Botón de sync con loading state y tarjeta de resultados (created/updated/snapshots/errors). |
 | `services/analysisService.ts` | Interfaz `CryptoAsset` ampliada con campo `logo_url`. |
+
+### Archivos nuevos y modificados — Fase Strategy Pattern OHLCV + Análisis Técnico (Abril 2026)
+
+#### Backend — Casos de uso nuevos / reescritos
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `application/use_cases/get_asset_ohlcv.py` | Reescrito | Strategy Pattern: `_try_binance()` → `_try_coingecko()` → `OhlcvNotAvailableError`. Elimina `_synthetic_fallback()`. Devuelve `(candles, source)`. |
+| `application/use_cases/ohlcv_fetcher.py` | Nuevo | Servicio compartido `fetch_ohlcv_dataframe()`. Devuelve `OhlcvFetchResult(df, source)`. Usado por los 5 casos de uso de análisis. |
+| `application/use_cases/run_analysis.py` | Reescrito | Ya no es stub. Usa `fetch_ohlcv_dataframe()` + `calculate_indicator()`. Incluye `data_source` en resultado. |
+| `application/use_cases/get_signals_dashboard.py` | Reescrito | Panel multi-indicador. Usa `fetch_ohlcv_dataframe()`. Incluye `data_source` en dashboard. |
+| `application/use_cases/predict_price.py` | Reescrito | Predicción con regresión lineal. Usa `fetch_ohlcv_dataframe()`. |
+| `application/use_cases/detect_patterns.py` | Reescrito | Detección de patrones chartistas. Usa `fetch_ohlcv_dataframe()`. |
+| `application/use_cases/run_backtest.py` | Reescrito | Backtesting de estrategias. Usa `fetch_ohlcv_dataframe()`. |
+
+#### Backend — Clientes externos modificados
+
+| Archivo | Cambio |
+|---|---|
+| `infrastructure/external_apis/coingecko_client.py` | Nuevo método `get_ohlc(coin_id, vs_currency, days)` → `GET /coins/{id}/ohlc`, granularidad automática. |
+
+#### Backend — DTOs y serializadores modificados
+
+| Archivo | Cambio |
+|---|---|
+| `application/dto/market_intelligence_dto.py` | `OhlcvCandleOutputDTO` gana campo `source: str = "binance"` como séptimo campo. |
+| `interfaces/api/serializers.py` | `OhlcvCandleSerializer` gana campo `source = serializers.CharField()`. |
+| `interfaces/api/views.py` | `AssetOhlcvView.get()`: captura `OhlcvNotAvailableError` → HTTP 404; desempaqueta `(candles, source)`; devuelve `{"source": ..., "candles": [...]}`. |
+
+#### Frontend — Modificados para Strategy Pattern
+
+| Archivo | Cambio |
+|---|---|
+| `services/marketService.ts` | Nueva interfaz `OhlcvResponse { source: string; candles: OhlcvCandle[] }`. `getOhlcv()` devuelve `Promise<OhlcvResponse>`. `OhlcvCandle` gana campo `source`. |
+| `components/OhlcvChart.tsx` | Badge de fuente (verde=Binance, ámbar=CoinGecko). Indicadores de volumen (VOL, OBV, PVT, VR, EMV) desactivados automáticamente cuando `source=coingecko`. Error 404 con mensaje descriptivo. |
 
 ### Patrón Adapter aplicado a las APIs externas
 
@@ -1839,18 +2000,12 @@ Si en el futuro se cambia Binance por otro proveedor OHLCV, solo se sustituye el
 - ~~Sprint 0.5 — Contratos de datos contract-first~~ ✅
 - ~~Sprint 1 — Integración CoinGecko API (sync de catálogo + métricas globales)~~ ✅
 - ~~Sprint 1b — Integración Binance API (OHLCV real con volumen)~~ ✅
-- ~~Sprint 3 (parcial) — Frontend con gráficos interactivos y datos reales~~ ✅
+- ~~Sprint 2 — Análisis técnico real (RSI, MACD, Bollinger, señales, backtesting, predicción)~~ ✅
+- ~~Sprint 2b — Strategy Pattern OHLCV (eliminar datos sintéticos, cobertura CoinGecko)~~ ✅
+- ~~Sprint 3 — Frontend con gráficos profesionales (KLineChart v9, herramientas de dibujo, badge fuente)~~ ✅
 
-**Próximo — Sprint 2: Análisis Técnico**
-- RSI (Relative Strength Index) calculado sobre velas OHLCV de Binance
-- MACD (Moving Average Convergence Divergence)
-- Bandas de Bollinger
-- Medias Móviles (SMA, EMA)
-- Completar `RunAnalysisUseCase` con lógica real en `domain/services/`
-
-**Sprint 4 — Portfolio y Alertas**
+**Próximo — Sprint 4: Portfolio y Alertas**
 - CRUD de portfolio personal (posiciones, precio de entrada, P&L)
-- Modelo `PortfolioAsset` ya existe en BD — falta crear endpoints
 - Sistema de alertas (precio objetivo, % de cambio)
 - Historial de análisis ejecutados por usuario
 
@@ -1859,32 +2014,41 @@ Si en el futuro se cambia Binance por otro proveedor OHLCV, solo se sustituye el
 - Sustituir stub de `get_onchain_metrics.py` por datos reales (CoinMetrics, Glassnode)
 - Scheduling automático del sync de mercado (cron/Celery)
 
-### Proceso seguido en esta iteración (Julio 2026)
+### Proceso seguido en la fase v3.0.0 (Abril 2026)
 
-Se aplicó un enfoque incremental orientado a sustituir los stubs contract-first por adaptadores reales, manteniendo la separación de capas:
+Se combina la implementación del análisis técnico real con la resolución del problema de cobertura de datos OHLCV:
 
-1. **Adaptadores de APIs externas (Infrastructure)**
-  - Se crearon `BinancePublicClient` y `CoinGeckoClient` como adaptadores HTTP en la capa de infraestructura.
-  - Cada cliente gestiona su propia sesión, timeout y manejo de errores.
-  - Se aplicó el Adapter Pattern de Arquitectura Hexagonal: los casos de uso no conocen los detalles HTTP.
+1. **Detección del problema de datos sintéticos**
+   - Se identificó que tokens no listados en Binance Spot (HYPE, BGB, etc.) recibían precios inventados del método `_synthetic_fallback()`.
+   - Un análisis técnico sobre precios falsos carece de valor; el problema tenía que resolverse antes de implementar los indicadores.
 
-2. **Casos de uso reescritos (Application)**
-  - `GetAssetOhlcvUseCase` ahora usa Binance como fuente primaria, con fallback a datos sintéticos.
-  - `GetMarketOverviewUseCase` combina CoinGecko `/global` + Alternative.me Fear & Greed, con fallbacks.
-  - `SyncMarketDataUseCase` (nuevo) sincroniza el catálogo de activos desde CoinGecko → `CryptoAsset` + `MarketDataSnapshot`.
+2. **Diseño e implementación del Strategy Pattern (Infrastructure + Application)**
+   - Se añadió `get_ohlc()` a `CoinGeckoClient` (método nuevo en la capa de infraestructura).
+   - Se reescribió `GetAssetOhlcvUseCase` con la cadena Binance → CoinGecko → `OhlcvNotAvailableError`.
+   - Se añadió el campo `source` al DTO `OhlcvCandleOutputDTO` para propagar la procedencia de los datos.
 
-3. **Panel de administración conectado**
-  - `AdminMarketSyncView` ahora ejecuta el caso de uso real y devuelve estadísticas del sync.
-  - Validación del parámetro `per_page` con límites [1, 250].
+3. **Servicio compartido `ohlcv_fetcher.py` (Application)**
+   - Extraída la lógica de la cadena en un servicio reutilizable que devuelve `OhlcvFetchResult(df, source)`.
+   - Se evita duplicar ~60 líneas en 5 casos de uso distintos.
 
-4. **Frontend con gráficos interactivos**
-  - Se integró TradingView Lightweight Charts v4 (`OhlcvChart.tsx`) con selector de intervalos.
-  - El dashboard muestra un widget de Market Overview con 4 métricas globales en tiempo real.
-  - Los logos reales de las criptomonedas se muestran cuando están disponibles (campo `logo_url` de CoinGecko).
+4. **Implementación real del análisis técnico (Application + Domain)**
+   - `RunAnalysisUseCase`, `GetSignalsDashboardUseCase`, `PredictPriceUseCase`, `DetectPatternsUseCase` y `RunBacktestUseCase` fueron reescritos para usar `fetch_ohlcv_dataframe()`.
+   - `TechnicalAnalysisService` en la capa de dominio calcula los indicadores sobre el DataFrame de pandas.
 
-5. **Principio de sustitución confirmado**
-  - Los stubs fueron reemplazados por adaptadores reales **sin cambiar ni una línea** en las vistas HTTP ni en el frontend.
-  - Esto valida la decisión de usar Clean Architecture con DTOs estables como contrato entre capas.
+5. **Actualización de la capa de interfaces (Interfaces)**
+   - `AssetOhlcvView` actualizada para manejar `OhlcvNotAvailableError` → HTTP 404 y devolver `{source, candles}`.
+   - Serializer `OhlcvCandleSerializer` actualizado con campo `source`.
+
+6. **Actualización del frontend**
+   - Badge de fuente en la barra de herramientas del gráfico.
+   - Desactivación automática de indicadores dependientes de volumen cuando `source=coingecko`.
+   - Mensaje descriptivo en caso de HTTP 404 (activo no disponible).
+
+7. **Verificación de la transparencia de datos confirmada:**
+   - BTC: `source=binance`, 10 velas, precio real ~$71.534 ✅
+   - HYPE: `source=coingecko`, 48 velas, precio real ~$38 (antes: $3.200 falso) ✅
+   - BGB: `source=coingecko`, 48 velas, precio real ~$1.89 (antes: crash) ✅
+   - FAKECOIN: HTTP 404 (antes: datos inventados) ✅
 
 ---
 
@@ -1902,11 +2066,14 @@ Se aplicó un enfoque incremental orientado a sustituir los stubs contract-first
 | 8 | Django Runtime | `relation "users" does not exist` — backend en loop | `core/migrations/` no existía | `docker compose run --rm backend python src/manage.py makemigrations core` |
 | 9 | 2FA | `No module named 'pyotp'` | Imagen Docker construida antes de añadir pyotp a requirements | `docker compose build backend` (rebuild imagen) |
 | 10 | Encoding | Caracteres españoles corruptos (`á` → `Ã¡`) en `views.py` | PowerShell `Set-Content` reescribió en CP1252 leído como UTF-8 | Script Python: `raw.decode('utf-8').encode('cp1252')` para invertir la doble codificación |
+| 11 | OHLCV | Tokens HYPE/BGB devuelven precio `$3.200` falso | `GetAssetOhlcvUseCase._synthetic_fallback()` generaba velas inventadas cuando Binance no listaba el par | Eliminar `_synthetic_fallback()` e implementar Strategy Pattern: Binance → CoinGecko OHLC → `OhlcvNotAvailableError` |
+| 12 | Encoding | `replace_string_in_file` no encuentra el texto en `views.py` | El archivo tiene BOM UTF-8 (`EF BB BF`) que PowerShell preserva pero la herramienta de edición no reconoce | Editar mediante script Python con `open(f, 'r', encoding='utf-8-sig')` y `write_text(encoding='utf-8-sig')` |
+| 13 | CoinGecko | Granularidad OHLC no configurable en plan gratuito | La API free fuerza granularidad automática: 30 min (1-2d), 4h (3-30d), 4 días (31+d) | Mapear `interval + limit → days` con `_interval_limit_to_days()` y documentar la limitación en el badge del frontend |
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v2.0.0 — Julio 2026*  
-*Última actualización: julio de 2026*
+*Documento técnico completo del proyecto CryptoWorld — Estado v3.0.0 — Abril 2026*  
+*Última actualización: abril de 2026*
 
 <!-- FIN DEL DOCUMENTO -->
 <!-- TODO: borrar todo lo que hay debajo de esta línea (contenido antiguo del diario de desarrollo)
