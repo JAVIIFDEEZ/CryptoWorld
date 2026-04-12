@@ -201,6 +201,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
   const [isLoading, setIsLoading]               = useState(true)
   const [error, setError]                       = useState<string | null>(null)
   const [chartHeight, setChartHeight]           = useState(DEFAULT_HEIGHT)
+  const [dataSource, setDataSource]             = useState<string | null>(null)
 
   // Herramientas
   const [activeTool, setActiveTool]             = useState<string | null>(null)
@@ -259,8 +260,9 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
     setIsLoading(true)
     setError(null)
     try {
-      const candles = await marketService.getOhlcv(symbol, interval, 300)
-      const data = candles
+      const response = await marketService.getOhlcv(symbol, interval, 300)
+      setDataSource(response.source)
+      const data = response.candles
         .map((c) => ({
           timestamp: new Date(c.open_time).getTime(),
           open:      Number.parseFloat(c.open),
@@ -271,8 +273,22 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
         }))
         .sort((a, b) => a.timestamp - b.timestamp)
       chartRef.current.applyNewData(data)
-    } catch {
-      setError('No se pudieron cargar los datos del gráfico.')
+
+      // Si la fuente es CoinGecko (sin volumen), quitar indicador VOL
+      if (response.source === 'coingecko') {
+        const volPaneId = indicatorPaneMap.current.get('VOL')
+        if (volPaneId) {
+          chartRef.current.removeIndicator(volPaneId, 'VOL')
+          indicatorPaneMap.current.delete('VOL')
+          setActiveIndicators((prev: Set<string>) => { const s = new Set(prev); s.delete('VOL'); return s })
+        }
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        setError(`No hay datos de gráfico disponibles para ${symbol}. El activo no está listado en Binance ni tiene datos en CoinGecko.`)
+      } else {
+        setError('No se pudieron cargar los datos del gráfico.')
+      }
     } finally {
       setIsLoading(false)
     }
@@ -324,6 +340,11 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
   function toggleIndicator(def: IndicatorDef) {
     const chart = chartRef.current
     if (!chart) return
+
+    // Bloquear indicadores de volumen si la fuente es CoinGecko
+    if (dataSource === 'coingecko' && (def.name === 'VOL' || def.name === 'OBV' || def.name === 'PVT' || def.name === 'VR' || def.name === 'EMV')) {
+      return
+    }
 
     if (activeIndicators.has(def.name)) {
       const paneId = indicatorPaneMap.current.get(def.name)
@@ -386,6 +407,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
   const activeLabel  = allTools.find((t) => t.id === activeTool)?.label
   const candleInds   = INDICATORS.filter((i) => i.onCandle)
   const subPaneInds  = INDICATORS.filter((i) => !i.onCandle)
+  const VOLUME_INDICATORS = new Set(['VOL', 'OBV', 'PVT', 'VR', 'EMV'])
 
   // ══════════════════════════════════════════════════════════════
   // JSX
@@ -401,6 +423,25 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
 
         {/* Symbol + intervals */}
         <span className="text-sm font-bold text-white mr-1">{symbol}/USDT</span>
+
+        {/* Data source badge */}
+        {dataSource && (
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+              dataSource === 'binance'
+                ? 'bg-green-900/40 text-green-400 border border-green-700/50'
+                : 'bg-amber-900/40 text-amber-400 border border-amber-700/50'
+            }`}
+            title={
+              dataSource === 'binance'
+                ? 'Datos OHLCV completos de Binance (incluye volumen)'
+                : 'Datos OHLC de CoinGecko (sin volumen real)'
+            }
+          >
+            {dataSource === 'binance' ? '● Binance' : '● CoinGecko'}
+          </span>
+        )}
+
         <div className="flex gap-0.5 bg-slate-800 rounded-md p-0.5">
           {INTERVALS.map((o) => (
             <button
@@ -479,18 +520,25 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
               <div className="px-3 py-1.5 text-[10px] text-slate-500 uppercase tracking-wider font-semibold border-t border-slate-700 mt-1">
                 Sub-paneles
               </div>
-              {subPaneInds.map((ind) => (
+              {subPaneInds.map((ind) => {
+                const isVolDisabled = dataSource === 'coingecko' && VOLUME_INDICATORS.has(ind.name)
+                return (
                 <button
                   key={ind.name}
                   onClick={() => toggleIndicator(ind)}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs hover:bg-slate-700 transition-colors"
+                  className={`w-full flex items-center justify-between px-3 py-1.5 text-xs transition-colors ${
+                    isVolDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-700'
+                  }`}
+                  disabled={isVolDisabled}
+                  title={isVolDisabled ? 'No disponible (fuente CoinGecko sin volumen)' : ind.label}
                 >
-                  <span className="text-slate-200">{ind.label}</span>
+                  <span className="text-slate-200">{ind.label}{isVolDisabled ? ' ⚠' : ''}</span>
                   {activeIndicators.has(ind.name)
                     ? <span className="text-green-400 text-sm font-bold">✓</span>
                     : <span className="text-slate-600 text-sm">○</span>}
                 </button>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

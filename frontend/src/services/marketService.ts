@@ -17,6 +17,12 @@ export interface OhlcvCandle {
   low: string
   close: string
   volume: string
+  source: string      // "binance" | "coingecko"
+}
+
+export interface OhlcvResponse {
+  source: string       // "binance" | "coingecko"
+  candles: OhlcvCandle[]
 }
 
 export interface MarketOverview {
@@ -44,8 +50,8 @@ export const marketService = {
     symbol: string,
     interval: OhlcvInterval = '1h',
     limit: number = 200,
-  ): Promise<OhlcvCandle[]> {
-    const { data } = await apiClient.get<OhlcvCandle[]>(
+  ): Promise<OhlcvResponse> {
+    const { data } = await apiClient.get<OhlcvResponse>(
       `/assets/${symbol.toUpperCase()}/ohlcv/`,
       { params: { interval, limit } },
     )
