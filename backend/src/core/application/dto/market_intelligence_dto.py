@@ -25,6 +25,7 @@ class OhlcvCandleOutputDTO:
     low: str
     close: str
     volume: str
+    source: str = "binance"  # "binance" | "coingecko"
 
 
 @dataclass(frozen=True)

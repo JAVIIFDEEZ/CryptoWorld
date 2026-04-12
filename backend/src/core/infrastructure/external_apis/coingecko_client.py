@@ -88,6 +88,32 @@ class CoinGeckoClient:
         """
         return self._get("/global")
 
+    def get_ohlc(
+        self,
+        coin_id: str,
+        vs_currency: str = "usd",
+        days: int | str = 30,
+    ) -> list[list]:
+        """
+        GET /coins/{id}/ohlc — OHLC para gráficos de velas.
+
+        Respuesta: [[timestamp_ms, open, high, low, close], ...]
+        NOTA: No incluye volumen. Se devuelve volume=0 al consumir.
+
+        Granularidad automática (plan gratuito):
+          1-2 días  → velas de 30 min
+          3-30 días → velas de 4h
+          31+ días  → velas de 4 días
+
+        `days` válidos: 1, 7, 14, 30, 90, 180, 365, "max"
+
+        Docs: https://docs.coingecko.com/reference/coins-id-ohlc
+        """
+        return self._get(f"/coins/{coin_id}/ohlc", params={
+            "vs_currency": vs_currency,
+            "days": days,
+        })
+
     def ping(self) -> bool:
         """Comprueba que la API responde."""
         try:

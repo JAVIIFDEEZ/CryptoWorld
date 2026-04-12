@@ -177,6 +177,7 @@ class OhlcvCandleSerializer(serializers.Serializer):
     low = serializers.CharField()
     close = serializers.CharField()
     volume = serializers.CharField()
+    source = serializers.CharField()
 
 
 class OnChainQuerySerializer(serializers.Serializer):
