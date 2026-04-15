@@ -45,6 +45,12 @@ from core.interfaces.api.serializers import (
     OnChainMetricPointSerializer,
     NewsQuerySerializer,
     NewsItemSerializer,
+    DeleteAccountSerializer,
+    CalculateAnalysisSerializer,
+    SignalsRequestSerializer,
+    PredictionRequestSerializer,
+    PatternsRequestSerializer,
+    BacktestRequestSerializer,
 )
 from core.application.use_cases.register_user import RegisterUserUseCase
 from core.application.use_cases.get_assets import GetAssetsUseCase
@@ -63,6 +69,11 @@ from core.application.use_cases.get_market_overview import GetMarketOverviewUseC
 from core.application.use_cases.get_asset_ohlcv import GetAssetOhlcvUseCase
 from core.application.use_cases.get_onchain_metrics import GetOnChainMetricsUseCase
 from core.application.use_cases.get_news_feed import GetNewsFeedUseCase
+from core.application.use_cases.delete_user_account import DeleteUserAccountUseCase
+from core.application.use_cases.get_signals_dashboard import GetSignalsDashboardUseCase
+from core.application.use_cases.predict_price import PredictPriceUseCase
+from core.application.use_cases.detect_patterns import DetectPatternsUseCase
+from core.application.use_cases.run_backtest import RunBacktestUseCase
 from core.application.dto.auth_dto import (
     RegisterUserInputDTO,
     LoginInputDTO,
@@ -75,11 +86,18 @@ from core.application.dto.auth_dto import (
     Disable2FADTO,
     Verify2FALoginDTO,
 )
-from core.application.dto.asset_dto import AnalysisRequestInputDTO
+from core.application.dto.asset_dto import (
+    AnalysisRequestInputDTO,
+    SignalsRequestDTO,
+    PredictionRequestDTO,
+    PatternsRequestDTO,
+    BacktestRequestDTO,
+)
 from core.infrastructure.persistence.repositories_impl import (
     DjangoUserRepository,
     DjangoCryptoAssetRepository,
 )
+from core.infrastructure.persistence.models import User as UserModel
 from core.domain.services.user_domain_service import UserDomainService
 
 
@@ -133,10 +151,9 @@ class RegisterView(APIView):
             )
             output_dto = use_case.execute(input_dto)
 
-            from core.infrastructure.persistence.models import User as UserModel
-            user_model = UserModel.objects.get(pk=output_dto.id)
-            user_model.set_password(validated["password"])
-            user_model.save()
+            # El repositorio crea el usuario sin contraseña;
+            # la establecemos aquí usando el método del repositorio.
+            user_repo.set_password(output_dto.id, validated["password"])
 
             # Enviar email de verificaciÃ³n (se imprime en consola en desarrollo)
             SendVerificationEmailUseCase().execute(output_dto.id)
@@ -548,7 +565,10 @@ class AssetListView(APIView):
 
         if not output_dtos:
             mock_assets = _get_mock_assets()
-            return Response(mock_assets, status=status.HTTP_200_OK)
+            return Response(
+                {"_mock": True, "results": mock_assets},
+                status=status.HTTP_200_OK,
+            )
 
         serializer = CryptoAssetSerializer(
             [vars(dto) for dto in output_dtos],
@@ -652,13 +672,17 @@ class BlockchainMetricsView(APIView):
             return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         q = query_serializer.validated_data
-        points = GetOnChainMetricsUseCase().execute(
+        result = GetOnChainMetricsUseCase().execute(
             symbol=q["symbol"],
             metric=q["metric"],
             days=q["days"],
         )
-        serializer = OnChainMetricPointSerializer([vars(p) for p in points], many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        serializer = OnChainMetricPointSerializer([vars(p) for p in result["points"]], many=True)
+        return Response({
+            "_stub": result.get("_stub", False),
+            "_notice": result.get("_notice", ""),
+            "data": serializer.data,
+        }, status=status.HTTP_200_OK)
 
 
 class NewsFeedView(APIView):
@@ -675,13 +699,17 @@ class NewsFeedView(APIView):
             return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         q = query_serializer.validated_data
-        items = GetNewsFeedUseCase().execute(
+        result = GetNewsFeedUseCase().execute(
             query=q["q"],
             sentiment=q["sentiment"],
             limit=q["limit"],
         )
-        serializer = NewsItemSerializer([vars(i) for i in items], many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        serializer = NewsItemSerializer([vars(i) for i in result["items"]], many=True)
+        return Response({
+            "_stub": result.get("_stub", False),
+            "_notice": result.get("_notice", ""),
+            "data": serializer.data,
+        }, status=status.HTTP_200_OK)
 
 
 # â”€â”€ Mock data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -710,9 +738,6 @@ def _get_mock_assets() -> list:
     ]
 
 
-from core.application.use_cases.delete_user_account import DeleteUserAccountUseCase
-from core.interfaces.api.serializers import DeleteAccountSerializer
-
 class DeleteAccountView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -721,11 +746,14 @@ class DeleteAccountView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        user = authenticate(email=request.user.email, password=serializer.validated_data['password'])
+        user = authenticate(
+            request,
+            username=request.user.email,
+            password=serializer.validated_data['password'],
+        )
         if user is None:
-            return Response({'error': 'Contrasena incorrecta'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Contraseña incorrecta.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from core.infrastructure.persistence.repositories_impl import DjangoUserRepository
         repo = DjangoUserRepository()
         use_case = DeleteUserAccountUseCase(repo)
         result = use_case.execute(request.user.id)
@@ -736,24 +764,6 @@ class DeleteAccountView(APIView):
 
 
 # ── Analysis avanzado Views ────────────────────────────────────────
-
-from core.interfaces.api.serializers import (
-    CalculateAnalysisSerializer,
-    SignalsRequestSerializer,
-    PredictionRequestSerializer,
-    PatternsRequestSerializer,
-    BacktestRequestSerializer,
-)
-from core.application.dto.asset_dto import (
-    SignalsRequestDTO,
-    PredictionRequestDTO,
-    PatternsRequestDTO,
-    BacktestRequestDTO,
-)
-from core.application.use_cases.get_signals_dashboard import GetSignalsDashboardUseCase
-from core.application.use_cases.predict_price import PredictPriceUseCase
-from core.application.use_cases.detect_patterns import DetectPatternsUseCase
-from core.application.use_cases.run_backtest import RunBacktestUseCase
 
 
 class CalculateAnalysisView(APIView):
