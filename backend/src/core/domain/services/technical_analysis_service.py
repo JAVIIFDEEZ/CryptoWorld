@@ -659,7 +659,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     model.fit(X_train, y_train)
 
     # Cross-validation para evaluar fiabilidad
-    cv_scores = cross_val_score(model, X_train, y_train, cv=min(5, len(X_train) // 10 or 1), scoring="accuracy")
+    cv_scores = cross_val_score(model, X_train, y_train, cv=max(2, min(5, len(X_train) // 10)), scoring="accuracy")
 
     # Predicción
     proba = model.predict_proba(X_latest)[0]
