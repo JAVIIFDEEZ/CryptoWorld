@@ -15,7 +15,7 @@ class GetNewsFeedUseCase:
     GDELT (fuente principal) y calculará sentimiento en backend.
     """
 
-    def execute(self, query: str, sentiment: str, limit: int) -> list[NewsItemOutputDTO]:
+    def execute(self, query: str, sentiment: str, limit: int) -> dict:
         raw_items = [
             NewsItemOutputDTO(
                 title="Bitcoin consolida por encima de 62k tras datos macro en EE.UU.",
@@ -52,4 +52,8 @@ class GetNewsFeedUseCase:
             if (not q or q in item.title.lower()) and (s in {"", "all"} or item.sentiment == s)
         ]
 
-        return filtered[:limit]
+        return {
+            "_stub": True,
+            "_notice": "Datos simulados. En producción se consumirá GDELT y se calculará sentimiento real.",
+            "items": filtered[:limit],
+        }

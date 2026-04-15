@@ -16,7 +16,7 @@ class GetOnChainMetricsUseCase:
     CoinMetrics (métricas agregadas) y opcionalmente Whale Alert (eventos).
     """
 
-    def execute(self, symbol: str, metric: str, days: int) -> list[OnChainMetricPointOutputDTO]:
+    def execute(self, symbol: str, metric: str, days: int) -> dict:
         symbol = symbol.upper()
         metric = metric.lower()
         now = datetime.now(UTC)
@@ -36,4 +36,8 @@ class GetOnChainMetricsUseCase:
                 )
             )
 
-        return points
+        return {
+            "_stub": True,
+            "_notice": "Datos simulados. En producción se conectará a CoinMetrics / Whale Alert.",
+            "points": points,
+        }
