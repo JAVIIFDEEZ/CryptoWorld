@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 
-type SortField = 'symbol' | 'price' | 'change' | 'marketCap'
+type SortField = 'symbol' | 'price' | 'change' | 'volume' | 'marketCap'
 type SortDirection = 'asc' | 'desc'
 
 function parseNumeric(value: string | null | undefined): number {
@@ -59,6 +59,10 @@ function MarketPage() {
         return (parseNumeric(a.price_change_24h) - parseNumeric(b.price_change_24h)) * dir
       }
 
+      if (sortField === 'volume') {
+        return (parseNumeric(a.volume_24h) - parseNumeric(b.volume_24h)) * dir
+      }
+
       return (parseNumeric(a.market_cap) - parseNumeric(b.market_cap)) * dir
     })
   }, [assets, search, sortField, sortDirection])
@@ -113,7 +117,7 @@ function MarketPage() {
                   <HeaderCell label="Activo" onClick={() => handleSort('symbol')} />
                   <HeaderCell label="Precio" align="right" onClick={() => handleSort('price')} />
                   <HeaderCell label="24h" align="right" onClick={() => handleSort('change')} />
-                  <HeaderCell label="Volumen 24h" align="right" onClick={() => handleSort('marketCap')} />
+                  <HeaderCell label="Volumen 24h" align="right" onClick={() => handleSort('volume')} />
                   <HeaderCell label="Cap. mercado" align="right" onClick={() => handleSort('marketCap')} />
                   <th className="px-4 py-3 text-center">Detalle</th>
                 </tr>
