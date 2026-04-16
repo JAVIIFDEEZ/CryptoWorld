@@ -204,7 +204,7 @@ Authorization: Bearer {{access_token}}
 
 ## 6. Renovar Access Token
 
-El access token expira cada 5 minutos. Cuando ocurra, usar el refresh token para obtener uno nuevo.
+El access token expira cada 60 minutos. Cuando ocurra, usar el refresh token para obtener uno nuevo.
 
 ```
 POST {{base_url}}/api/auth/token/refresh/
@@ -655,7 +655,7 @@ Content-Type: application/json
 
 ## 15. Endpoints de datos
 
-### Listar activos (mock data)
+### Listar activos (datos reales de CoinGecko)
 
 ```
 GET {{base_url}}/api/assets/
@@ -666,9 +666,35 @@ GET {{base_url}}/api/assets/
 Authorization: Bearer {{access_token}}
 ```
 
-**Respuesta esperada (200 OK):** lista de activos criptográficos con datos de ejemplo.
+**Respuesta esperada (200 OK):** lista de activos criptográficos con precios, market cap, volumen y logos reales sincronizados desde CoinGecko.
 
-### Ejecutar análisis (stub)
+### Velas OHLCV (Strategy Pattern: Binance → CoinGecko → 404)
+
+```
+GET {{base_url}}/api/assets/BTC/ohlcv/?interval=1h&limit=100
+```
+
+**Parámetros query:** `interval` (1m, 5m, 15m, 1h, 4h, 1d), `limit` (número de velas).
+
+**Respuesta esperada (200 OK):**
+```json
+{
+    "source": "binance",
+    "candles": [...]
+}
+```
+
+> Si el activo no cotiza en Binance (p.ej. HYPE), `source` será `"coingecko"`. Si no existe en ninguna fuente, devuelve HTTP 404.
+
+### Market Overview (datos reales)
+
+```
+GET {{base_url}}/api/market/overview/
+```
+
+**Respuesta esperada (200 OK):** market cap total, volumen 24h, dominancia BTC, Fear & Greed Index (fuentes: CoinGecko + Alternative.me).
+
+### Ejecutar análisis técnico
 
 ```
 POST {{base_url}}/api/analysis/run/
@@ -688,7 +714,98 @@ Content-Type: application/json
 }
 ```
 
-> Los valores válidos para `analysis_type` son: `RSI`, `MACD`, `SMA`, `EMA`, `BOLLINGER`.
+> Valores válidos para `analysis_type`: `RSI`, `MACD`, `SMA`, `EMA`, `BOLLINGER`.
+
+### Calcular indicador individual
+
+```
+POST {{base_url}}/api/analysis/calculate/
+```
+
+**Body:** `{ "symbol": "BTC", "indicator": "RSI", "interval": "1h", "limit": 200 }`
+
+### Panel de señales multi-indicador
+
+```
+GET {{base_url}}/api/analysis/signals/?symbol=BTC&interval=1h&limit=200
+```
+
+**Respuesta esperada (200 OK):** 11 señales individuales + veredicto global (COMPRA/VENTA/NEUTRAL) + `data_source`.
+
+### Predicción ML (Random Forest)
+
+```
+POST {{base_url}}/api/analysis/predict/
+```
+
+**Body:** `{ "symbol": "BTC", "interval": "1h", "limit": 300 }`
+
+**Respuesta esperada (200 OK):** `prediction` (UPTREND/DOWNTREND), `confidence`, `data_source`.
+
+### Detección de patrones de velas
+
+```
+POST {{base_url}}/api/analysis/patterns/
+```
+
+**Body:** `{ "symbol": "BTC", "interval": "1h", "limit": 200 }`
+
+**Respuesta esperada (200 OK):** lista de 12 patrones de velas japonesas detectados (Doji, Hammer, Engulfing, etc.).
+
+### Backtesting de estrategias
+
+```
+POST {{base_url}}/api/analysis/backtest/
+```
+
+**Body:** `{ "symbol": "BTC", "strategy": "rsi", "interval": "1h", "limit": 300, "initial_capital": 10000 }`
+
+> Estrategias disponibles: `rsi`, `macd`, `bollinger`, `sma`, `ema`. Consultar `GET /api/analysis/strategies/` para la lista completa.
+
+### Estrategias disponibles
+
+```
+GET {{base_url}}/api/analysis/strategies/
+```
+
+**Respuesta esperada (200 OK):** lista con `key`, `name` y `description` de cada estrategia.
+
+### Métricas on-chain (stub)
+
+```
+GET {{base_url}}/api/blockchain/metrics/
+```
+
+**Respuesta:** datos simulados con flag `_stub: True`.
+
+### Feed de noticias (stub)
+
+```
+GET {{base_url}}/api/news/
+```
+
+**Respuesta:** 3 noticias fijas con flag `_stub: True`.
+
+### Panel de administración (requiere is_staff=True)
+
+```
+GET {{base_url}}/api/admin/users/
+GET {{base_url}}/api/admin/users/1/
+PATCH {{base_url}}/api/admin/users/1/
+POST {{base_url}}/api/admin/market/sync/
+```
+
+**Body de sync:** `{ "per_page": 50 }` (número de activos a sincronizar desde CoinGecko).
+
+### Eliminar cuenta
+
+```
+DELETE {{base_url}}/api/auth/delete-account/
+```
+
+**Headers:** `Authorization: Bearer {{access_token}}`
+
+**Body:** `{ "password": "MiPassword123!" }`
 
 ---
 
@@ -703,18 +820,25 @@ Orden recomendado para probar el sistema completo desde cero:
 4.  GET  /api/auth/verify-email/?token=...     → Verificar email
 5.  POST /api/auth/login/                      → Login (guarda access + refresh)
 6.  GET  /api/auth/me/                         → Ver perfil (is_email_verified=true)
-7.  GET  /api/assets/                          → Acceder a datos protegidos
-8.  POST /api/auth/change-password/            → Cambiar contraseña
-9.  POST /api/auth/2fa/setup/                  → Obtener QR y escanear con app
-10. POST /api/auth/2fa/enable/                 → Activar 2FA con primer código
-11. POST /api/auth/logout/                     → Cerrar sesión (blacklist refresh)
-12. POST /api/auth/login/                      → Login de nuevo (requires_2fa=true)
-13. POST /api/auth/2fa/login/                  → Segundo factor con código TOTP
-14. GET  /api/auth/me/                         → Verificar (is_2fa_enabled=true)
-15. POST /api/auth/2fa/disable/                → Desactivar 2FA
-16. POST /api/auth/password-reset/             → Solicitar recuperación de contraseña
-17.      [revisar logs Docker para uid+token]
-18. POST /api/auth/password-reset/confirm/     → Establecer nueva contraseña
+7.  GET  /api/assets/                          → Listar activos (datos reales de CoinGecko)
+8.  GET  /api/assets/BTC/ohlcv/?interval=1h    → Velas OHLCV (Binance)
+9.  GET  /api/market/overview/                 → Métricas globales del mercado
+10. POST /api/analysis/calculate/              → Calcular indicador técnico
+11. GET  /api/analysis/signals/?symbol=BTC     → Panel de señales multi-indicador
+12. POST /api/analysis/predict/                → Predicción ML (Random Forest)
+13. POST /api/analysis/patterns/               → Detección de patrones de velas
+14. POST /api/analysis/backtest/               → Backtesting de estrategia
+15. POST /api/auth/change-password/            → Cambiar contraseña
+16. POST /api/auth/2fa/setup/                  → Obtener QR y escanear con app
+17. POST /api/auth/2fa/enable/                 → Activar 2FA con primer código
+18. POST /api/auth/logout/                     → Cerrar sesión (blacklist refresh)
+19. POST /api/auth/login/                      → Login de nuevo (requires_2fa=true)
+20. POST /api/auth/2fa/login/                  → Segundo factor con código TOTP
+21. GET  /api/auth/me/                         → Verificar (is_2fa_enabled=true)
+22. POST /api/auth/2fa/disable/                → Desactivar 2FA
+23. POST /api/auth/password-reset/             → Solicitar recuperación de contraseña
+24.      [revisar logs Docker para uid+token]
+25. POST /api/auth/password-reset/confirm/     → Establecer nueva contraseña
 ```
 
 ---
@@ -733,4 +857,4 @@ Orden recomendado para probar el sistema completo desde cero:
 
 ---
 
-*Última actualización: Marzo 2026*
+*Última actualización: Abril 2026*

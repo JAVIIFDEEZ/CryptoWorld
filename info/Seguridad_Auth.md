@@ -62,14 +62,14 @@ Son dos JWT con propósitos distintos y tiempos de vida diferentes:
 
 | Token | Vida útil | Uso |
 |-------|-----------|-----|
-| **Access Token** | 5 minutos (configurable) | Autenticar cada petición a la API |
+| **Access Token** | 60 minutos (configurable) | Autenticar cada petición a la API |
 | **Refresh Token** | 7 días (configurable) | Obtener un nuevo access token sin volver a hacer login |
 
 ### ¿Por qué dos tokens en lugar de uno?
 
 Un único token de larga duración tiene un problema grave: **si es robado, el atacante tiene acceso durante días o semanas**. La separación en dos tokens resuelve esto:
 
-- El **access token** tiene vida muy corta (5 min). Si es interceptado, el atacante solo tiene 5 minutos para usarlo.
+- El **access token** tiene vida corta (60 min). Si es interceptado, el atacante solo tiene 60 minutos para usarlo.
 - El **refresh token** tiene vida larga pero **solo se envía a un único endpoint** (`/api/auth/token/refresh/`), reduciendo la exposición.
 
 ### Flujo completo
@@ -78,13 +78,13 @@ Un único token de larga duración tiene un problema grave: **si es robado, el a
 Cliente                         Servidor
   │                               │
   │── POST /auth/login/ ─────────>│
-  │<── access_token (5min) ───────│
+  │<── access_token (60min) ───────│
   │<── refresh_token (7días) ─────│
   │                               │
   │── GET /api/assets/ + access ─>│  ← petición normal
   │<── 200 OK ────────────────────│
   │                               │
-  │  [5 minutos después]          │
+  │  [60 minutos después]          │
   │                               │
   │── GET /api/assets/ + access ─>│
   │<── 401 Unauthorized ──────────│  ← token expirado
@@ -131,7 +131,7 @@ refresh.blacklist()  # ← inserta el token en la tabla de blacklist
 
 ### ¿Por qué solo se blacklistea el refresh token y no el access token?
 
-- El access token tiene vida muy corta (5 min), por lo que el riesgo de que sea usado tras el logout es mínimo y acotado en el tiempo.
+- El access token tiene vida corta (60 min), por lo que el riesgo de que sea usado tras el logout es mínimo y acotado en el tiempo.
 - Blacklistear el access token requeriría consultar la base de datos en **cada petición autenticada**, eliminando la ventaja principal del JWT (stateless).
 - El refresh token es el que permite obtener nuevos access tokens indefinidamente, así que invalidarlo corta la cadena de forma efectiva.
 
@@ -368,7 +368,7 @@ Sin validadores, los usuarios podrían establecer contraseñas triviales como `1
 | Medida de Seguridad | Amenaza que mitiga | Implementada en | Vida útil |
 |---------------------|-------------------|-----------------|-----------|
 | **JWT (HS256)** | Falsificación de identidad, sesiones robadas | Login, todas las peticiones autenticadas | — |
-| **Access Token** | Exposición prolongada de credenciales | Todas las peticiones a `/api/` | 5 minutos |
+| **Access Token** | Exposición prolongada de credenciales | Todas las peticiones a `/api/` | 60 minutos |
 | **Refresh Token** | Necesidad de re-login frecuente vs. seguridad | `POST /auth/token/refresh/` | 7 días |
 | **Token Blacklist** | Tokens robados activos tras logout | `POST /auth/logout/` | Permanente en BD |
 | **HMAC (verificación email)** | Falsificación de links de verificación | `GET /auth/verify-email/` | 3 días |
@@ -379,4 +379,4 @@ Sin validadores, los usuarios podrían establecer contraseñas triviales como `1
 
 ---
 
-*Última actualización: Marzo 2026*
+*Última actualización: Abril 2026*

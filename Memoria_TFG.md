@@ -4,7 +4,7 @@
 **Autor:** Javier  
 **Titulación:** 4º Ingeniería Informática  
 **Universidad:** Universidad de Castilla-La Mancha  
-**Fecha del documento:** Abril 2026 (v3.0.0)  
+**Fecha del documento:** Abril 2026 (v1.29.4)  
 
 > **NOTA PARA LA IA REDACTORA:** Este documento es un briefing técnico completo del proyecto CryptoWorld tal como está implementado en marzo de 2026. Contiene el código real de los archivos más importantes, la justificación de cada decisión de diseño, y todos los detalles técnicos necesarios para redactar una memoria académica de TFG. No es necesario inferir nada—todo lo que existe en el proyecto está documentado aquí. El objetivo es una memoria académica formal para un TFG de Ingeniería Informática en la UCLM.
 
@@ -82,6 +82,10 @@
 | python-dotenv | 1.0.1 | Carga de variables de entorno desde .env |
 | gunicorn | 22.0.0 | Servidor WSGI para producción |
 | requests | 2.32.3 | Cliente HTTP para APIs externas (Binance, CoinGecko, Alternative.me) |
+| ta | 0.11.0 | Librería de indicadores de análisis técnico (RSI, MACD, Bollinger, etc.) |
+| scikit-learn | 1.5.1 | Machine Learning — Random Forest para predicción de precio |
+| pandas | 2.2.2 | DataFrames para procesamiento de datos OHLCV |
+| numpy | 1.26.4 | Operaciones numéricas (dependencia de pandas y scikit-learn) |
 | pytest | 8.2.2 | Framework de testing |
 | pytest-django | 4.8.0 | Integración pytest con Django |
 
@@ -149,8 +153,8 @@ El backend implementa **Clean Architecture** (Arquitectura Limpia) de Robert C. 
 ├──────────────────────────────────────────────────────────┤
 │  CAPA 3: INFRAESTRUCTURA  (infrastructure/)              │
 │  persistence/models.py   persistence/repositories_impl  │
-│  external_apis/  (pendiente CoinGecko)                   │
-│  → Sabe de Django ORM y PostgreSQL.                      │
+│  external_apis/  (BinancePublicClient + CoinGeckoClient) │
+│  → Sabe de Django ORM, PostgreSQL y APIs externas.        │
 │  → Implementa los contratos del Dominio.                 │
 ├──────────────────────────────────────────────────────────┤
 │  CAPA 2: APLICACIÓN  (application/)                      │
@@ -249,6 +253,10 @@ class CryptoAssetEntity:
     market_cap: Optional[Decimal] = None
     volume_24h: Optional[Decimal] = None
     price_change_24h: Optional[Decimal] = None
+    coingecko_id: Optional[str] = None      # ID en CoinGecko (p.ej. "bitcoin")
+    logo_url: Optional[str] = None           # URL del logo del activo
+    asset_address: Optional[str] = None      # Dirección del contrato (tokens ERC-20, etc.)
+    decimals: Optional[int] = None           # Decimales del token
     id: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -272,7 +280,46 @@ class MarketDataSnapshotEntity:
     price: Decimal
     volume: Decimal
     timestamp: str   # ISO 8601
+    market_cap: Optional[Decimal] = None
+    fully_diluted_valuation: Optional[Decimal] = None
+    circulating_supply: Optional[Decimal] = None
+    total_supply: Optional[Decimal] = None
+    max_supply: Optional[Decimal] = None
+    ath: Optional[Decimal] = None              # All-Time High
+    atl: Optional[Decimal] = None              # All-Time Low
+    ath_date: Optional[str] = None
+    atl_date: Optional[str] = None
+    price_change_24h_pct: Optional[Decimal] = None
+    price_change_7d_pct: Optional[Decimal] = None
+    price_change_30d_pct: Optional[Decimal] = None
     id: Optional[int] = None
+
+@dataclass
+class PortfolioAssetEntity:
+    """Posición de un activo en el portfolio de un usuario."""
+    user_id: int
+    asset_symbol: str
+    quantity: Decimal
+    purchase_value_usd: Decimal
+    current_value_usd: Optional[Decimal] = None
+
+    @property
+    def avg_buy_price_usd(self) -> Decimal:
+        if self.quantity == 0:
+            return Decimal("0")
+        return self.purchase_value_usd / self.quantity
+
+    @property
+    def unrealized_pnl_usd(self) -> Optional[Decimal]:
+        if self.current_value_usd is None:
+            return None
+        return self.current_value_usd - self.purchase_value_usd
+
+    @property
+    def unrealized_pnl_pct(self) -> Optional[Decimal]:
+        if self.current_value_usd is None or self.purchase_value_usd == 0:
+            return None
+        return ((self.current_value_usd - self.purchase_value_usd) / self.purchase_value_usd) * 100
 
 @dataclass
 class AnalysisExecutionEntity:
@@ -381,9 +428,9 @@ application/
 │   ├── ohlcv_fetcher.py          ← Servicio compartido de obtención de DataFrames OHLCV
 │   ├── run_analysis.py           ← Calcular un indicador técnico individual (real)
 │   ├── get_signals_dashboard.py  ← Panel multi-indicador con veredicto compra/venta/neutral
-│   ├── predict_price.py          ← Predicción de precio con regresión lineal
-│   ├── detect_patterns.py        ← Detección de patrones chartistas (cabeza y hombros, etc.)
-│   └── run_backtest.py           ← Backtesting de estrategias simple/doble cruce de medias
+│   ├── predict_price.py          ← Predicción de dirección de precio con Random Forest (scikit-learn)
+│   ├── detect_patterns.py        ← Detección de 12 patrones de velas japonesas (Doji, Hammer, Engulfing, etc.)
+│   └── run_backtest.py           ← Backtesting de 5 estrategias (RSI, MACD, Bollinger, SMA, EMA)
 └── dto/
     ├── auth_dto.py               ← 13 DTOs de autenticación
     ├── asset_dto.py              ← DTOs de activos y análisis
@@ -647,7 +694,7 @@ La infraestructura es el puente entre el dominio abstracto y las tecnologías co
 ```
 infrastructure/
 ├── persistence/
-│   ├── models.py              ← Modelos Django ORM (4 tablas)
+│   ├── models.py              ← Modelos Django ORM (5 tablas)
 │   └── repositories_impl.py  ← DjangoUserRepository, DjangoCryptoAssetRepository
 └── external_apis/
     ├── binance_client.py      ← Cliente Binance Public API (klines OHLCV, sin auth)
@@ -702,6 +749,10 @@ class CryptoAsset(models.Model):
     market_cap = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
     volume_24h = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
     price_change_24h = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    coingecko_id = models.CharField(max_length=100, null=True, blank=True)   # ID en CoinGecko
+    logo_url = models.URLField(null=True, blank=True)                        # URL del logo
+    asset_address = models.CharField(max_length=255, null=True, blank=True)  # Dirección contrato
+    decimals = models.IntegerField(null=True, blank=True)                    # Decimales del token
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -713,10 +764,33 @@ class MarketDataSnapshot(models.Model):
     asset = models.ForeignKey(CryptoAsset, on_delete=models.CASCADE, related_name="snapshots")
     price = models.DecimalField(max_digits=20, decimal_places=8)
     volume = models.DecimalField(max_digits=30, decimal_places=2)
+    market_cap = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
+    fully_diluted_valuation = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
+    circulating_supply = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
+    total_supply = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
+    max_supply = models.DecimalField(max_digits=30, decimal_places=2, null=True, blank=True)
+    ath = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True)
+    atl = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True)
+    ath_date = models.CharField(max_length=50, null=True, blank=True)
+    atl_date = models.CharField(max_length=50, null=True, blank=True)
+    price_change_24h_pct = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    price_change_7d_pct = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    price_change_30d_pct = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "market_data_snapshots"
+
+class PortfolioAsset(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="portfolio_assets")
+    asset_symbol = models.CharField(max_length=20)
+    quantity = models.DecimalField(max_digits=20, decimal_places=8, default=0)
+    purchase_value_usd = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    current_value_usd = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        db_table = "portfolio_assets"
+        unique_together = ("user", "asset_symbol")
 
 class AnalysisExecution(models.Model):
     STATUS_CHOICES = [
@@ -816,7 +890,7 @@ Django autodescubre los modelos de una app buscando `<app_label>.models`. Los mo
 # Patrón: Adapter Pattern entre Clean Architecture y el mecanismo de Django.
 from core.infrastructure.persistence.models import (
     UserManager, User, CryptoAsset,
-    MarketDataSnapshot, AnalysisExecution,
+    MarketDataSnapshot, PortfolioAsset, AnalysisExecution,
 )
 ```
 
@@ -829,7 +903,7 @@ La capa de interfaces es la única que sabe que existe HTTP. Recibe peticiones, 
 **Estructura:**
 ```
 interfaces/api/
-├── views.py        ← Views DRF: 17 endpoints
+├── views.py        ← Views DRF: 31 endpoints
 ├── serializers.py  ← Serializadores DRF: validación y transformación
 └── urls.py         ← Definición de rutas URL
 ```
@@ -953,15 +1027,35 @@ urlpatterns = [
     path("auth/password-reset/confirm/", views.PasswordResetConfirmView.as_view()),
     path("auth/change-password/", views.ChangePasswordView.as_view()),
 
+    # Auth — Eliminación de cuenta
+    path("auth/delete-account/", views.DeleteAccountView.as_view()),
+
     # Auth — 2FA TOTP
     path("auth/2fa/setup/", views.Setup2FAView.as_view(), name="auth-2fa-setup"),
     path("auth/2fa/enable/", views.Enable2FAView.as_view(), name="auth-2fa-enable"),
     path("auth/2fa/disable/", views.Disable2FAView.as_view(), name="auth-2fa-disable"),
     path("auth/2fa/login/", views.Verify2FALoginView.as_view(), name="auth-2fa-login"),
 
-    # Dominio criptográfico
+    # Datos de mercado
     path("assets/", views.AssetListView.as_view(), name="asset-list"),
+    path("assets/<str:symbol>/ohlcv/", views.AssetOhlcvView.as_view(), name="asset-ohlcv"),
+    path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
+    path("blockchain/metrics/", views.OnChainMetricsView.as_view(), name="blockchain-metrics"),
+    path("news/", views.NewsFeedView.as_view(), name="news-feed"),
+
+    # Análisis técnico
     path("analysis/run/", views.RunAnalysisView.as_view(), name="analysis-run"),
+    path("analysis/calculate/", views.CalculateIndicatorView.as_view(), name="analysis-calculate"),
+    path("analysis/signals/", views.SignalsDashboardView.as_view(), name="analysis-signals"),
+    path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
+    path("analysis/patterns/", views.DetectPatternsView.as_view(), name="analysis-patterns"),
+    path("analysis/backtest/", views.RunBacktestView.as_view(), name="analysis-backtest"),
+    path("analysis/strategies/", views.AvailableStrategiesView.as_view(), name="analysis-strategies"),
+
+    # Administración
+    path("admin/users/", views.AdminUserListView.as_view(), name="admin-users"),
+    path("admin/users/<int:user_id>/", views.AdminUserDetailView.as_view(), name="admin-user-detail"),
+    path("admin/market/sync/", views.AdminMarketSyncView.as_view(), name="admin-market-sync"),
 ]
 ```
 
@@ -1257,22 +1351,33 @@ FRONTEND_URL=http://localhost:5173
 Browser
   └── React SPA
         ├── Routing (react-router-dom v6)
-        │     ├── Rutas públicas: /login
-        │     └── Rutas protegidas: /dashboard, /assets/:symbol
-        │           └── Guard: ProtectedRoute (comprueba JWT)
+        │     ├── Rutas públicas: /login, /register, /auth/verify-email
+        │     ├── Rutas protegidas: /dashboard, /market, /analysis, /assets/:symbol, /security/2fa, /settings
+        │     │     ├── Guard: ProtectedRoute (comprueba JWT)
+        │     │     └── Guard: AdminRoute (comprueba is_staff)
+        │     └── Rutas placeholder: /blockchain, /portfolio, /news, /alerts
         ├── Estado global de autenticación
         │     └── AuthContext + useAuth hook (React Context API)
         ├── Páginas (pages/)
-        │     ├── LoginPage.tsx
-        │     ├── DashboardPage.tsx
-        │     └── AssetDetailPage.tsx
+        │     ├── LoginPage.tsx / RegisterPage.tsx / VerifyEmailPage.tsx
+        │     ├── DashboardPage.tsx (overview + tabla de activos)
+        │     ├── MarketPage.tsx (tabla completa con búsqueda, ordenación, paginación)
+        │     ├── TechnicalAnalysisPage.tsx (panel multi-indicador)
+        │     ├── AssetDetailPage.tsx (gráfico OHLCV + panel de análisis)
+        │     ├── Security2FAPage.tsx / SettingsPage.tsx
+        │     ├── AdminDashboardPage.tsx (gestión usuarios + sync mercado)
+        │     └── PrototypePlaceholderPage.tsx (funcionalidades pendientes)
         ├── Capa de servicios (services/)
-        │     ├── api.ts          ← Instancia Axios centralizada
-        │     ├── authService.ts  ← Llamadas HTTP de auth
-        │     └── analysisService.ts ← Llamadas HTTP de análisis
+        │     ├── api.ts             ← Instancia Axios centralizada
+        │     ├── authService.ts     ← Llamadas HTTP de auth
+        │     ├── analysisService.ts ← Llamadas HTTP de análisis técnico
+        │     └── marketService.ts   ← Llamadas HTTP de mercado (OHLCV, overview)
         └── Componentes compartidos (components/)
-              ├── Navbar.tsx
-              └── ProtectedRoute.tsx
+              ├── Navbar.tsx / AppShell.tsx / TickerBar.tsx
+              ├── OhlcvChart.tsx (KLineChart v9)
+              ├── AnalysisPanel.tsx
+              ├── ProtectedRoute.tsx
+              └── AdminRoute.tsx
 ```
 
 ### `services/api.ts` — Instancia Axios centralizada (código real)
@@ -1436,20 +1541,46 @@ function ProtectedRoute() {
 ```typescript
 import { Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
+import RegisterPage from '@/pages/RegisterPage'
+import VerifyEmailPage from '@/pages/VerifyEmailPage'
 import DashboardPage from '@/pages/DashboardPage'
+import MarketPage from '@/pages/MarketPage'
+import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
 import AssetDetailPage from '@/pages/AssetDetailPage'
+import Security2FAPage from '@/pages/Security2FAPage'
+import SettingsPage from '@/pages/SettingsPage'
+import AdminDashboardPage from '@/pages/AdminDashboardPage'
+import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import AdminRoute from '@/components/AdminRoute'
+import AppShell from '@/components/AppShell'
 
 function AppRoutes() {
   return (
     <Routes>
+      {/* Rutas públicas */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
 
       {/* Rutas protegidas: el guard comprueba JWT antes de renderizar */}
       <Route element={<ProtectedRoute />}>
-        <Route element={<LayoutWithNav />}>
+        <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/market" element={<MarketPage />} />
+          <Route path="/analysis" element={<TechnicalAnalysisPage />} />
+          <Route path="/blockchain" element={<PrototypePlaceholderPage />} />
+          <Route path="/portfolio" element={<PrototypePlaceholderPage />} />
+          <Route path="/news" element={<PrototypePlaceholderPage />} />
+          <Route path="/alerts" element={<PrototypePlaceholderPage />} />
+          <Route path="/security/2fa" element={<Security2FAPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
+
+          {/* Ruta de administración (requiere is_staff) */}
+          <Route element={<AdminRoute />}>
+            <Route path="/admin" element={<AdminDashboardPage />} />
+          </Route>
         </Route>
       </Route>
 
@@ -1657,7 +1788,7 @@ class TestAssetsEndpoint:
 
 ## 9. BASE DE DATOS: MODELO RELACIONAL
 
-**4 tablas principales** en PostgreSQL, más las tablas internas de Django y SimpleJWT:
+**5 tablas principales** en PostgreSQL, más las tablas internas de Django y SimpleJWT:
 
 ```
 ┌─────────────────────────────────────┐
@@ -1674,7 +1805,7 @@ class TestAssetsEndpoint:
 │  totp_secret         ← migración 02 │
 │  is_2fa_enabled      ← migración 02 │
 └────────────┬────────────────────────┘
-             │ (sin FK explícita, user_id en casos de uso)
+             │ 1:N (FK en portfolio_assets)
 ┌────────────▼────────────────────────┐
 │  crypto_assets                      │
 │  ─────────────────────────────────  │
@@ -1685,6 +1816,10 @@ class TestAssetsEndpoint:
 │  market_cap (Decimal 30,2)          │
 │  volume_24h (Decimal 30,2)          │
 │  price_change_24h (Decimal 10,4)    │
+│  coingecko_id          ← migración 03│
+│  logo_url              ← migración 03│
+│  asset_address         ← migración 03│
+│  decimals              ← migración 03│
 │  created_at, updated_at             │
 └────────────┬────────────────────────┘
              │ 1:N
@@ -1695,7 +1830,27 @@ class TestAssetsEndpoint:
 │  asset_id (FK → crypto_assets)      │
 │  price (Decimal 20,8)               │
 │  volume (Decimal 30,2)              │
+│  market_cap (Decimal 30,2)          │
+│  fully_diluted_valuation            │
+│  circulating_supply, total_supply   │
+│  max_supply                         │
+│  ath, atl (Decimal 20,8)            │
+│  ath_date, atl_date                 │
+│  price_change_24h_pct               │
+│  price_change_7d_pct                │
+│  price_change_30d_pct               │
 │  timestamp                          │
+└─────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│  portfolio_assets     ← migración 03│
+│  ─────────────────────────────────  │
+│  id (PK)                            │
+│  user_id (FK → users)               │
+│  asset_symbol                       │
+│  quantity (Decimal 20,8)            │
+│  purchase_value_usd (Decimal 20,2)  │
+│  current_value_usd (Decimal 20,2)   │
+│  UNIQUE(user_id, asset_symbol)      │
 └─────────────────────────────────────┘
 ┌─────────────────────────────────────┐
 │  analysis_executions                │
@@ -1712,8 +1867,9 @@ class TestAssetsEndpoint:
 **Migraciones aplicadas:**
 | Archivo | Contenido |
 |---|---|
-| `core/migrations/0001_initial.py` | Crea las 4 tablas: users, crypto_assets, market_data_snapshots, analysis_executions |
+| `core/migrations/0001_initial.py` | Crea las 4 tablas base: users, crypto_assets, market_data_snapshots, analysis_executions |
 | `core/migrations/0002_user_auth_fields.py` | Añade is_email_verified, totp_secret, is_2fa_enabled a la tabla users |
+| `core/migrations/0003_add_portfolio_and_expand_market_models.py` | Crea portfolio_assets; añade coingecko_id, logo_url, asset_address, decimals a crypto_assets; expande market_data_snapshots con métricas de mercado completas |
 | `token_blacklist/*` (12 migraciones) | Tablas OutstandingToken y BlacklistedToken para logout seguro |
 
 ---
@@ -1807,7 +1963,7 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 
 ## 11. ESTADO ACTUAL Y ROADMAP
 
-### Estado actual — Abril 2026 (v3.0.0 — Análisis Técnico Real + Strategy Pattern OHLCV)
+### Estado actual — Abril 2026 (v1.29.4 — Análisis Técnico Real + Strategy Pattern OHLCV)
 
 **Servicios Docker activos:**
 | Contenedor | Puerto | Estado |
@@ -1838,6 +1994,7 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | POST | `/api/auth/password-reset/` | No | ✅ Funcional | Email + HMAC |
 | POST | `/api/auth/password-reset/confirm/` | No | ✅ Funcional | DB + HMAC |
 | POST | `/api/auth/change-password/` | Sí | ✅ Funcional | DB |
+| DELETE | `/api/auth/delete-account/` | Sí | ✅ Funcional | DB |
 | POST | `/api/auth/2fa/setup/` | Sí | ✅ Funcional | pyotp |
 | POST | `/api/auth/2fa/enable/` | Sí | ✅ Funcional | pyotp |
 | POST | `/api/auth/2fa/disable/` | Sí | ✅ Funcional | pyotp |
@@ -1847,9 +2004,9 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | POST | `/api/analysis/run/` | Sí | ✅ **Datos reales** | Binance/CoinGecko + TechnicalAnalysisService |
 | POST | `/api/analysis/calculate/` | Sí | ✅ **Datos reales** | Binance/CoinGecko + indicadores |
 | GET | `/api/analysis/signals/` | Sí | ✅ **Datos reales** | Binance/CoinGecko (señales multi-indicador) |
-| GET | `/api/analysis/predict/` | Sí | ✅ **Datos reales** | Regresión lineal sobre OHLCV real |
-| GET | `/api/analysis/patterns/` | Sí | ✅ **Datos reales** | Detección de patrones chartistas |
-| GET | `/api/analysis/backtest/` | Sí | ✅ **Datos reales** | Backtesting cruce de medias |
+| POST | `/api/analysis/predict/` | Sí | ✅ **Datos reales** | Random Forest sobre OHLCV real |
+| POST | `/api/analysis/patterns/` | Sí | ✅ **Datos reales** | Detección de 12 patrones de velas japonesas |
+| POST | `/api/analysis/backtest/` | Sí | ✅ **Datos reales** | Backtesting de 5 estrategias (RSI, MACD, Bollinger, SMA, EMA) |
 | GET | `/api/analysis/strategies/` | Sí | ✅ Funcional | Lista estática |
 | GET | `/api/market/overview/` | Sí | ✅ **Datos reales** | CoinGecko /global + Alternative.me |
 | GET | `/api/blockchain/metrics/` | Sí | ⚠️ Stub (datos sintéticos) | — |
@@ -1866,7 +2023,7 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | Domain — Repository interfaces | ✅ Completo |
 | Domain — Value Objects | ✅ Completo |
 | Domain — Services (técnico + usuario) | ✅ Completo (TechnicalAnalysisService con indicadores reales) |
-| Application — 20+ casos de uso | ✅ Auth completo, market data real, OHLCV real (Strategy Pattern), análisis técnico real |
+| Application — 24 casos de uso | ✅ Auth completo, market data real, OHLCV real (Strategy Pattern), análisis técnico real |
 | Application — DTOs | ✅ Completo (auth, asset, market_intelligence con campo `source`) |
 | Infrastructure — ORM Models | ✅ Completo (5 modelos, 3 migraciones) |
 | Infrastructure — Repositories impl | ✅ Completo |
@@ -1946,9 +2103,9 @@ Pruebas ejecutadas contra los contenedores Docker en ejecución:
 | `application/use_cases/ohlcv_fetcher.py` | Nuevo | Servicio compartido `fetch_ohlcv_dataframe()`. Devuelve `OhlcvFetchResult(df, source)`. Usado por los 5 casos de uso de análisis. |
 | `application/use_cases/run_analysis.py` | Reescrito | Ya no es stub. Usa `fetch_ohlcv_dataframe()` + `calculate_indicator()`. Incluye `data_source` en resultado. |
 | `application/use_cases/get_signals_dashboard.py` | Reescrito | Panel multi-indicador. Usa `fetch_ohlcv_dataframe()`. Incluye `data_source` en dashboard. |
-| `application/use_cases/predict_price.py` | Reescrito | Predicción con regresión lineal. Usa `fetch_ohlcv_dataframe()`. |
-| `application/use_cases/detect_patterns.py` | Reescrito | Detección de patrones chartistas. Usa `fetch_ohlcv_dataframe()`. |
-| `application/use_cases/run_backtest.py` | Reescrito | Backtesting de estrategias. Usa `fetch_ohlcv_dataframe()`. |
+| `application/use_cases/predict_price.py` | Reescrito | Predicción con Random Forest (scikit-learn). Usa `fetch_ohlcv_dataframe()`. |
+| `application/use_cases/detect_patterns.py` | Reescrito | Detección de 12 patrones de velas japonesas. Usa `fetch_ohlcv_dataframe()`. |
+| `application/use_cases/run_backtest.py` | Reescrito | Backtesting de 5 estrategias (RSI, MACD, Bollinger, SMA, EMA). Usa `fetch_ohlcv_dataframe()`. |
 
 #### Backend — Clientes externos modificados
 
@@ -2014,7 +2171,7 @@ Si en el futuro se cambia Binance por otro proveedor OHLCV, solo se sustituye el
 - Sustituir stub de `get_onchain_metrics.py` por datos reales (CoinMetrics, Glassnode)
 - Scheduling automático del sync de mercado (cron/Celery)
 
-### Proceso seguido en la fase v3.0.0 (Abril 2026)
+### Proceso seguido en la fase v1.29.4 (Abril 2026)
 
 Se combina la implementación del análisis técnico real con la resolución del problema de cobertura de datos OHLCV:
 
@@ -2072,240 +2229,10 @@ Se combina la implementación del análisis técnico real con la resolución del
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v3.0.0 — Abril 2026*  
+*Documento técnico completo del proyecto CryptoWorld — Estado v1.29.4 — Abril 2026*  
 *Última actualización: abril de 2026*
 
 <!-- FIN DEL DOCUMENTO -->
-<!-- TODO: borrar todo lo que hay debajo de esta línea (contenido antiguo del diario de desarrollo)
-
-## Índice
-
-1. [Descripción del Proyecto](#1-descripción-del-proyecto)
-2. [Tecnologías Utilizadas](#2-tecnologías-utilizadas)
-3. [Arquitectura del Sistema](#3-arquitectura-del-sistema)
-4. [Cronología del Desarrollo](#4-cronología-del-desarrollo)
-5. [Estructura del Proyecto](#5-estructura-del-proyecto)
-6. [Decisiones de Diseño Justificadas](#6-decisiones-de-diseño-justificadas)
-7. [Problemas Encontrados y Soluciones](#7-problemas-encontrados-y-soluciones)
-8. [Estado Actual del Sistema](#8-estado-actual-del-sistema)
-9. [Próximos Pasos](#9-próximos-pasos)
-
----
-
-## 1. Descripción del Proyecto
-
-**CryptoWorld** es una plataforma web de análisis de criptomonedas con las siguientes funcionalidades previstas:
-
-- Visualización de datos de mercado en tiempo real (integración con CoinGecko API)
-- Análisis técnico: RSI, MACD, Bandas de Bollinger, Medias Móviles
-- Gestión de portfolio personal
-- Sistema de alertas configurables
-- Historial de ejecuciones de análisis
-
-El sistema está construido con una arquitectura de microservicios dockerizada donde el frontend (SPA React) y el backend (API REST Django) se comunican mediante JWT.
-
----
-
-## 2. Tecnologías Utilizadas
-
-### Backend
-| Tecnología | Versión | Rol |
-|---|---|---|
-| Python | 3.11 | Lenguaje del servidor |
-| Django | 5.0.6 | Framework web |
-| Django REST Framework | 3.15.2 | Serialización y endpoints API |
-| SimpleJWT | 5.3.1 | Autenticación JWT (access 60min, refresh 7 días) |
-| rest_framework_simplejwt.token_blacklist | 5.3.1 | Blacklist de refresh tokens para logout seguro |
-| django-cors-headers | 4.4.0 | CORS para comunicación con frontend |
-| psycopg2-binary | 2.9.9 | Driver PostgreSQL |
-| pyotp | 2.9.0 | Generación y verificación TOTP (RFC 6238 — Google Authenticator) |
-| qrcode | 7.4.2 | Generación de QR codes en PNG/base64 para setup 2FA |
-| Pillow | 10.4.0 | Dependencia de qrcode para renderizado PNG |
-| python-dotenv | 1.0.1 | Carga de variables de entorno |
-| gunicorn | 22.0.0 | Servidor WSGI para producción |
-| pytest + pytest-django | 8.2.2 / 4.8.0 | Testing |
-
-### Frontend
-| Tecnología | Versión | Rol |
-|---|---|---|
-| React | 18.3.1 | Framework UI |
-| TypeScript | 5.5.3 | Tipado estático |
-| Vite | 5.3.4 | Bundler y dev server |
-| react-router-dom | 6.24.0 | Enrutamiento SPA |
-| Axios | 1.7.2 | Cliente HTTP con interceptores JWT |
-| TailwindCSS | 3.4.6 | Estilos utility-first |
-
-### Infraestructura
-| Tecnología | Versión | Rol |
-|---|---|---|
-| Docker | - | Contenedorización |
-| Docker Compose v2 | - | Orquestación multi-contenedor |
-| PostgreSQL | 16-alpine | Base de datos relacional |
-| nginx | alpine | Servidor estático frontend (producción) |
-
----
-
-## 3. Arquitectura del Sistema
-
-### Patrón: Clean Architecture (Arquitectura Limpia)
-
-Se adoptó Clean Architecture de Robert C. Martin como patrón arquitectónico principal. Este patrón organiza el código en capas concéntricas donde **las dependencias solo apuntan hacia el interior**.
-
-```
-┌────────────────────────────────────────────┐
-│           INTERFACES (API REST)            │  ← Capa más externa. Conoce HTTP.
-│  views.py  serializers.py  urls.py         │
-├────────────────────────────────────────────┤
-│           INFRAESTRUCTURA                  │  ← Adaptadores externos.
-│  models.py  repositories_impl.py           │     PostgreSQL, CoinGecko API
-├────────────────────────────────────────────┤
-│           APLICACIÓN                       │  ← Casos de uso. Orquesta el dominio.
-│  RegisterUserUseCase  GetAssetsUseCase      │     No conoce HTTP ni DB.
-│  RunAnalysisUseCase   DTOs                 │
-├────────────────────────────────────────────┤
-│           DOMINIO (núcleo)                 │  ← Reglas de negocio puras.
-│  Entidades  Repositorios (interfaces)       │     Sin dependencias externas.
-│  Servicios de dominio  Value Objects       │
-└────────────────────────────────────────────┘
-```
-
-### Regla de dependencia
-- El **dominio** no importa nada de las capas externas.
-- La **aplicación** solo importa del dominio.
-- La **infraestructura** implementa las interfaces del dominio.
-- Las **interfaces (API)** llaman a los casos de uso de la aplicación.
-
-### Justificación de la elección
-Clean Architecture facilita:
-1. **Testabilidad**: el dominio se puede probar sin base de datos ni HTTP.
-2. **Intercambiabilidad**: cambiar PostgreSQL por MongoDB solo modifica `repositories_impl.py`.
-3. **Mantenibilidad**: cada capa tiene una única responsabilidad.
-
-### Comunicación entre componentes
-
-```
-Browser (localhost:5173)
-       │  HTTPS/JSON
-       ▼
-  nginx (frontend container)
-       │  proxy /api/* → backend:8000
-       │
-       ▼
-  Django + DRF (backend container, puerto 8000)
-       │  psycopg2
-       ▼
-  PostgreSQL (postgres container, puerto 5432)
-```
-
----
-
-## 4. Cronología del Desarrollo
-
-### Fase 1 — Definición y Scaffolding inicial (Febrero 2026)
-
-**Objetivo:** Generar la estructura completa del proyecto desde cero.
-
-**Trabajo realizado:**
-- Definición de requisitos funcionales del TFG con arquitectura Clean Architecture
-- Creación de la estructura de carpetas del backend siguiendo las 4 capas:
-  - `domain/` → entidades, repositorios (interfaces), servicios, value objects
-  - `application/` → casos de uso, DTOs
-  - `infrastructure/` → modelos ORM, implementaciones de repositorios
-  - `interfaces/` → vistas API, serializers, URLs
-- Creación de la estructura del frontend React + TypeScript + Vite
-
-**Archivos creados:**
-```
-backend/
-├── src/
-│   ├── config/
-│   │   ├── settings.py      ← Configuración Django: BD, JWT, CORS, apps
-│   │   ├── urls.py          ← Enrutamiento raíz
-│   │   └── wsgi.py          ← Entry point WSGI
-│   ├── core/
-│   │   ├── domain/
-│   │   │   ├── entities/    ← UserEntity, CryptoAssetEntity, etc.
-│   │   │   ├── repositories/← IUserRepository, ICryptoAssetRepository (interfaces)
-│   │   │   ├── services/    ← UserDomainService
-│   │   │   └── value_objects/← Email, CryptoSymbol
-│   │   ├── application/
-│   │   │   ├── use_cases/   ← RegisterUserUseCase, GetAssetsUseCase, RunAnalysisUseCase
-│   │   │   └── dto/         ← auth_dto.py, asset_dto.py
-│   │   ├── infrastructure/
-│   │   │   ├── persistence/
-│   │   │   │   ├── models.py          ← Modelos ORM Django (User, CryptoAsset, etc.)
-│   │   │   │   └── repositories_impl.py← DjangoUserRepository, DjangoCryptoAssetRepository
-│   │   │   └── external_apis/         ← (pendiente) Integración CoinGecko
-│   │   └── interfaces/
-│   │       └── api/
-│   │           ├── views.py       ← 5 endpoints HTTP
-│   │           ├── serializers.py ← Serialización DRF
-│   │           └── urls.py        ← Rutas /api/*
-│   └── manage.py
-├── requirements.txt
-├── Dockerfile
-├── pytest.ini
-└── tests/
-    ├── conftest.py
-    ├── unit/test_domain_entities.py
-    └── integration/test_api_endpoints.py
-frontend/
-├── src/
-│   ├── main.tsx
-│   ├── App.tsx
-│   ├── routes.tsx
-│   ├── index.css
-│   ├── vite-env.d.ts
-│   ├── hooks/
-│   │   └── useAuth.ts       ← AuthContext + AuthProvider + useAuth hook
-│   ├── services/
-│   │   ├── api.ts           ← Axios centralizado con interceptores JWT
-│   │   ├── authService.ts
-│   │   └── analysisService.ts
-│   ├── components/
-│   │   ├── Navbar.tsx
-│   │   └── ProtectedRoute.tsx
-│   └── pages/
-│       ├── LoginPage.tsx
-│       ├── DashboardPage.tsx
-│       └── AssetDetailPage.tsx
-├── Dockerfile               ← Multi-stage: build Vite → nginx
-├── nginx.conf
-├── package.json
-├── vite.config.ts
-└── tailwind.config.js
-```
-
-**Archivos raíz:**
-- `docker-compose.yml` → Orquesta 3 servicios: postgres, backend, frontend
-- `.env.example` → Plantilla de variables de entorno
-- `.gitignore` → Exclusiones Git
-
----
-
-### Fase 2 — Corrección de errores Docker (Febrero–Marzo 2026)
-
-Durante el proceso de `docker compose up --build` se identificaron y corrigieron los siguientes errores:
-
-#### Error 1: Docker Desktop no iniciado
-- **Síntoma:** `error during connect: pipe error`
-- **Causa:** Docker Desktop no estaba en ejecución
-- **Solución:** Iniciar Docker Desktop manualmente
-
-#### Error 2: Campo `version` obsoleto en docker-compose.yml
-- **Síntoma:** Warning `version is obsolete`
-- **Causa:** Docker Compose v2 ya no requiere el campo `version: "3.9"`
-- **Solución:** Eliminar la línea `version: "3.9"` de `docker-compose.yml`
-
-#### Error 3: `npm ci` falla por ausencia de package-lock.json
-- **Síntoma:** `npm ci can only install packages when your package.json and package-lock.json are in sync`
-- **Causa:** Solo existía `package.json`, no `package-lock.json`
-- **Solución:** Cambiar `npm ci` por `npm install` en `frontend/Dockerfile`
-
-#### Error 4: `pip install` con timeout por red lenta
-- **Síntoma:** Descarga a 19.8 kB/s, timeout de conexión
-- **Causa:** Red lenta durante la descarga de paquetes Python
-- **Solución:** Añadir flags `--timeout=300 --retries=5` al pip install en `backend/Dockerfile`
 
 #### Error 5: Error TypeScript en useAuth.ts — JSX en archivo .ts
 - **Síntoma:** `TS1005: '>' expected` en línea 101 de `useAuth.ts`
