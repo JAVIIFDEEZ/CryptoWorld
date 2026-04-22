@@ -187,6 +187,35 @@ export const authService = {
   },
 
   /**
+   * Solicitar recuperación de contraseña.
+   * POST /api/auth/password-reset/
+   * Siempre responde 200 aunque el email no exista (anti-enumeración).
+   */
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    const { data } = await apiClient.post<{ message: string }>('/auth/password-reset/', { email })
+    return data
+  },
+
+  /**
+   * Confirmar nueva contraseña con el token del email.
+   * POST /api/auth/password-reset/confirm/
+   */
+  async confirmPasswordReset(
+    uid: string,
+    token: string,
+    new_password: string,
+    new_password_confirm: string,
+  ): Promise<{ message: string }> {
+    const { data } = await apiClient.post<{ message: string }>('/auth/password-reset/confirm/', {
+      uid,
+      token,
+      new_password,
+      new_password_confirm,
+    })
+    return data
+  },
+
+  /**
    * Eliminar la cuenta de usuario de forma permanente.
    * DELETE /api/auth/delete-account/
    */
