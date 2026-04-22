@@ -194,6 +194,18 @@ function LoginPage() {
               </div>
             </div>
 
+            {/* Enlace de recuperación de contraseña (solo visible antes del 2FA) */}
+            {!preAuthToken && (
+              <div className="flex justify-end -mt-1">
+                <Link
+                  to="/forgot-password"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  ¿Olvidaste tu contraseña?
+                </Link>
+              </div>
+            )}
+
             {preAuthToken && (
               <div>
                 <label htmlFor="totp" className="block text-sm font-medium text-slate-300 mb-1.5">
