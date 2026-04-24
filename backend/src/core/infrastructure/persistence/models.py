@@ -218,3 +218,90 @@ class AnalysisExecution(models.Model):
 
     def __str__(self) -> str:
         return f"{self.asset.symbol} — {self.analysis_type} ({self.status})"
+
+
+class TradeHistory(models.Model):
+    """
+    Historial de operaciones de compra/venta dentro del portfolio del usuario.
+
+    Cada registro representa una transacción individual (BUY o SELL).
+    El portfolio se recalcula a partir de estos trades.
+    """
+
+    TRADE_TYPE_CHOICES = [
+        ("BUY", "Compra"),
+        ("SELL", "Venta"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="trades",
+    )
+    asset = models.ForeignKey(
+        CryptoAsset,
+        on_delete=models.CASCADE,
+        related_name="trades",
+    )
+    trade_type = models.CharField(max_length=4, choices=TRADE_TYPE_CHOICES)
+    quantity = models.DecimalField(max_digits=38, decimal_places=18)
+    price_usd = models.DecimalField(max_digits=20, decimal_places=8)
+    total_usd = models.DecimalField(max_digits=38, decimal_places=8)
+    notes = models.CharField(max_length=500, blank=True, default="")
+    executed_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "trade_history"
+        verbose_name = "Operación"
+        verbose_name_plural = "Historial de Operaciones"
+        ordering = ["-executed_at"]
+
+    def __str__(self) -> str:
+        return f"{self.user.email} — {self.trade_type} {self.quantity} {self.asset.symbol} @ {self.price_usd}"
+
+
+class PriceAlert(models.Model):
+    """
+    Alerta de precio configurada por el usuario.
+
+    El worker de Celery evalúa periódicamente cada alerta activa
+    comparando el precio actual del activo con el umbral.
+    """
+
+    CONDITION_CHOICES = [
+        ("ABOVE", "Por encima de"),
+        ("BELOW", "Por debajo de"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="price_alerts",
+    )
+    asset = models.ForeignKey(
+        CryptoAsset,
+        on_delete=models.CASCADE,
+        related_name="price_alerts",
+    )
+    condition = models.CharField(max_length=5, choices=CONDITION_CHOICES)
+    threshold_price = models.DecimalField(max_digits=20, decimal_places=8)
+    is_active = models.BooleanField(default=True)
+    is_triggered = models.BooleanField(default=False)
+    triggered_at = models.DateTimeField(null=True, blank=True)
+    notes = models.CharField(max_length=500, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "price_alerts"
+        verbose_name = "Alerta de Precio"
+        verbose_name_plural = "Alertas de Precio"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.user.email} — {self.asset.symbol} "
+            f"{self.condition} {self.threshold_price} "
+            f"({'activa' if self.is_active else 'inactiva'})"
+        )
