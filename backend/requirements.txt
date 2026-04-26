@@ -43,3 +43,8 @@ factory-boy==3.3.1              # Generación de datos de prueba
 
 # ── Servidor de producción ────────────────────────────────────────
 gunicorn==22.0.0
+
+# ── Celery — Worker asíncrono para alertas y tareas periódicas ─────
+celery==5.4.0
+redis==5.0.8                    # Cliente Redis para Python (broker/backend)
+django-celery-beat==2.6.0       # Scheduler persistente en BD para celery beat

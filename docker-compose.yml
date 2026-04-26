@@ -2,9 +2,12 @@
 # docker-compose.yml — Orquestación de servicios CryptoWorld
 #
 # Servicios:
-#   postgres  → Base de datos PostgreSQL
-#   backend   → API Django corriendo en puerto 8000
-#   frontend  → SPA React servida en puerto 5173 (dev) / 80 (prod)
+#   postgres       → Base de datos PostgreSQL
+#   redis          → Broker de mensajes para Celery
+#   backend        → API Django corriendo en puerto 8000
+#   celery-worker  → Worker Celery para tareas asíncronas
+#   celery-beat    → Scheduler Celery para tareas periódicas
+#   frontend       → SPA React servida en puerto 5173 (dev) / 80 (prod)
 #
 # Uso:
 #   docker compose up --build      # Primera vez o tras cambios
@@ -25,12 +28,24 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     volumes:
-      # Persistir datos entre reinicios
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (broker para Celery) ───────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cryptoworld_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,16 +60,18 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings
-      DB_HOST: postgres      # Nombre del servicio Docker, no localhost
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
     volumes:
-      # Hot-reload en desarrollo: montar src y tests locales en el contenedor
       - ./backend/src:/app/src
       - ./backend/tests:/app/tests
       - ./backend/pytest.ini:/app/pytest.ini
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: >
       sh -c "
@@ -62,6 +79,50 @@ services:
         python manage.py migrate --noinput &&
         python manage.py runserver 0.0.0.0:8000
       "
+
+  # ── Celery Worker ────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_celery_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend/src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "cd src && celery -A config worker --loglevel=info --concurrency=2"
+
+  # ── Celery Beat (Scheduler) ──────────────────────────────────────
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_celery_beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend/src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "cd src && celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
 
   # ── pgAdmin (interfaz web para PostgreSQL) ──────────────────────
   pgadmin:

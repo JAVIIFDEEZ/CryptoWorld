@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",                # Autenticación JWT
     "rest_framework_simplejwt.token_blacklist", # Blacklist para logout seguro
     "corsheaders",                             # CORS para comunicación con el frontend
+    "django_celery_beat",                      # Scheduler persistente para Celery beat
 
     # Apps del proyecto (capa interfaces expone los endpoints)
     "core",
@@ -202,3 +203,37 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 # CoinGecko Demo (gratuito) — 30 req/min sin clave, ~500 req/min con clave.
 # Definir COINGECKO_API_KEY en .env (nunca hardcodear en código fuente).
 COINGECKO_API_KEY = os.environ.get("COINGECKO_API_KEY", "")
+
+# CryptoCompare News API (gratuito con API key — registro en min-api.cryptocompare.com)
+CRYPTOCOMPARE_API_KEY = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
+
+# ------------------------------------------------------------------
+# Celery — Worker asíncrono para alertas de precio y tareas periódicas
+# Broker y backend: Redis (servicio 'redis' en docker-compose)
+# ------------------------------------------------------------------
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
+CELERY_ENABLE_UTC = True
+
+# Tareas periódicas (celery beat)
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    # Evaluar alertas activas cada 2 minutos
+    "check-price-alerts": {
+        "task": "core.tasks.check_price_alerts",
+        "schedule": 120.0,  # segundos
+    },
+    # Sincronizar precios de mercado cada 10 minutos
+    "sync-market-prices": {
+        "task": "core.tasks.sync_market_prices",
+        "schedule": 600.0,  # segundos
+    },
+}
+
