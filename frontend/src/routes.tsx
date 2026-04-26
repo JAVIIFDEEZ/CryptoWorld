@@ -21,7 +21,10 @@ import DashboardPage from '@/pages/DashboardPage'
 import AssetDetailPage from '@/pages/AssetDetailPage'
 import MarketPage from '@/pages/MarketPage'
 import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
-import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
+import PortfolioPage from '@/pages/PortfolioPage'
+import AlertsPage from '@/pages/AlertsPage'
+import NewsPage from '@/pages/NewsPage'
+import BlockchainPage from '@/pages/BlockchainPage'
 import Security2FAPage from '@/pages/Security2FAPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -46,22 +49,10 @@ function AppRoutes() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/market" element={<MarketPage />} />
           <Route path="/analysis" element={<TechnicalAnalysisPage />} />
-          <Route
-            path="/blockchain"
-            element={<PrototypePlaceholderPage title="Blockchain Analytics" description="Pantalla preparada para metricas on-chain del prototipo." />}
-          />
-          <Route
-            path="/portfolio"
-            element={<PrototypePlaceholderPage title="Portfolio" description="Pendiente integrar holdings reales y PnL." />}
-          />
-          <Route
-            path="/news"
-            element={<PrototypePlaceholderPage title="Noticias" description="Pendiente integrar feed de noticias y sentimiento." />}
-          />
-          <Route
-            path="/alerts"
-            element={<PrototypePlaceholderPage title="Alertas" description="Pendiente integrar reglas y notificaciones de precio." />}
-          />
+          <Route path="/blockchain" element={<BlockchainPage />} />
+          <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/news" element={<NewsPage />} />
+          <Route path="/alerts" element={<AlertsPage />} />
           <Route path="/security/2fa" element={<Security2FAPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
