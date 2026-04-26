@@ -30,13 +30,12 @@ def check_price_alerts(self):
     try:
         from core.application.use_cases.manage_alerts import CheckAlertsUseCase
 
-        result = CheckAlertsUseCase().execute()
+        triggered = CheckAlertsUseCase().execute()
         logger.info(
-            "check_price_alerts: %d alertas disparadas de %d revisadas",
-            result["triggered"],
-            result["checked"],
+            "check_price_alerts: %d alertas disparadas",
+            len(triggered),
         )
-        return result
+        return {"triggered": len(triggered)}
     except Exception as exc:
         logger.error("check_price_alerts error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
@@ -57,8 +56,19 @@ def sync_market_prices(self):
         from core.application.use_cases.sync_market_data import SyncMarketDataUseCase
 
         result = SyncMarketDataUseCase().execute()
-        logger.info("sync_market_prices: %d activos sincronizados", result.get("synced", 0))
-        return result
+        logger.info(
+            "sync_market_prices: creados=%d, actualizados=%d, snapshots=%d, errores=%d",
+            result.assets_created,
+            result.assets_updated,
+            result.snapshots_created,
+            len(result.errors),
+        )
+        return {
+            "created": result.assets_created,
+            "updated": result.assets_updated,
+            "snapshots": result.snapshots_created,
+            "errors": len(result.errors),
+        }
     except Exception as exc:
         logger.error("sync_market_prices error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
