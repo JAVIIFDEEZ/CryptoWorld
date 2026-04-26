@@ -88,4 +88,14 @@ urlpatterns = [
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),
     path("admin/users/<int:user_id>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),
     path("admin/market/sync/", admin_views.AdminMarketSyncView.as_view(), name="admin-market-sync"),
+
+    # ── Portfolio ────────────────────────────────────────────────────
+    path("portfolio/", views.PortfolioView.as_view(), name="portfolio-summary"),
+    path("portfolio/trades/", views.TradeListView.as_view(), name="portfolio-trades"),
+    path("portfolio/trades/<int:trade_id>/", views.TradeDetailView.as_view(), name="portfolio-trade-detail"),
+
+    # ── Alerts ───────────────────────────────────────────────────────
+    path("alerts/", views.AlertListView.as_view(), name="alert-list"),
+    path("alerts/<int:alert_id>/", views.AlertDetailView.as_view(), name="alert-detail"),
+    path("alerts/<int:alert_id>/toggle/", views.AlertToggleView.as_view(), name="alert-toggle"),
 ]

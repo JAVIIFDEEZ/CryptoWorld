@@ -184,7 +184,16 @@ class OnChainQuerySerializer(serializers.Serializer):
     """Valida query params de GET /api/blockchain/metrics/."""
     symbol = serializers.CharField(max_length=20, required=False, default="BTC")
     metric = serializers.ChoiceField(
-        choices=["active_addresses", "hashrate", "tx_count", "gas_price"],
+        choices=[
+            "active_addresses",
+            "hashrate",
+            "tx_count",
+            "difficulty",
+            "mempool_size",
+            "miners_revenue",
+            "transaction_fees",
+            "avg_block_size",
+        ],
         required=False,
         default="active_addresses",
     )
@@ -284,4 +293,83 @@ class BacktestRequestSerializer(serializers.Serializer):
     )
     limit = serializers.IntegerField(min_value=60, max_value=1000, default=500, required=False)
     initial_capital = serializers.FloatField(min_value=100, max_value=1000000, default=10000, required=False)
+
+
+# ── Portfolio ──────────────────────────────────────────────────────
+
+class AddTradeSerializer(serializers.Serializer):
+    """Valida POST /api/portfolio/trades/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    trade_type = serializers.ChoiceField(choices=["BUY", "SELL"])
+    quantity = serializers.FloatField(min_value=0.000000001)
+    price_usd = serializers.FloatField(min_value=0.000000001)
+    executed_at = serializers.DateTimeField()
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class TradeOutputSerializer(serializers.Serializer):
+    """Serializa una operación del historial."""
+    id = serializers.IntegerField()
+    asset_symbol = serializers.CharField()
+    asset_name = serializers.CharField()
+    trade_type = serializers.CharField()
+    quantity = serializers.CharField()
+    price_usd = serializers.CharField()
+    total_usd = serializers.CharField()
+    notes = serializers.CharField()
+    executed_at = serializers.CharField()
+    created_at = serializers.CharField()
+
+
+class PortfolioPositionSerializer(serializers.Serializer):
+    """Serializa una posición abierta del portfolio."""
+    asset_symbol = serializers.CharField()
+    asset_name = serializers.CharField()
+    logo_url = serializers.CharField(allow_null=True)
+    quantity = serializers.CharField()
+    avg_buy_price = serializers.CharField()
+    total_invested = serializers.CharField()
+    current_price = serializers.CharField()
+    current_value = serializers.CharField()
+    pnl_usd = serializers.CharField()
+    pnl_pct = serializers.CharField()
+    is_profit = serializers.BooleanField()
+
+
+class TradeHistoryQuerySerializer(serializers.Serializer):
+    """Valida query params de GET /api/portfolio/trades/."""
+    symbol = serializers.CharField(required=False, allow_blank=True, default="")
+    trade_type = serializers.ChoiceField(
+        choices=["", "BUY", "SELL"],
+        required=False,
+        default="",
+        allow_blank=True,
+    )
+    limit = serializers.IntegerField(min_value=1, max_value=500, default=50, required=False)
+
+
+# ── Alerts ────────────────────────────────────────────────────────
+
+class CreateAlertSerializer(serializers.Serializer):
+    """Valida POST /api/alerts/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    condition = serializers.ChoiceField(choices=["ABOVE", "BELOW"])
+    threshold_price = serializers.FloatField(min_value=0.000000001)
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class AlertOutputSerializer(serializers.Serializer):
+    """Serializa una alerta de precio."""
+    id = serializers.IntegerField()
+    asset_symbol = serializers.CharField()
+    asset_name = serializers.CharField()
+    condition = serializers.CharField()
+    threshold_price = serializers.CharField()
+    current_price = serializers.CharField()
+    is_active = serializers.BooleanField()
+    is_triggered = serializers.BooleanField()
+    triggered_at = serializers.CharField(allow_null=True)
+    notes = serializers.CharField()
+    created_at = serializers.CharField()
+
 

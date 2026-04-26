@@ -51,6 +51,12 @@ from core.interfaces.api.serializers import (
     PredictionRequestSerializer,
     PatternsRequestSerializer,
     BacktestRequestSerializer,
+    AddTradeSerializer,
+    TradeOutputSerializer,
+    PortfolioPositionSerializer,
+    TradeHistoryQuerySerializer,
+    CreateAlertSerializer,
+    AlertOutputSerializer,
 )
 from core.application.use_cases.register_user import RegisterUserUseCase
 from core.application.use_cases.get_assets import GetAssetsUseCase
@@ -74,6 +80,16 @@ from core.application.use_cases.get_signals_dashboard import GetSignalsDashboard
 from core.application.use_cases.predict_price import PredictPriceUseCase
 from core.application.use_cases.detect_patterns import DetectPatternsUseCase
 from core.application.use_cases.run_backtest import RunBacktestUseCase
+from core.application.use_cases.get_portfolio import GetPortfolioUseCase
+from core.application.use_cases.add_trade import AddTradeUseCase
+from core.application.use_cases.get_trade_history import GetTradeHistoryUseCase
+from core.application.use_cases.delete_trade import DeleteTradeUseCase
+from core.application.use_cases.manage_alerts import (
+    CreateAlertUseCase,
+    ListAlertsUseCase,
+    DeleteAlertUseCase,
+    ToggleAlertUseCase,
+)
 from core.application.dto.auth_dto import (
     RegisterUserInputDTO,
     LoginInputDTO,
@@ -93,6 +109,8 @@ from core.application.dto.asset_dto import (
     PatternsRequestDTO,
     BacktestRequestDTO,
 )
+from core.application.dto.portfolio_dto import AddTradeInputDTO
+from core.application.dto.alerts_dto import CreateAlertInputDTO
 from core.infrastructure.persistence.repositories_impl import (
     DjangoUserRepository,
     DjangoCryptoAssetRepository,
@@ -677,10 +695,17 @@ class BlockchainMetricsView(APIView):
             metric=q["metric"],
             days=q["days"],
         )
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
         serializer = OnChainMetricPointSerializer([vars(p) for p in result["points"]], many=True)
         return Response({
-            "_stub": result.get("_stub", False),
-            "_notice": result.get("_notice", ""),
+            "symbol": result.get("symbol"),
+            "metric": result.get("metric"),
+            "metric_label": result.get("metric_label"),
+            "description": result.get("description"),
+            "timespan": result.get("timespan"),
+            "total_points": result.get("total_points"),
+            "source": result.get("source"),
             "data": serializer.data,
         }, status=status.HTTP_200_OK)
 
@@ -704,10 +729,12 @@ class NewsFeedView(APIView):
             sentiment=q["sentiment"],
             limit=q["limit"],
         )
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
         serializer = NewsItemSerializer([vars(i) for i in result["items"]], many=True)
         return Response({
-            "_stub": result.get("_stub", False),
-            "_notice": result.get("_notice", ""),
+            "total": result.get("total", len(result["items"])),
+            "source": result.get("source", "cryptocompare"),
             "data": serializer.data,
         }, status=status.HTTP_200_OK)
 
@@ -888,3 +915,165 @@ class AvailableStrategiesView(APIView):
         strategies = RunBacktestUseCase.get_available_strategies()
         return Response(strategies, status=status.HTTP_200_OK)
 
+
+# ── Portfolio Views ────────────────────────────────────────────────
+
+class PortfolioView(APIView):
+    """
+    GET  /api/portfolio/  — Resumen del portfolio con PnL calculado.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        summary = GetPortfolioUseCase().execute(request.user)
+        positions_data = [vars(p) for p in summary.positions]
+        return Response(
+            {
+                "total_invested_usd": summary.total_invested_usd,
+                "total_current_value_usd": summary.total_current_value_usd,
+                "total_pnl_usd": summary.total_pnl_usd,
+                "total_pnl_pct": summary.total_pnl_pct,
+                "is_profit": summary.is_profit,
+                "positions": PortfolioPositionSerializer(positions_data, many=True).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class TradeListView(APIView):
+    """
+    GET  /api/portfolio/trades/  — Listar historial de operaciones.
+    POST /api/portfolio/trades/  — Registrar nueva operación.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query_ser = TradeHistoryQuerySerializer(data=request.query_params)
+        if not query_ser.is_valid():
+            return Response(query_ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        q = query_ser.validated_data
+
+        trades = GetTradeHistoryUseCase().execute(
+            user=request.user,
+            symbol=q.get("symbol", ""),
+            trade_type=q.get("trade_type", ""),
+            limit=q.get("limit", 50),
+        )
+        return Response(
+            TradeOutputSerializer([vars(t) for t in trades], many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AddTradeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            trade = AddTradeUseCase().execute(
+                user=request.user,
+                dto=AddTradeInputDTO(
+                    asset_symbol=v["asset_symbol"],
+                    trade_type=v["trade_type"],
+                    quantity=float(v["quantity"]),
+                    price_usd=float(v["price_usd"]),
+                    executed_at=v["executed_at"].isoformat(),
+                    notes=v.get("notes", ""),
+                ),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            TradeOutputSerializer(vars(trade)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class TradeDetailView(APIView):
+    """
+    DELETE /api/portfolio/trades/<trade_id>/  — Eliminar una operación.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, trade_id: int):
+        try:
+            DeleteTradeUseCase().execute(user=request.user, trade_id=trade_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Alerts Views ───────────────────────────────────────────────────
+
+class AlertListView(APIView):
+    """
+    GET  /api/alerts/  — Listar todas las alertas del usuario.
+    POST /api/alerts/  — Crear nueva alerta de precio.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        active_only = request.query_params.get("active_only", "false").lower() == "true"
+        alerts = ListAlertsUseCase().execute(request.user, active_only=active_only)
+        return Response(
+            AlertOutputSerializer([vars(a) for a in alerts], many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = CreateAlertSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            alert = CreateAlertUseCase().execute(
+                user=request.user,
+                dto=CreateAlertInputDTO(
+                    asset_symbol=v["asset_symbol"],
+                    condition=v["condition"],
+                    threshold_price=float(v["threshold_price"]),
+                    notes=v.get("notes", ""),
+                ),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            AlertOutputSerializer(vars(alert)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AlertDetailView(APIView):
+    """
+    DELETE /api/alerts/<alert_id>/  — Eliminar una alerta.
+    PATCH  /api/alerts/<alert_id>/toggle/  — Activar/desactivar.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, alert_id: int):
+        try:
+            DeleteAlertUseCase().execute(user=request.user, alert_id=alert_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AlertToggleView(APIView):
+    """
+    PATCH /api/alerts/<alert_id>/toggle/ — Activar/desactivar una alerta.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, alert_id: int):
+        try:
+            alert = ToggleAlertUseCase().execute(user=request.user, alert_id=alert_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            AlertOutputSerializer(vars(alert)).data,
+            status=status.HTTP_200_OK,
+        )
