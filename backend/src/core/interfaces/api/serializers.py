@@ -222,11 +222,15 @@ class NewsQuerySerializer(serializers.Serializer):
 
 class NewsItemSerializer(serializers.Serializer):
     """Serializa una noticia del feed."""
+    id = serializers.CharField(allow_blank=True)
     title = serializers.CharField()
     url = serializers.CharField()
+    imageurl = serializers.CharField(allow_blank=True)
     source = serializers.CharField()
     published_at = serializers.CharField()
     sentiment = serializers.CharField()
+    body = serializers.CharField(allow_blank=True)
+    categories = serializers.CharField(allow_blank=True)
     relevance_score = serializers.FloatField(allow_null=True)
 
 class DeleteAccountSerializer(serializers.Serializer):

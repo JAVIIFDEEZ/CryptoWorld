@@ -39,9 +39,13 @@ class OnChainMetricPointOutputDTO:
 
 @dataclass(frozen=True)
 class NewsItemOutputDTO:
+    id: str
     title: str
     url: str
+    imageurl: str
     source: str
     published_at: str
     sentiment: str
+    body: str
+    categories: str
     relevance_score: Optional[float]

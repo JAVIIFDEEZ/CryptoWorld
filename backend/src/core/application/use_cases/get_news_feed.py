@@ -42,8 +42,8 @@ def _infer_sentiment(article: dict) -> str:
     Infiere el sentimiento a partir de votos y palabras clave del título.
     CryptoCompare no provee sentimiento explícito; lo calculamos nosotros.
     """
-    upvotes = article.get("upvotes", 0) or 0
-    downvotes = article.get("downvotes", 0) or 0
+    upvotes = int(article.get("upvotes", 0) or 0)
+    downvotes = int(article.get("downvotes", 0) or 0)
 
     if upvotes + downvotes > 5:
         if upvotes > downvotes * 2:
@@ -76,11 +76,15 @@ def _article_to_dto(article: dict) -> NewsItemOutputDTO:
     source_name = source_info.get("name") or article.get("source", "CryptoCompare")
 
     return NewsItemOutputDTO(
+        id=str(article.get("id", "")),
         title=article.get("title", ""),
         url=article.get("url", ""),
+        imageurl=article.get("imageurl", ""),
         source=source_name,
         published_at=published_at,
         sentiment=_infer_sentiment(article),
+        body=article.get("body", "")[:400],
+        categories=article.get("categories", ""),
         relevance_score=None,
     )
 
@@ -101,10 +105,10 @@ class GetNewsFeedUseCase:
         q = query.strip().lower()
         s = sentiment.strip().lower()
 
-        # Construir categorías para CryptoCompare a partir de la query
+        # CryptoCompare 'categories' solo acepta etiquetas exactas (BTC, ETH, Mining…).
+        # Solo lo usamos cuando la query parece un símbolo corto (≤ 10 chars, sin espacios).
         categories = ""
-        if q:
-            # CryptoCompare admite categorías como "BTC", "ETH", "Altcoin", etc.
+        if q and len(q) <= 10 and " " not in q:
             categories = q.upper()
 
         try:
@@ -124,13 +128,16 @@ class GetNewsFeedUseCase:
         # Convertir a DTOs
         items = [_article_to_dto(a) for a in articles if a.get("title")]
 
+        # Filtrar por query en título, cuerpo o etiquetas (siempre que haya query)
+        if q:
+            items = [
+                i for i in items
+                if q in i.title.lower() or q in (i.source or "").lower()
+            ]
+
         # Filtrar por sentimiento si se especifica
         if s and s != "all":
             items = [i for i in items if i.sentiment == s]
-
-        # Filtrar por query en título si la categoría no fue suficiente
-        if q and not categories:
-            items = [i for i in items if q in i.title.lower()]
 
         return {
             "items": items[:limit],
