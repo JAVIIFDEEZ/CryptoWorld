@@ -1,8 +1,8 @@
-/**
+﻿/**
  * pages/NewsPage.tsx — Feed de noticias de criptomonedas.
  *
- * Fuente: CryptoCompare News API (a través del backend)
- * Permite filtrar por término de búsqueda y sentimiento.
+ * Layout "revista": artículo destacado + grid de 2 columnas.
+ * Fuente: CryptoCompare News API (a través del backend).
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -10,193 +10,370 @@ import { newsService, type NewsItem } from '../services/newsService'
 
 type Sentiment = 'positive' | 'negative' | 'neutral' | ''
 
-const SENTIMENT_STYLES: Record<Exclude<Sentiment, ''>, string> = {
-  positive: 'bg-green-900/40 text-green-400 border-green-700/50',
-  negative: 'bg-red-900/40 text-red-400 border-red-700/50',
-  neutral: 'bg-gray-700/60 text-gray-300 border-gray-600/50',
+const SENTIMENT_CONFIG = {
+  positive: {
+    label: 'Positivo',
+    icon: '↑',
+    badge: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
+    stat: 'text-emerald-400',
+    statBg: 'bg-emerald-500/10 border-emerald-500/20',
+    bar: 'bg-emerald-500',
+    filter: 'bg-emerald-600 text-white border-emerald-600',
+  },
+  negative: {
+    label: 'Negativo',
+    icon: '↓',
+    badge: 'bg-red-500/20 text-red-400 border-red-500/40',
+    stat: 'text-red-400',
+    statBg: 'bg-red-500/10 border-red-500/20',
+    bar: 'bg-red-500',
+    filter: 'bg-red-600 text-white border-red-600',
+  },
+  neutral: {
+    label: 'Neutral',
+    icon: '→',
+    badge: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+    stat: 'text-slate-300',
+    statBg: 'bg-slate-700/50 border-slate-600/50',
+    bar: 'bg-slate-400',
+    filter: 'bg-slate-600 text-white border-slate-600',
+  },
+} as const
+
+function formatDate(iso: string): string {
+  const d = new Date(iso)
+  const diffMs = Date.now() - d.getTime()
+  const diffH = Math.floor(diffMs / 3_600_000)
+  if (diffH < 1) {
+    const diffM = Math.floor(diffMs / 60_000)
+    return diffM < 2 ? 'Ahora mismo' : `Hace ${diffM} min`
+  }
+  if (diffH < 24) return `Hace ${diffH}h`
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-const SENTIMENT_LABELS: Record<Exclude<Sentiment, ''>, string> = {
-  positive: '↑ Positivo',
-  negative: '↓ Negativo',
-  neutral: '→ Neutral',
+function SentimentBadge({ sentiment, size = 'sm' }: { sentiment: string; size?: 'sm' | 'md' }) {
+  const cfg = SENTIMENT_CONFIG[sentiment as keyof typeof SENTIMENT_CONFIG] ?? SENTIMENT_CONFIG.neutral
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border font-medium ${
+        size === 'md' ? 'text-xs px-3 py-1' : 'text-xs px-2 py-0.5'
+      } ${cfg.badge}`}
+    >
+      {cfg.icon} {cfg.label}
+    </span>
+  )
 }
 
-function NewsCard({ item }: { item: NewsItem }) {
-  const sentiment = item.sentiment as Exclude<Sentiment, ''>
-  const style = SENTIMENT_STYLES[sentiment] ?? SENTIMENT_STYLES.neutral
-  const label = SENTIMENT_LABELS[sentiment] ?? '→ Neutral'
-
+function FeaturedCard({ item }: { item: NewsItem }) {
   return (
     <a
       href={item.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block bg-gray-800 hover:bg-gray-750 rounded-xl overflow-hidden border border-gray-700 hover:border-gray-600 transition-colors"
+      className="group flex flex-col sm:flex-row rounded-2xl overflow-hidden border border-slate-700 hover:border-slate-500 bg-slate-800/60 transition-all duration-200 hover:shadow-2xl hover:shadow-black/50"
     >
-      <div className="flex gap-4 p-4">
-        {item.imageurl && (
+      <div className="relative sm:w-5/12 h-52 sm:h-auto shrink-0 bg-slate-700/60 overflow-hidden">
+        {item.imageurl ? (
           <img
             src={item.imageurl}
             alt=""
-            className="w-20 h-20 object-cover rounded-lg shrink-0"
-            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            onError={e => {
+              const el = e.target as HTMLImageElement
+              el.style.display = 'none'
+            }}
           />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2 mb-1">
-            <h3 className="font-semibold text-white text-sm leading-snug line-clamp-2">
-              {item.title}
-            </h3>
-            <span className={`shrink-0 text-xs px-2 py-0.5 rounded border ${style}`}>
-              {label}
-            </span>
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-blue-900/40 to-slate-800 flex items-center justify-center">
+            <span className="text-5xl opacity-20">📰</span>
           </div>
-          <p className="text-xs text-gray-400 line-clamp-2 mb-2">{item.body}</p>
-          <div className="flex items-center gap-3 text-xs text-gray-500">
-            <span className="font-medium text-gray-400">{item.source}</span>
-            <span>·</span>
-            <span>
-              {new Date(item.published_at).toLocaleString('es-ES', {
-                dateStyle: 'medium',
-                timeStyle: 'short',
-              })}
-            </span>
+        )}
+        <span className="absolute top-3 left-3 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-600/90 text-white backdrop-blur-sm shadow">
+          Destacado
+        </span>
+      </div>
+      <div className="flex flex-col justify-between p-5 sm:p-6 flex-1 min-w-0">
+        <div>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <SentimentBadge sentiment={item.sentiment} size="md" />
             {item.categories && (
-              <>
-                <span>·</span>
-                <span>{item.categories.split('|').slice(0, 2).join(', ')}</span>
-              </>
+              <span className="text-xs text-slate-500 truncate">
+                {item.categories.split('|').slice(0, 3).join(' · ')}
+              </span>
             )}
           </div>
+          <h2 className="text-lg sm:text-xl font-bold text-white leading-snug mb-3 group-hover:text-blue-300 transition-colors line-clamp-3">
+            {item.title}
+          </h2>
+          {item.body && (
+            <p className="text-sm text-slate-400 line-clamp-3 leading-relaxed">{item.body}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-3 mt-5 pt-4 border-t border-slate-700/50">
+          <span className="text-sm font-medium text-slate-300 truncate">{item.source}</span>
+          <span className="text-slate-600 shrink-0">·</span>
+          <span className="text-sm text-slate-500 shrink-0">{formatDate(item.published_at)}</span>
+          <span className="ml-auto text-xs text-blue-400 group-hover:text-blue-300 transition-colors shrink-0">
+            Leer más →
+          </span>
         </div>
       </div>
     </a>
   )
 }
 
+function NewsCard({ item }: { item: NewsItem }) {
+  return (
+    <a
+      href={item.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group flex flex-col rounded-xl overflow-hidden border border-slate-700 hover:border-slate-500 bg-slate-800/50 hover:bg-slate-800 transition-all duration-200 hover:shadow-lg hover:shadow-black/30"
+    >
+      <div className="relative h-40 shrink-0 bg-slate-700/60 overflow-hidden">
+        {item.imageurl ? (
+          <img
+            src={item.imageurl}
+            alt=""
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            onError={e => {
+              const el = e.target as HTMLImageElement
+              el.style.display = 'none'
+            }}
+          />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-blue-900/20 via-slate-700/80 to-slate-800 flex items-center justify-center">
+            <span className="text-3xl opacity-20">📰</span>
+          </div>
+        )}
+        <div className="absolute top-2 right-2">
+          <SentimentBadge sentiment={item.sentiment} />
+        </div>
+      </div>
+      <div className="flex flex-col flex-1 p-4">
+        <h3 className="font-semibold text-white text-sm leading-snug line-clamp-2 mb-2 group-hover:text-blue-300 transition-colors">
+          {item.title}
+        </h3>
+        {item.body && (
+          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed flex-1 mb-3">{item.body}</p>
+        )}
+        <div className="flex items-center gap-2 text-xs text-slate-500 mt-auto pt-3 border-t border-slate-700/50">
+          <span className="font-medium text-slate-400 truncate">{item.source}</span>
+          <span className="shrink-0">·</span>
+          <span className="shrink-0">{formatDate(item.published_at)}</span>
+        </div>
+      </div>
+    </a>
+  )
+}
+
+function FeaturedSkeleton() {
+  return (
+    <div className="flex flex-col sm:flex-row rounded-2xl overflow-hidden border border-slate-700 bg-slate-800/50 animate-pulse">
+      <div className="sm:w-5/12 h-52 sm:h-64 bg-slate-700/60 shrink-0" />
+      <div className="flex-1 p-6 space-y-3">
+        <div className="h-4 bg-slate-700 rounded w-24" />
+        <div className="h-6 bg-slate-700 rounded w-4/5" />
+        <div className="h-6 bg-slate-700 rounded w-3/5" />
+        <div className="h-4 bg-slate-700/60 rounded w-full mt-2" />
+        <div className="h-4 bg-slate-700/60 rounded w-3/4" />
+        <div className="h-4 bg-slate-700/60 rounded w-2/3" />
+      </div>
+    </div>
+  )
+}
+
+function CardSkeleton() {
+  return (
+    <div className="rounded-xl overflow-hidden border border-slate-700 bg-slate-800/50 animate-pulse">
+      <div className="h-40 bg-slate-700/60" />
+      <div className="p-4 space-y-2">
+        <div className="h-4 bg-slate-700 rounded w-3/4" />
+        <div className="h-4 bg-slate-700 rounded w-1/2" />
+        <div className="h-3 bg-slate-700/60 rounded w-full" />
+        <div className="h-3 bg-slate-700/60 rounded w-2/3" />
+      </div>
+    </div>
+  )
+}
+
+const INITIAL_DISPLAY = 13
+const LOAD_MORE_STEP = 12
+
 export default function NewsPage() {
-  const [items, setItems] = useState<NewsItem[]>([])
-  const [total, setTotal] = useState(0)
+  const [allItems, setAllItems] = useState<NewsItem[]>([])
+  const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY)
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-
   const [search, setSearch] = useState('')
-  const [sentiment, setSentiment] = useState<Sentiment>('')
-  const [limit] = useState(30)
+  const [activeSentiment, setActiveSentiment] = useState<Sentiment>('')
 
   const fetchNews = useCallback(async () => {
     setLoading(true)
     setError('')
+    setDisplayCount(INITIAL_DISPLAY)
     try {
       const res = await newsService.getNews({
         q: search || undefined,
-        sentiment: sentiment || undefined,
-        limit,
+        sentiment: activeSentiment || undefined,
+        limit: 50,
       })
-      setItems(res.data)
-      setTotal(res.total)
-      setSource(res.source)
+      setAllItems(res.data ?? [])
+      setSource(res.source ?? '')
     } catch {
-      setError('Error al cargar las noticias')
+      setError('Error al cargar las noticias. Comprueba la conexión.')
     } finally {
       setLoading(false)
     }
-  }, [search, sentiment, limit])
+  }, [search, activeSentiment])
 
-  // Debounce búsqueda
   useEffect(() => {
     const timer = setTimeout(fetchNews, 400)
     return () => clearTimeout(timer)
   }, [fetchNews])
 
+  const visibleItems = allItems.slice(0, displayCount)
+  const featured = visibleItems[0] ?? null
+  const gridItems = visibleItems.slice(1)
+  const hasMore = displayCount < allItems.length
+
   const sentimentCounts = {
-    positive: items.filter(i => i.sentiment === 'positive').length,
-    negative: items.filter(i => i.sentiment === 'negative').length,
-    neutral: items.filter(i => i.sentiment === 'neutral').length,
+    positive: allItems.filter(i => i.sentiment === 'positive').length,
+    negative: allItems.filter(i => i.sentiment === 'negative').length,
+    neutral: allItems.filter(i => i.sentiment === 'neutral').length,
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-4xl mx-auto">
-        {/* Cabecera */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold">Noticias cripto</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            Fuente: CryptoCompare · {total > 0 ? `${total} noticias` : ''}
-            {source && <span className="ml-2 text-gray-500">({source})</span>}
-          </p>
-        </div>
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-bold text-white">Noticias cripto</h1>
+        <p className="text-slate-400 text-sm mt-1">
+          Fuente: CryptoCompare
+          {!loading && allItems.length > 0 && (
+            <span className="ml-2 text-slate-500">· {allItems.length} artículos</span>
+          )}
+          {source && <span className="ml-1 text-slate-600">({source})</span>}
+        </p>
+      </header>
 
-        {/* Controles */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-5">
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none select-none">🔍</span>
           <input
             type="text"
-            placeholder="Buscar: Bitcoin, Ethereum, DeFi…"
+            placeholder="Buscar: Bitcoin, DeFi, Ethereum…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+            className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-9 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
           />
-          <div className="flex gap-2">
-            {(['', 'positive', 'negative', 'neutral'] as Sentiment[]).map(s => (
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors text-xs"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        <div className="flex gap-2 shrink-0">
+          {(['', 'positive', 'negative', 'neutral'] as Sentiment[]).map(s => {
+            const isActive = activeSentiment === s
+            const cfg = s ? SENTIMENT_CONFIG[s] : null
+            return (
               <button
-                key={s ?? 'all'}
-                onClick={() => setSentiment(s)}
-                className={`px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap ${
-                  sentiment === s
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
+                key={s === '' ? 'all' : s}
+                onClick={() => setActiveSentiment(s)}
+                className={`px-3 py-2.5 rounded-xl text-xs font-medium whitespace-nowrap border transition-all ${
+                  isActive
+                    ? s === ''
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : cfg!.filter
+                    : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700 hover:border-slate-500'
                 }`}
               >
-                {s === '' ? 'Todos' : SENTIMENT_LABELS[s]}
+                {s === '' ? 'Todos' : `${cfg!.icon} ${cfg!.label}`}
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Estadísticas de sentimiento */}
-        {!loading && items.length > 0 && (
-          <div className="grid grid-cols-3 gap-3 mb-5">
-            <div className="bg-green-900/20 border border-green-800/40 rounded-xl p-3 text-center">
-              <p className="text-xl font-bold text-green-400">{sentimentCounts.positive}</p>
-              <p className="text-xs text-gray-400 mt-0.5">Positivas</p>
-            </div>
-            <div className="bg-red-900/20 border border-red-800/40 rounded-xl p-3 text-center">
-              <p className="text-xl font-bold text-red-400">{sentimentCounts.negative}</p>
-              <p className="text-xs text-gray-400 mt-0.5">Negativas</p>
-            </div>
-            <div className="bg-gray-800 border border-gray-700 rounded-xl p-3 text-center">
-              <p className="text-xl font-bold text-gray-300">{sentimentCounts.neutral}</p>
-              <p className="text-xs text-gray-400 mt-0.5">Neutrales</p>
-            </div>
-          </div>
-        )}
-
-        {loading && (
-          <div className="flex justify-center py-20">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        )}
-
-        {error && !loading && (
-          <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
-            {error}
-          </div>
-        )}
-
-        {!loading && !error && items.length === 0 && (
-          <div className="bg-gray-800 rounded-xl p-8 text-center text-gray-400">
-            <p>No se encontraron noticias para los filtros seleccionados.</p>
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {items.map(item => (
-            <NewsCard key={item.id} item={item} />
-          ))}
+            )
+          })}
         </div>
       </div>
+
+      {!loading && allItems.length > 0 && (
+        <div className="flex gap-3">
+          {(['positive', 'negative', 'neutral'] as const).map(s => {
+            const cfg = SENTIMENT_CONFIG[s]
+            const count = sentimentCounts[s]
+            const pct = allItems.length ? Math.round((count / allItems.length) * 100) : 0
+            return (
+              <button
+                key={s}
+                onClick={() => setActiveSentiment(activeSentiment === s ? '' : s)}
+                className={`flex-1 rounded-xl border p-3 text-center transition-all hover:opacity-90 ${cfg.statBg} ${
+                  activeSentiment === s ? 'ring-1 ring-offset-1 ring-offset-slate-900 ring-current' : ''
+                }`}
+              >
+                <p className={`text-xl font-bold ${cfg.stat}`}>{count}</p>
+                <p className="text-xs text-slate-400 mb-2">{cfg.label}s</p>
+                <div className="h-1 rounded-full bg-slate-700/80 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${cfg.bar}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {loading && (
+        <div className="space-y-4">
+          <FeaturedSkeleton />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
+          </div>
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-4 text-red-300 text-sm flex items-center gap-3">
+          <span className="text-xl shrink-0">⚠️</span>
+          <span>{error}</span>
+        </div>
+      )}
+
+      {!loading && !error && allItems.length === 0 && (
+        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-12 text-center">
+          <p className="text-4xl mb-3">🔍</p>
+          <p className="text-slate-300 font-medium">Sin resultados</p>
+          <p className="text-slate-500 text-sm mt-1">No hay noticias para los filtros seleccionados.</p>
+        </div>
+      )}
+
+      {!loading && !error && allItems.length > 0 && (
+        <>
+          {featured && <FeaturedCard item={featured} />}
+          {gridItems.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {gridItems.map(item => (
+                <NewsCard key={item.id || item.url} item={item} />
+              ))}
+            </div>
+          )}
+          {hasMore && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={() => setDisplayCount(c => c + LOAD_MORE_STEP)}
+                className="px-8 py-3 rounded-xl bg-slate-800 border border-slate-700 hover:border-slate-500 hover:bg-slate-700/80 text-slate-300 hover:text-white text-sm font-medium transition-all"
+              >
+                Cargar más · {allItems.length - displayCount} restantes
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
