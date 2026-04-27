@@ -62,6 +62,20 @@ export interface TradeFilters {
 }
 
 export const portfolioService = {
+  /** Obtener el precio actual de un activo por símbolo (null si no está en el catálogo) */
+  getAssetPrice: async (symbol: string): Promise<number | null> => {
+    try {
+      const { data } = await apiClient.get('/assets/')
+      const assets: Array<{ symbol: string; current_price: string }> = Array.isArray(data)
+        ? data
+        : (data.results ?? [])
+      const found = assets.find(a => a.symbol.toUpperCase() === symbol.toUpperCase())
+      return found ? parseFloat(found.current_price) : null
+    } catch {
+      return null
+    }
+  },
+
   /** Obtener resumen del portfolio con posiciones abiertas y PnL */
   getSummary: async (): Promise<PortfolioSummary> => {
     const { data } = await apiClient.get('/portfolio/')

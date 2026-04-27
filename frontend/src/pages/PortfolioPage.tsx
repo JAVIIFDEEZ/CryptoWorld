@@ -43,12 +43,69 @@ function AddTradeModal({
   onAdded: () => void
 }) {
   const [form, setForm] = useState<AddTradePayload>(EMPTY_FORM)
+  const [totalUsd, setTotalUsd] = useState('')
   const [loading, setLoading] = useState(false)
+  const [fetchingPrice, setFetchingPrice] = useState(false)
+  const [priceNote, setPriceNote] = useState('')
   const [error, setError] = useState('')
+
+  // Cantidad cambia → actualiza Total
+  const handleQtyChange = (val: string) => {
+    const qty = parseFloat(val) || 0
+    if (qty > 0 && form.price_usd > 0) {
+      setTotalUsd((qty * form.price_usd).toFixed(2))
+    }
+    setForm(f => ({ ...f, quantity: qty }))
+  }
+
+  // Precio cambia → actualiza Total
+  const handlePriceChange = (val: string) => {
+    const price = parseFloat(val) || 0
+    if (price > 0 && form.quantity > 0) {
+      setTotalUsd((form.quantity * price).toFixed(2))
+    }
+    setForm(f => ({ ...f, price_usd: price }))
+    if (val) setPriceNote('')
+  }
+
+  // Total cambia → calcula Cantidad = Total / Precio
+  const handleTotalChange = (val: string) => {
+    setTotalUsd(val)
+    const total = parseFloat(val) || 0
+    if (total > 0 && form.price_usd > 0) {
+      setForm(f => ({ ...f, quantity: parseFloat((total / f.price_usd).toFixed(10)) }))
+    }
+  }
+
+  // Obtener precio actual del catálogo
+  const fetchPrice = async () => {
+    if (!form.asset_symbol) return
+    setFetchingPrice(true)
+    setPriceNote('')
+    const price = await portfolioService.getAssetPrice(form.asset_symbol)
+    if (price !== null && price > 0) {
+      const qty = form.quantity
+      const tot = parseFloat(totalUsd) || 0
+      setForm(f => ({ ...f, price_usd: price }))
+      if (qty > 0) {
+        setTotalUsd((qty * price).toFixed(2))
+      } else if (tot > 0) {
+        setForm(f => ({ ...f, price_usd: price, quantity: parseFloat((tot / price).toFixed(10)) }))
+      }
+      setPriceNote(
+        `Precio actual: $${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`,
+      )
+    } else {
+      setPriceNote(`"${form.asset_symbol}" no está en el catálogo.`)
+    }
+    setFetchingPrice(false)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (form.quantity <= 0) { setError('La cantidad debe ser mayor que cero.'); return }
+    if (form.price_usd <= 0) { setError('El precio debe ser mayor que cero.'); return }
     setLoading(true)
     try {
       await portfolioService.addTrade({
@@ -65,6 +122,10 @@ function AddTradeModal({
     }
   }
 
+  const displayTotal = totalUsd || (form.quantity > 0 && form.price_usd > 0
+    ? (form.quantity * form.price_usd).toFixed(2)
+    : '')
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
@@ -74,71 +135,126 @@ function AddTradeModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Símbolo + botón precio */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">Símbolo</label>
-            <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm uppercase"
-              placeholder="BTC, ETH, SOL…"
-              value={form.asset_symbol}
-              onChange={e => setForm(f => ({ ...f, asset_symbol: e.target.value.toUpperCase() }))}
-              required
-            />
+            <div className="flex gap-2">
+              <input
+                className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm uppercase placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="BTC, ETH, SOL…"
+                value={form.asset_symbol}
+                onChange={e => {
+                  setForm(f => ({ ...f, asset_symbol: e.target.value.toUpperCase() }))
+                  setPriceNote('')
+                }}
+                required
+              />
+              <button
+                type="button"
+                onClick={fetchPrice}
+                disabled={fetchingPrice || !form.asset_symbol}
+                className="shrink-0 px-3 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white text-xs font-medium transition-colors whitespace-nowrap"
+              >
+                {fetchingPrice ? '…' : '📈 Precio actual'}
+              </button>
+            </div>
+            {priceNote && (
+              <p className={`text-xs mt-1 ${priceNote.includes('no está') || priceNote.includes('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                {priceNote}
+              </p>
+            )}
           </div>
 
+          {/* Tipo */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">Tipo</label>
-            <select
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
-              value={form.trade_type}
-              onChange={e => setForm(f => ({ ...f, trade_type: e.target.value as 'BUY' | 'SELL' }))}
-            >
-              <option value="BUY">Compra</option>
-              <option value="SELL">Venta</option>
-            </select>
+            <div className="flex gap-2">
+              {(['BUY', 'SELL'] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, trade_type: t }))}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    form.trade_type === t
+                      ? t === 'BUY'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-red-600 text-white'
+                      : 'bg-gray-700 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {t === 'BUY' ? '↑ Compra' : '↓ Venta'}
+                </button>
+              ))}
+            </div>
           </div>
 
+          {/* Total USD — campo principal */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              Total a invertir (USD)
+              <span className="ml-1 text-gray-600">— o introduce cantidad y precio manualmente</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder="500"
+                className="w-full bg-gray-700 text-white rounded-lg pl-7 pr-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={displayTotal}
+                onChange={e => handleTotalChange(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Cantidad + Precio */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Cantidad</label>
+              <label className="block text-xs text-gray-400 mb-1">Cantidad (tokens)</label>
               <input
                 type="number"
                 step="any"
                 min="0"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+                placeholder="0.005"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.quantity || ''}
-                onChange={e => setForm(f => ({ ...f, quantity: parseFloat(e.target.value) || 0 }))}
+                onChange={e => handleQtyChange(e.target.value)}
                 required
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Precio (USD)</label>
+              <label className="block text-xs text-gray-400 mb-1">Precio por token (USD)</label>
               <input
                 type="number"
                 step="any"
                 min="0"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+                placeholder="94000"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.price_usd || ''}
-                onChange={e => setForm(f => ({ ...f, price_usd: parseFloat(e.target.value) || 0 }))}
+                onChange={e => handlePriceChange(e.target.value)}
                 required
               />
             </div>
           </div>
 
+          {/* Fecha */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">Fecha y hora</label>
             <input
               type="datetime-local"
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={form.executed_at}
               onChange={e => setForm(f => ({ ...f, executed_at: e.target.value }))}
               required
             />
           </div>
 
+          {/* Notas */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               placeholder="Exchange, estrategia…"
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
