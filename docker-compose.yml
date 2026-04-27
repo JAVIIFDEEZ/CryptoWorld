@@ -100,7 +100,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "cd src && celery -A config worker --loglevel=info --concurrency=2"
+      sh -c "cd src && celery -A config worker --loglevel=info --concurrency=2 --uid=nobody --gid=nogroup"
 
   # ── Celery Beat (Scheduler) ──────────────────────────────────────
   celery-beat:
