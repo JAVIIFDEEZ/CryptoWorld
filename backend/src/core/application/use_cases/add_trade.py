@@ -40,21 +40,6 @@ class AddTradeUseCase:
         if price <= 0:
             raise ValueError("El precio debe ser mayor que cero.")
 
-        # Validar para SELL: hay suficiente saldo
-        if dto.trade_type == "SELL":
-            buys = TradeHistory.objects.filter(
-                user=user, asset=asset, trade_type="BUY"
-            ).values_list("quantity", flat=True)
-            sells = TradeHistory.objects.filter(
-                user=user, asset=asset, trade_type="SELL"
-            ).values_list("quantity", flat=True)
-            net = sum(buys, Decimal("0")) - sum(sells, Decimal("0"))
-            if qty > net:
-                raise ValueError(
-                    f"No tienes suficiente {symbol}. "
-                    f"Disponible: {net:.8f}, intentas vender: {qty:.8f}."
-                )
-
         # Parsear fecha
         try:
             executed_at = datetime.fromisoformat(dto.executed_at)
