@@ -40,13 +40,14 @@ class PortfolioPositionDTO:
     asset_name: str
     logo_url: Optional[str]
     quantity: str               # Total de unidades
-    avg_buy_price: str          # Precio medio de compra en USD
-    total_invested: str         # Total invertido en USD
+    avg_buy_price: str          # Precio medio de compra (LONG) o de venta (SHORT) en USD
+    total_invested: str         # Total invertido (LONG) o recibido (SHORT) en USD
     current_price: str          # Precio actual en USD
     current_value: str          # Valor actual en USD
     pnl_usd: str                # Ganancia/pérdida en USD
     pnl_pct: str                # Ganancia/pérdida en %
     is_profit: bool
+    position_type: str = "LONG"  # "LONG" | "SHORT"
 
 
 @dataclass(frozen=True)
@@ -58,3 +59,8 @@ class PortfolioSummaryDTO:
     total_pnl_pct: str
     positions: list
     is_profit: bool
+    # Desglose LONG / SHORT para el resumen de cabecera
+    long_count: int = 0
+    short_count: int = 0
+    total_long_invested_usd: str = "0.00"     # Capital comprometido en posiciones LONG
+    total_short_exposure_usd: str = "0.00"    # Coste de recompra actual de posiciones SHORT

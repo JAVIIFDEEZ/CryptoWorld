@@ -338,6 +338,7 @@ class PortfolioPositionSerializer(serializers.Serializer):
     pnl_usd = serializers.CharField()
     pnl_pct = serializers.CharField()
     is_profit = serializers.BooleanField()
+    position_type = serializers.CharField(default="LONG")
 
 
 class TradeHistoryQuerySerializer(serializers.Serializer):
