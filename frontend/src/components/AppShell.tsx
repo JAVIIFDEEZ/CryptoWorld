@@ -95,10 +95,10 @@ function AppShell() {
                 onClick={() => setMobileMenuOpen(false)}
                 className={({ isActive }) =>
                   [
-                    'block rounded-lg px-3 py-2 text-sm transition-colors mt-4 border border-fuchsia-500/30',
+                    'block rounded-lg px-3 py-2 text-sm transition-colors mt-4 border border-blue-500/30',
                     isActive
-                      ? 'bg-fuchsia-600 text-white'
-                      : 'text-fuchsia-400 hover:bg-fuchsia-500/10 hover:text-fuchsia-300',
+                      ? 'bg-blue-600 text-white'
+                      : 'text-blue-400 hover:bg-blue-500/10 hover:text-blue-300',
                   ].join(' ')
                 }
               >
