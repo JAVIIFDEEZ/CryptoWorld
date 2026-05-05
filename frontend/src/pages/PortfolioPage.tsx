@@ -357,29 +357,70 @@ export default function PortfolioPage() {
 
         {!loading && !error && summary && (
           <>
-            {/* Resumen PnL */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-400 mb-1">Invertido</p>
-                <p className="text-lg font-bold">{fmtUSD(summary.total_invested_usd)}</p>
+            {/* ── Resumen PnL ── */}
+            {summary.short_count === 0 ? (
+              /* Solo posiciones LONG → KPIs clásicos */
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-gray-800 rounded-xl p-4">
+                  <p className="text-xs text-gray-400 mb-1">Capital invertido</p>
+                  <p className="text-lg font-bold">{fmtUSD(summary.total_invested_usd)}</p>
+                </div>
+                <div className="bg-gray-800 rounded-xl p-4">
+                  <p className="text-xs text-gray-400 mb-1">Valor actual</p>
+                  <p className="text-lg font-bold">{fmtUSD(summary.total_current_value_usd)}</p>
+                </div>
+                <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                  <p className="text-xs text-gray-400 mb-1">PnL (USD)</p>
+                  <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
+                    {summary.is_profit ? '+' : ''}{fmtUSD(summary.total_pnl_usd)}
+                  </p>
+                </div>
+                <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                  <p className="text-xs text-gray-400 mb-1">PnL (%)</p>
+                  <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
+                    {summary.is_profit ? '+' : ''}{fmt(summary.total_pnl_pct)}%
+                  </p>
+                </div>
               </div>
-              <div className="bg-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-400 mb-1">Valor actual</p>
-                <p className="text-lg font-bold">{fmtUSD(summary.total_current_value_usd)}</p>
+            ) : (
+              /* Mix LONG + SHORT → KPIs diferenciados */
+              <div className="space-y-3 mb-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {/* LONG */}
+                  <div className="bg-gray-800 rounded-xl p-4 border-l-2 border-green-500/60">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-700/50">LONG</span>
+                      <p className="text-xs text-gray-400">Capital invertido</p>
+                    </div>
+                    <p className="text-lg font-bold">{fmtUSD(summary.total_long_invested_usd)}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{summary.long_count} posición{summary.long_count !== 1 ? 'es' : ''}</p>
+                  </div>
+                  {/* SHORT */}
+                  <div className="bg-gray-800 rounded-xl p-4 border-l-2 border-orange-500/60">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-orange-900/50 text-orange-400 border border-orange-700/50">SHORT</span>
+                      <p className="text-xs text-gray-400">Exposición actual</p>
+                    </div>
+                    <p className="text-lg font-bold text-orange-300">{fmtUSD(summary.total_short_exposure_usd)}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{summary.short_count} posición{summary.short_count !== 1 ? 'es' : ''} · coste recompra</p>
+                  </div>
+                  {/* PnL USD */}
+                  <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                    <p className="text-xs text-gray-400 mb-1">PnL total (USD)</p>
+                    <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
+                      {summary.is_profit ? '+' : ''}{fmtUSD(summary.total_pnl_usd)}
+                    </p>
+                  </div>
+                  {/* PnL % */}
+                  <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
+                    <p className="text-xs text-gray-400 mb-1">PnL total (%)</p>
+                    <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
+                      {summary.is_profit ? '+' : ''}{fmt(summary.total_pnl_pct)}%
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                <p className="text-xs text-gray-400 mb-1">PnL (USD)</p>
-                <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                  {summary.is_profit ? '+' : ''}{fmtUSD(summary.total_pnl_usd)}
-                </p>
-              </div>
-              <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                <p className="text-xs text-gray-400 mb-1">PnL (%)</p>
-                <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                  {summary.is_profit ? '+' : ''}{fmt(summary.total_pnl_pct)}%
-                </p>
-              </div>
-            </div>
+            )}
 
             {/* Tabs */}
             <div className="flex gap-2 mb-4">
@@ -413,7 +454,7 @@ export default function PortfolioPage() {
                         <th className="text-right px-4 py-3">Cantidad</th>
                         <th className="text-right px-4 py-3">Precio medio</th>
                         <th className="text-right px-4 py-3">Precio actual</th>
-                        <th className="text-right px-4 py-3">Valor</th>
+                        <th className="text-right px-4 py-3">Valor posición</th>
                         <th className="text-right px-4 py-3">PnL</th>
                       </tr>
                     </thead>
@@ -426,15 +467,42 @@ export default function PortfolioPage() {
                                 <img src={pos.logo_url} alt={pos.asset_symbol} className="w-6 h-6 rounded-full" />
                               )}
                               <div>
-                                <p className="font-medium">{pos.asset_symbol}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-medium">{pos.asset_symbol}</p>
+                                  {pos.position_type === 'SHORT' ? (
+                                    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-orange-900/50 text-orange-400 border border-orange-700/50">SHORT</span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-700/50">LONG</span>
+                                  )}
+                                </div>
                                 <p className="text-xs text-gray-400">{pos.asset_name}</p>
                               </div>
                             </div>
                           </td>
-                          <td className="text-right px-4 py-3 font-mono">{fmt(pos.quantity, 6)}</td>
-                          <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.avg_buy_price)}</td>
+                          <td className="text-right px-4 py-3 font-mono">
+                            {fmt(pos.quantity, 6)}
+                            {pos.position_type === 'SHORT' && (
+                              <span className="text-xs text-orange-400/70 block">en descubierto</span>
+                            )}
+                          </td>
+                          <td className="text-right px-4 py-3 font-mono">
+                            <span className="text-xs text-gray-500 block">{pos.position_type === 'SHORT' ? 'Venta media' : 'Compra media'}</span>
+                            {fmtUSD(pos.avg_buy_price)}
+                          </td>
                           <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.current_price)}</td>
-                          <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.current_value)}</td>
+                          <td className="text-right px-4 py-3 font-mono">
+                            {pos.position_type === 'SHORT' ? (
+                              <>
+                                <span className="text-orange-300">{fmtUSD(pos.current_value)}</span>
+                                <span className="text-xs text-orange-400/70 block">coste recompra</span>
+                              </>
+                            ) : (
+                              <>
+                                {fmtUSD(pos.current_value)}
+                                <span className="text-xs text-gray-500 block">valor actual</span>
+                              </>
+                            )}
+                          </td>
                           <td className={`text-right px-4 py-3 font-mono ${pos.is_profit ? 'text-green-400' : 'text-red-400'}`}>
                             {pos.is_profit ? '+' : ''}{fmtUSD(pos.pnl_usd)}<br />
                             <span className="text-xs">{pos.is_profit ? '+' : ''}{fmt(pos.pnl_pct)}%</span>

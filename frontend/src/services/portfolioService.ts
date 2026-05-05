@@ -22,6 +22,7 @@ export interface PortfolioPosition {
   pnl_usd: number
   pnl_pct: number
   is_profit: boolean
+  position_type: 'LONG' | 'SHORT'
 }
 
 export interface PortfolioSummary {
@@ -31,6 +32,10 @@ export interface PortfolioSummary {
   total_pnl_pct: number
   is_profit: boolean
   positions: PortfolioPosition[]
+  long_count: number
+  short_count: number
+  total_long_invested_usd: number
+  total_short_exposure_usd: number
 }
 
 export interface Trade {
