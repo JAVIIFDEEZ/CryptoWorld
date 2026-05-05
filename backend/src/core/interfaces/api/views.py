@@ -74,6 +74,7 @@ from core.application.use_cases.verify_2fa_login import Verify2FALoginUseCase, P
 from core.application.use_cases.get_market_overview import GetMarketOverviewUseCase
 from core.application.use_cases.get_asset_ohlcv import GetAssetOhlcvUseCase
 from core.application.use_cases.get_onchain_metrics import GetOnChainMetricsUseCase
+from core.application.use_cases.get_multichain_stats import GetMultiChainStatsUseCase
 from core.application.use_cases.get_news_feed import GetNewsFeedUseCase
 from core.application.use_cases.delete_user_account import DeleteUserAccountUseCase
 from core.application.use_cases.get_signals_dashboard import GetSignalsDashboardUseCase
@@ -697,7 +698,11 @@ class BlockchainMetricsView(APIView):
         )
         if result.get("error"):
             return Response(result, status=status.HTTP_200_OK)
-        serializer = OnChainMetricPointSerializer([vars(p) for p in result["points"]], many=True)
+        # Devolver timestamp como int (Unix segundos) y value como float para el frontend
+        data_points = [
+            {"timestamp": int(p.timestamp), "value": float(p.value)}
+            for p in result["points"]
+        ]
         return Response({
             "symbol": result.get("symbol"),
             "metric": result.get("metric"),
@@ -706,9 +711,25 @@ class BlockchainMetricsView(APIView):
             "timespan": result.get("timespan"),
             "total_points": result.get("total_points"),
             "source": result.get("source"),
-            "data": serializer.data,
+            "data": data_points,
         }, status=status.HTTP_200_OK)
 
+
+
+
+class MultiChainStatsView(APIView):
+    """
+    GET /api/blockchain/multichain/ - Estadisticas on-chain actuales (snapshot).
+    Soporta: BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR via Blockchair.
+    Requiere autenticacion JWT.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        symbol = request.query_params.get("symbol", "ETH").upper()
+        result = GetMultiChainStatsUseCase().execute(symbol=symbol)
+        return Response(result, status=status.HTTP_200_OK)
 
 class NewsFeedView(APIView):
     """
@@ -934,6 +955,10 @@ class PortfolioView(APIView):
                 "total_pnl_usd": summary.total_pnl_usd,
                 "total_pnl_pct": summary.total_pnl_pct,
                 "is_profit": summary.is_profit,
+                "long_count": summary.long_count,
+                "short_count": summary.short_count,
+                "total_long_invested_usd": summary.total_long_invested_usd,
+                "total_short_exposure_usd": summary.total_short_exposure_usd,
                 "positions": PortfolioPositionSerializer(positions_data, many=True).data,
             },
             status=status.HTTP_200_OK,

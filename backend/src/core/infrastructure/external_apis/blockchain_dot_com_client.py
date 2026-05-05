@@ -34,7 +34,7 @@ REQUEST_TIMEOUT = 12  # segundos
 
 # Mapeo de nombres internos a nombres de la API
 METRIC_MAP = {
-    "active_addresses": "active-addresses",
+    "active_addresses": "n-unique-addresses",
     "hashrate": "hash-rate",
     "tx_count": "n-transactions",
     "difficulty": "difficulty",
@@ -80,7 +80,7 @@ class BlockchainDotComClient:
         self,
         metric: str,
         timespan: str = "30days",
-        rolling_average: str = "24hours",
+        rolling_average: str | None = None,
     ) -> dict[str, Any]:
         """
         GET /charts/<metric-name> — Serie temporal de una métrica BTC.
@@ -88,7 +88,9 @@ class BlockchainDotComClient:
         Args:
             metric: Nombre interno del métrico (ver METRIC_MAP).
             timespan: Ventana temporal ("7days", "30days", "90days", "1year", "all").
-            rolling_average: Media móvil ("24hours", "1week", ...).
+            rolling_average: Media móvil opcional ("24hours", "1week", ...). Si es
+                None no se envía el parámetro, evitando que la API devuelva 0 puntos
+                en ventanas cortas (≤ 7 days).
 
         Returns:
             Dict con name, description, period, values (lista de {x: ts, y: valor}).
@@ -100,14 +102,17 @@ class BlockchainDotComClient:
                 f"Disponibles: {list(METRIC_MAP.keys())}"
             )
 
+        params: dict[str, str] = {
+            "timespan": timespan,
+            "format": "json",
+        }
+        if rolling_average:
+            params["rollingAverage"] = rolling_average
+
         try:
             resp = self._session.get(
                 f"{BLOCKCHAIN_BASE_URL}/{api_metric}",
-                params={
-                    "timespan": timespan,
-                    "rollingAverage": rolling_average,
-                    "format": "json",
-                },
+                params=params,
                 timeout=REQUEST_TIMEOUT,
             )
             resp.raise_for_status()

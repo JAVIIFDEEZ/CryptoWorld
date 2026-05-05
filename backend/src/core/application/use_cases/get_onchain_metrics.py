@@ -8,7 +8,6 @@ Docs: https://www.blockchain.com/explorer/api/charts_api
 """
 
 import logging
-from datetime import datetime, UTC
 from typing import Optional
 
 from core.application.dto.market_intelligence_dto import OnChainMetricPointOutputDTO
@@ -100,16 +99,12 @@ class GetOnChainMetricsUseCase:
             val = point.get("y")
             if val is None:
                 continue
-            try:
-                timestamp = datetime.fromtimestamp(ts, UTC).isoformat()
-            except (TypeError, OSError):
-                timestamp = datetime.now(UTC).isoformat()
 
             points.append(
                 OnChainMetricPointOutputDTO(
                     metric=metric,
                     symbol=symbol,
-                    timestamp=timestamp,
+                    timestamp=str(ts),   # Unix timestamp en segundos (entero como string)
                     value=str(val),
                     source="blockchain.com",
                 )

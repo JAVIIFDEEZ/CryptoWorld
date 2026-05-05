@@ -82,6 +82,7 @@ urlpatterns = [
     # ── Market Intelligence ─────────────────────────────────────────
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
     path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
+    path("blockchain/multichain/", views.MultiChainStatsView.as_view(), name="blockchain-multichain"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
 
     # ── Admin ───────────────────────────────────────────────────────
