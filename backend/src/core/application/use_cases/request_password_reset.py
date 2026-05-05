@@ -11,8 +11,12 @@ from django.utils.encoding import force_bytes
 from django.core.mail import send_mail
 from django.conf import settings
 
+import logging
+
 from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import PasswordResetRequestDTO
+
+logger = logging.getLogger(__name__)
 
 
 class RequestPasswordResetUseCase:
@@ -29,6 +33,7 @@ class RequestPasswordResetUseCase:
             user = UserModel.objects.get(email=dto.email, is_active=True)
         except UserModel.DoesNotExist:
             # Silencioso: no revelar si el email existe
+            logger.debug("[password-reset] Email no encontrado o inactivo: %s", dto.email)
             return
 
         uid = urlsafe_base64_encode(force_bytes(user.pk))
@@ -51,4 +56,12 @@ class RequestPasswordResetUseCase:
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
             fail_silently=False,
+        )
+
+        # En desarrollo el email se imprime en los logs Docker (console backend)
+        # Este print hace el link visible de forma prominente
+        logger.info(
+            "\n[DEV] PasswordReset para %s\n  Link: %s\n",
+            user.email,
+            reset_url,
         )
