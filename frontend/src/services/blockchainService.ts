@@ -1,10 +1,13 @@
 /**
  * services/blockchainService.ts — API calls para métricas on-chain.
  *
- * Endpoint:
- *   GET /api/blockchain/metrics/?symbol=BTC&metric=&days= → Datos históricos
+ * Endpoints:
+ *   GET /api/blockchain/metrics/?symbol=BTC&metric=&days=
+ *     → Series históricas de BTC (Blockchain.com, solo BTC)
  *
- * Proveedor: Blockchain.com Charts API (solo BTC)
+ *   GET /api/blockchain/multichain/?symbol=ETH
+ *     → Snapshot de estadísticas actuales multi-chain (Blockchair)
+ *     → Chains: BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR
  */
 
 import apiClient from './api'
@@ -47,6 +50,28 @@ export interface OnChainMetricsResponse {
   error?: string
 }
 
+// ── Multi-chain snapshot (Blockchair) ──────────────────────────────
+
+export const MULTICHAIN_SYMBOLS = ['BTC', 'ETH', 'LTC', 'DOGE', 'BCH', 'XRP', 'ADA', 'DOT', 'XLM', 'XMR'] as const
+export type MultiChainSymbol = typeof MULTICHAIN_SYMBOLS[number]
+
+export interface MultiChainStatItem {
+  key: string
+  label: string
+  value: number | string | null
+  unit: string
+}
+
+export interface MultiChainStatsResponse {
+  symbol: string
+  source: string
+  best_block_time: string | null
+  best_block_height: number | null
+  supported: string[]
+  stats: MultiChainStatItem[]
+  error?: string
+}
+
 export const blockchainService = {
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
@@ -59,6 +84,13 @@ export const blockchainService = {
       days: String(days),
     })
     const { data } = await apiClient.get(`/blockchain/metrics/?${params}`)
+    return data
+  },
+
+  /** Obtener snapshot de estadísticas actuales para cualquier chain soportada */
+  getMultiChainStats: async (symbol: MultiChainSymbol): Promise<MultiChainStatsResponse> => {
+    const params = new URLSearchParams({ symbol })
+    const { data } = await apiClient.get(`/blockchain/multichain/?${params}`)
     return data
   },
 }

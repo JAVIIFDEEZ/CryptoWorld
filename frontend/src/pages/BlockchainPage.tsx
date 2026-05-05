@@ -1,19 +1,20 @@
 /**
- * pages/BlockchainPage.tsx — Métricas on-chain de Bitcoin.
+ * pages/BlockchainPage.tsx — Métricas on-chain de Bitcoin y multi-chain.
  *
- * Fuente: Blockchain.com Charts API (sin autenticación, solo BTC)
- *
- * Métricas disponibles:
- *   active_addresses, hashrate, tx_count, difficulty,
- *   mempool_size, miners_revenue, transaction_fees, avg_block_size
+ * Fuentes:
+ *   - BTC histórico: Blockchain.com Charts API (sin auth)
+ *   - Multi-chain snapshot: Blockchair API (BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   blockchainService,
   METRIC_LABELS,
+  MULTICHAIN_SYMBOLS,
   type OnChainMetric,
   type MetricPoint,
+  type MultiChainSymbol,
+  type MultiChainStatItem,
 } from '../services/blockchainService'
 
 // ────────────────────────── Gráfico SVG simple ────────────────────
@@ -78,6 +79,125 @@ const METRICS_ORDER: OnChainMetric[] = [
   'transaction_fees',
   'avg_block_size',
 ]
+
+// ────────────────────────── Panel multi-chain (Blockchair) ────────
+
+const MULTICHAIN_COLORS: Record<string, string> = {
+  BTC: '#f59e0b', ETH: '#6366f1', LTC: '#a3a3a3', DOGE: '#d97706',
+  BCH: '#22c55e', XRP: '#0ea5e9', ADA: '#3b82f6', DOT: '#e879f9',
+  XLM: '#38bdf8', XMR: '#f97316',
+}
+
+function fmtStatValue(value: number | string | null, unit: string): string {
+  if (value === null || value === undefined) return '—'
+  const n = typeof value === 'string' ? Number.parseFloat(value) : value
+  if (Number.isNaN(n)) return String(value)
+  if (unit === '%') return `${n.toFixed(2)}%`
+  if (unit === 'USD') return fmtUsd(n)
+  return fmtGeneric(n)
+}
+
+function fmtUsd(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`
+  return `$${n.toFixed(4)}`
+}
+
+function fmtGeneric(n: number): string {
+  if (n >= 1e12) return `${(n / 1e12).toFixed(3)}T`
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(2)}K`
+  return n.toFixed(n < 1 ? 6 : 2)
+}
+
+function MultiChainPanel() {
+  const [symbol, setSymbol] = useState<MultiChainSymbol>('ETH')
+  const [stats, setStats] = useState<MultiChainStatItem[]>([])
+  const [meta, setMeta] = useState<{ best_block_time: string | null; best_block_height: number | null; source: string }>({ best_block_time: null, best_block_height: null, source: '' })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const fetch = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await blockchainService.getMultiChainStats(symbol)
+      if (res.error) { setError(res.error); setStats([]) }
+      else {
+        setStats(res.stats)
+        setMeta({ best_block_time: res.best_block_time, best_block_height: res.best_block_height, source: res.source })
+      }
+    } catch {
+      setError('Error al cargar estadísticas multi-chain')
+    } finally {
+      setLoading(false)
+    }
+  }, [symbol])
+
+  useEffect(() => { fetch() }, [fetch])
+
+  const color = MULTICHAIN_COLORS[symbol] ?? '#6366f1'
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold" style={{ backgroundColor: color + '33', color }}>⛓</div>
+        <div>
+          <h2 className="text-lg font-bold">Estadísticas Multi-chain</h2>
+          <p className="text-xs text-gray-400">Snapshot actual · Fuente: Blockchair</p>
+        </div>
+      </div>
+
+      {/* Selector de chain */}
+      <div className="flex flex-wrap gap-2 mb-5">
+        {MULTICHAIN_SYMBOLS.map(s => (
+          <button
+            key={s}
+            onClick={() => setSymbol(s)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border ${symbol === s ? 'text-white border-transparent' : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'}`}
+            style={symbol === s ? { backgroundColor: MULTICHAIN_COLORS[s] + '33', borderColor: MULTICHAIN_COLORS[s], color: MULTICHAIN_COLORS[s] } : {}}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {loading && (
+        <div className="flex justify-center py-10">
+          <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: color, borderTopColor: 'transparent' }} />
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">{error}</div>
+      )}
+
+      {!loading && !error && stats.length > 0 && (
+        <>
+          {meta.best_block_time && (
+            <p className="text-xs text-gray-500 mb-3">
+              Último bloque: #{meta.best_block_height?.toLocaleString()} · {new Date(meta.best_block_time).toLocaleString('es-ES')}
+            </p>
+          )}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {stats.map(stat => (
+              <div key={stat.key} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <p className="text-xs text-gray-400 mb-1 truncate">{stat.label}</p>
+                <p className="text-lg font-bold font-mono" style={{ color }}>{fmtStatValue(stat.value, stat.unit)}</p>
+                {stat.unit && stat.unit !== 'USD' && stat.unit !== '%' && (
+                  <p className="text-xs text-gray-500 mt-0.5">{stat.unit}</p>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-600 mt-3">Fuente: {meta.source}</p>
+        </>
+      )}
+    </div>
+  )
+}
 
 // ────────────────────────── Página principal ─────────────────────
 
@@ -225,7 +345,15 @@ export default function BlockchainPage() {
             </div>
           )}
 
-          {!loading && !error && data.length > 0 && (
+          {!loading && !error && data.length === 1 && (
+            <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4 text-yellow-400 text-sm text-center py-8">
+              Solo hay 1 dato disponible para el período de 7 días en esta métrica.
+              <br />
+              <span className="text-yellow-500/70 text-xs">Selecciona 1M o más para ver la gráfica.</span>
+            </div>
+          )}
+
+          {!loading && !error && data.length > 1 && (
             <div
               ref={containerRef}
               className="relative cursor-crosshair"
@@ -240,6 +368,12 @@ export default function BlockchainPage() {
               onMouseLeave={() => setHovered(null)}
             >
               <SparkLine points={data} color={color} />
+            </div>
+          )}
+
+          {!loading && !error && data.length === 0 && (
+            <div className="py-12 text-center text-gray-500 text-sm">
+              No hay datos disponibles para esta métrica y período.
             </div>
           )}
 
@@ -284,6 +418,10 @@ export default function BlockchainPage() {
             </table>
           </div>
         )}
+
+        {/* Panel multi-chain (Blockchair) */}
+        <MultiChainPanel />
+
       </div>
     </div>
   )
