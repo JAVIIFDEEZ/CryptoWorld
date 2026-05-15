@@ -584,10 +584,7 @@ class AssetListView(APIView):
 
         if not output_dtos:
             mock_assets = _get_mock_assets()
-            return Response(
-                {"_mock": True, "results": mock_assets},
-                status=status.HTTP_200_OK,
-            )
+            return Response(mock_assets, status=status.HTTP_200_OK)
 
         serializer = CryptoAssetSerializer(
             [vars(dto) for dto in output_dtos],
