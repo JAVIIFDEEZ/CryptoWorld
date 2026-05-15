@@ -12,18 +12,21 @@
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/hooks/useAuth'
 import AppRoutes from '@/routes'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 function App() {
   return (
-    <BrowserRouter>
-      {/*
-        AuthProvider debe envolver AppRoutes para que ProtectedRoute
-        pueda acceder al contexto de autenticación en cualquier nivel.
-      */}
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        {/*
+          AuthProvider debe envolver AppRoutes para que ProtectedRoute
+          pueda acceder al contexto de autenticación en cualquier nivel.
+        */}
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   )
 }
 
