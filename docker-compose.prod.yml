@@ -1,0 +1,175 @@
+# ═══════════════════════════════════════════════════════════════════
+# docker-compose.prod.yml — Orquestación de PRODUCCIÓN
+#
+# Diferencias clave respecto al compose de desarrollo:
+#   - Backend arranca con Gunicorn (WSGI server de producción)
+#   - No hay bind mounts de código fuente (sin hot-reload)
+#   - Frontend pasa VITE_API_URL=/api (relativa, via nginx proxy)
+#   - No expone puertos de BD/Redis al host
+#   - Sin pgAdmin
+#   - Variables de entorno desde .env.production
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml up --build -d
+#   docker compose -f docker-compose.prod.yml logs -f
+#   docker compose -f docker-compose.prod.yml down
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cryptoworld_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-cryptoworld_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # En producción NO exponemos la BD al host
+    # ports: - "5432:5432"   ← eliminado
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── Redis ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cryptoworld_redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    # En producción NO exponemos Redis al host
+    # ports: - "6379:6379"   ← eliminado
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── Backend Django (Gunicorn) ────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_backend
+    restart: always
+    env_file: .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    # Solo expone al interior de la red Docker, nginx hace el proxy
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Gunicorn: WSGI server de producción (no runserver)
+    #   --workers 3     → regla (2 * CPUs) + 1
+    #   --timeout 120   → permite respuestas lentas (ML, análisis)
+    #   --bind 0.0.0.0:8000
+    command: >
+      sh -c "
+        cd src &&
+        python manage.py migrate --noinput &&
+        python manage.py collectstatic --noinput &&
+        gunicorn config.wsgi:application
+          --bind 0.0.0.0:8000
+          --workers 3
+          --timeout 120
+          --access-logfile -
+          --error-logfile -
+      "
+    networks:
+      - internal
+
+  # ── Celery Worker ────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_celery_worker
+    restart: always
+    env_file: .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "cd src && celery -A config worker --loglevel=info --concurrency=2 --uid=nobody --gid=nogroup"
+    networks:
+      - internal
+
+  # ── Celery Beat (Scheduler) ──────────────────────────────────────
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_celery_beat
+    restart: always
+    env_file: .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "cd src && celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    networks:
+      - internal
+
+  # ── Frontend React (Nginx — sirve SPA + proxy /api → backend) ───
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # URL relativa: el nginx del frontend proxea /api al backend
+        VITE_API_URL: /api
+    container_name: cryptoworld_frontend
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Nginx de producción con proxy inverso al backend
+      - ./nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      # Certificados SSL (montados desde el host tras certbot)
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      # Webroot para renovación automática de Let's Encrypt
+      - ./nginx/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - backend
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

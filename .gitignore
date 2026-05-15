@@ -30,12 +30,17 @@ npm-debug.log*
 
 # ── Variables de entorno ───────────────────────────────────────────
 .env
+.env.production
 # NO ignorar: .env.example (debe estar en el repo como plantilla)
 
 # ── IDE ────────────────────────────────────────────────────────────
 .vscode/settings.json
 .idea/
 *.swp
+
+# ── Certificados SSL (generados en el servidor, nunca en el repo) ──
+nginx/ssl/
+nginx/certbot/
 
 # ── OS ─────────────────────────────────────────────────────────────
 .DS_Store

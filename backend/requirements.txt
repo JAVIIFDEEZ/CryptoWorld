@@ -43,6 +43,8 @@ factory-boy==3.3.1              # Generación de datos de prueba
 
 # ── Servidor de producción ────────────────────────────────────────
 gunicorn==22.0.0
+dj-database-url==2.2.0          # Parsea DATABASE_URL (Railway lo inyecta automáticamente)
+whitenoise==6.7.0               # Sirve archivos estáticos sin Nginx (Railway no tiene Nginx)
 
 # ── Celery — Worker asíncrono para alertas y tareas periódicas ─────
 celery==5.4.0
