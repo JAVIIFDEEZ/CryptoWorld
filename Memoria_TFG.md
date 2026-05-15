@@ -4,9 +4,9 @@
 **Autor:** Javier  
 **Titulación:** 4º Ingeniería Informática  
 **Universidad:** Universidad de Castilla-La Mancha  
-**Fecha del documento:** Abril 2026 (v1.29.4)  
+**Fecha del documento:** Mayo 2026 (v1.47.0)  
 
-> **NOTA PARA LA IA REDACTORA:** Este documento es un briefing técnico completo del proyecto CryptoWorld tal como está implementado en marzo de 2026. Contiene el código real de los archivos más importantes, la justificación de cada decisión de diseño, y todos los detalles técnicos necesarios para redactar una memoria académica de TFG. No es necesario inferir nada—todo lo que existe en el proyecto está documentado aquí. El objetivo es una memoria académica formal para un TFG de Ingeniería Informática en la UCLM.
+> **NOTA PARA LA IA REDACTORA:** Este documento es un briefing técnico completo del proyecto CryptoWorld tal como está implementado en mayo de 2026. Contiene el código real de los archivos más importantes, la justificación de cada decisión de diseño, y todos los detalles técnicos necesarios para redactar una memoria académica de TFG. No es necesario inferir nada—todo lo que existe en el proyecto está documentado aquí. El objetivo es una memoria académica formal para un TFG de Ingeniería Informática en la UCLM.
 
 ---
 
@@ -40,10 +40,10 @@
 
 **CryptoWorld** es una plataforma web de análisis de criptomonedas desarrollada como Trabajo de Fin de Grado. El proyecto combina un backend API REST con un frontend Single Page Application (SPA).
 
-### Funcionalidades implementadas (Abril 2026)
+### Funcionalidades implementadas (Mayo 2026 — v1.47.0)
 - Sistema de autenticación completo: registro, login, logout seguro
 - Verificación de email mediante token HMAC
-- Recuperación y cambio de contraseña
+- Recuperación y cambio de contraseña (con logging de depuración en dev)
 - Autenticación de Doble Factor (2FA) mediante TOTP (compatible con Google Authenticator)
 - **Sincronización de catálogo de activos desde CoinGecko** (top N por market cap, logos, precios)
 - **Datos OHLCV reales con cadena de fuentes** (Strategy Pattern: Binance → CoinGecko fallback → HTTP 404)
@@ -54,13 +54,19 @@
 - **Análisis técnico implementado con datos reales**: RSI, MACD, Bollinger, MA, EMA, SAR, señales multi-indicador, backtesting y predicción
 - **Badge de fuente de datos**: el frontend indica visualmente si el gráfico usa datos de Binance o CoinGecko
 - **Indicadores de volumen desactivados automáticamente** cuando la fuente es CoinGecko (API no provee volumen)
+- **Celery + Redis**: sincronización periódica de mercado y evaluación de alertas de forma asíncrona
+- **Feed de noticias real** (CryptoCompare News API con categorías, sentimiento y búsqueda)
+- **Métricas on-chain BTC** (Blockchain.com Charts API: hashrate, transacciones, fees, mempool, etc.)
+- **Panel MultiChain** (Blockchair API: estadísticas instantáneas de 10 blockchains: BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR)
+- **Portfolio personal con PnL**: historial de trades BUY/SELL, posiciones LONG y SHORT abiertas, cálculo de PnL por posición y global
+- **Posiciones SHORT nativas**: SELL sin compra previa genera posición en descubierto con PnL invertido (gana cuando el precio baja)
+- **KPIs diferenciados LONG/SHORT**: en el resumen del portfolio se muestra capital LONG invertido y exposición SHORT por separado
+- **Badges visuales LONG/SHORT**: cada posición muestra un badge verde (LONG) o naranja (SHORT) con sublabels contextuales
+- **Sistema de alertas**: crear, listar y eliminar alertas de precio por activo con condición ABOVE/BELOW
 
 ### Funcionalidades pendientes (roadmap)
-- Gestión de portfolio personal
-- Sistema de alertas configurables
-- Noticias y sentimiento (feed real, actualmente 3 noticias fijas)
-- Métricas on-chain (datos reales, actualmente stub)
 - Historial de análisis ejecutados por usuario
+- Notificaciones push/email cuando se dispara una alerta
 
 ---
 
@@ -1247,7 +1253,18 @@ POST /api/auth/2fa/disable/ { "totp_code": "123456" }
 
 ## 6. INFRAESTRUCTURA DOCKER Y DESPLIEGUE
 
-El sistema completo corre en 4 contenedores Docker orquestados con Docker Compose v2.
+El sistema completo corre en **6 contenedores Docker** orquestados con Docker Compose v2 (PostgreSQL, Redis, backend Django, Celery worker, Celery beat, y frontend Nginx).
+
+**Servicios activos:**
+| Contenedor | Imagen/Build | Puerto | Rol |
+|---|---|---|---|
+| `cryptoworld_db` | postgres:16-alpine | 5432 | Base de datos PostgreSQL |
+| `cryptoworld_redis` | redis:7-alpine | — (interno) | Broker de mensajes para Celery |
+| `cryptoworld_backend` | backend/Dockerfile | 8000 | API Django 5.0.6 + DRF |
+| `cryptoworld_celery` | backend/Dockerfile | — | Worker Celery (tareas async) |
+| `cryptoworld_beat` | backend/Dockerfile | — | Celery Beat (tareas periódicas) |
+| `cryptoworld_frontend` | frontend/Dockerfile | 5173 | SPA React compilada, servida por Nginx |
+| `cryptoworld_pgadmin` | dpage/pgadmin4 | 5050 | Herramienta de administración de BD |
 
 **`docker-compose.yml` — estructura completa:**
 ```yaml
@@ -1262,14 +1279,19 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     volumes:
-      - postgres_data:/var/lib/postgresql/data  # Datos persistentes entre reinicios
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 10s
       timeout: 5s
-      retries: 5  # Backend no arranca hasta que Postgres esté listo
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: cryptoworld_redis
+    restart: unless-stopped
 
   backend:
     build:
@@ -1280,22 +1302,60 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings
-      DB_HOST: postgres  # Nombre del servicio, no localhost
+      DB_HOST: postgres
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/src:/app/src     # Hot-reload: cambios en código sin rebuild
+      - ./backend/src:/app/src
       - ./backend/tests:/app/tests
       - ./backend/pytest.ini:/app/pytest.ini
     depends_on:
       postgres:
-        condition: service_healthy  # Espera al healthcheck de Postgres
+        condition: service_healthy
+      redis:
+        condition: service_started
     command: >
       sh -c "
         cd src &&
         python manage.py migrate --noinput &&
         python manage.py runserver 0.0.0.0:8000
       "
+
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_celery
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+    volumes:
+      - ./backend/src:/app/src
+    depends_on:
+      - backend
+      - redis
+    command: >
+      sh -c "cd src && celery -A config worker --loglevel=info"
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cryptoworld_beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: postgres
+    volumes:
+      - ./backend/src:/app/src
+    depends_on:
+      - backend
+      - redis
+    command: >
+      sh -c "cd src && celery -A config beat --loglevel=info"
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -1312,9 +1372,7 @@ services:
       dockerfile: Dockerfile
     container_name: cryptoworld_frontend
     ports:
-      - "5173:5173"  # dev server de Vite
-    volumes:
-      - ./frontend/src:/app/src  # Hot-reload del frontend
+      - "5173:5173"
 
 volumes:
   postgres_data:
@@ -1323,8 +1381,10 @@ volumes:
 **Puntos clave del diseño Docker:**
 - `depends_on: condition: service_healthy` garantiza que Django no arranca antes de que PostgreSQL esté listo y aceptando conexiones
 - Los volúmenes montados (`./backend/src:/app/src`) permiten hot-reload en desarrollo sin reconstruir la imagen
-- Variables de entorno en `.env` (no en el repositorio): `SECRET_KEY`, `DB_PASSWORD`, etc.
+- El frontend se compila en tiempo de build (Vite build) y es servido por **Nginx** como bundle estático. Cualquier cambio en `.tsx`/`.ts` requiere `docker compose build frontend` + recrear el contenedor.
+- Variables de entorno en `.env` (no en el repositorio): `SECRET_KEY`, `DB_PASSWORD`, `CELERY_BROKER_URL`, etc.
 - El comando de arranque del backend ejecuta `migrate` automáticamente en cada inicio
+- Redis actúa como broker de Celery (`CELERY_BROKER_URL=redis://redis:6379/0`); los workers y el beat se conectan a él para recibir y planificar tareas
 
 **Variables de entorno (`.env.example`):**
 ```env
@@ -1339,6 +1399,10 @@ DB_PORT=5432
 CORS_ALLOWED_ORIGINS=http://localhost:5173 http://127.0.0.1:5173
 EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 FRONTEND_URL=http://localhost:5173
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+CRYPTOCOMPARE_API_KEY=optional_key_here
+COINGECKO_API_KEY=optional_key_here
 ```
 
 ---
@@ -1788,7 +1852,7 @@ class TestAssetsEndpoint:
 
 ## 9. BASE DE DATOS: MODELO RELACIONAL
 
-**5 tablas principales** en PostgreSQL, más las tablas internas de Django y SimpleJWT:
+**7 tablas principales** en PostgreSQL, más las tablas internas de Django y SimpleJWT:
 
 ```
 ┌─────────────────────────────────────┐
@@ -1805,7 +1869,7 @@ class TestAssetsEndpoint:
 │  totp_secret         ← migración 02 │
 │  is_2fa_enabled      ← migración 02 │
 └────────────┬────────────────────────┘
-             │ 1:N (FK en portfolio_assets)
+             │ 1:N
 ┌────────────▼────────────────────────┐
 │  crypto_assets                      │
 │  ─────────────────────────────────  │
@@ -1842,17 +1906,6 @@ class TestAssetsEndpoint:
 │  timestamp                          │
 └─────────────────────────────────────┘
 ┌─────────────────────────────────────┐
-│  portfolio_assets     ← migración 03│
-│  ─────────────────────────────────  │
-│  id (PK)                            │
-│  user_id (FK → users)               │
-│  asset_symbol                       │
-│  quantity (Decimal 20,8)            │
-│  purchase_value_usd (Decimal 20,2)  │
-│  current_value_usd (Decimal 20,2)   │
-│  UNIQUE(user_id, asset_symbol)      │
-└─────────────────────────────────────┘
-┌─────────────────────────────────────┐
 │  analysis_executions                │
 │  ─────────────────────────────────  │
 │  id (PK)                            │
@@ -1862,6 +1915,35 @@ class TestAssetsEndpoint:
 │  result (JSONField)                 │
 │  created_at, updated_at             │
 └─────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│  trade_history         ← migración 04│
+│  ─────────────────────────────────  │
+│  id (PK)                            │
+│  user_id (FK → users)               │
+│  asset_symbol                       │
+│  trade_type ("BUY" | "SELL")        │
+│  quantity (Decimal 20,8)            │
+│  price_usd (Decimal 20,8)           │
+│  timestamp                          │
+│                                     │
+│  El motor de portfolio usa esta     │
+│  tabla para calcular posiciones     │
+│  abiertas LONG/SHORT y PnL.         │
+└─────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│  price_alerts          ← migración 04│
+│  ─────────────────────────────────  │
+│  id (PK)                            │
+│  user_id (FK → users)               │
+│  asset_symbol                       │
+│  condition ("ABOVE" | "BELOW")      │
+│  target_price (Decimal 20,8)        │
+│  is_active (Boolean)                │
+│  created_at                         │
+│                                     │
+│  Celery Beat evalúa periódicamente  │
+│  alertas activas y notifica.        │
+└─────────────────────────────────────┘
 ```
 
 **Migraciones aplicadas:**
@@ -1869,7 +1951,8 @@ class TestAssetsEndpoint:
 |---|---|
 | `core/migrations/0001_initial.py` | Crea las 4 tablas base: users, crypto_assets, market_data_snapshots, analysis_executions |
 | `core/migrations/0002_user_auth_fields.py` | Añade is_email_verified, totp_secret, is_2fa_enabled a la tabla users |
-| `core/migrations/0003_add_portfolio_and_expand_market_models.py` | Crea portfolio_assets; añade coingecko_id, logo_url, asset_address, decimals a crypto_assets; expande market_data_snapshots con métricas de mercado completas |
+| `core/migrations/0003_add_portfolio_and_expand_market_models.py` | Añade coingecko_id, logo_url, asset_address, decimals a crypto_assets; expande market_data_snapshots con métricas de mercado completas |
+| `core/migrations/0004_add_trade_history_and_price_alerts.py` | Crea trade_history y price_alerts; elimina portfolio_assets (reemplazada por el motor de trade history) |
 | `token_blacklist/*` (12 migraciones) | Tablas OutstandingToken y BlacklistedToken para logout seguro |
 
 ---
@@ -1963,14 +2046,17 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 
 ## 11. ESTADO ACTUAL Y ROADMAP
 
-### Estado actual — Abril 2026 (v1.29.4 — Análisis Técnico Real + Strategy Pattern OHLCV)
+### Estado actual — Mayo 2026 (v1.47.0 — Portfolio LONG/SHORT + MultiChain + Noticias + Alertas)
 
 **Servicios Docker activos:**
 | Contenedor | Puerto | Estado |
 |---|---|---|
 | cryptoworld_db (PostgreSQL 16) | 5432 | Running (healthy) |
+| cryptoworld_redis (Redis 7) | — (interno) | Running |
 | cryptoworld_backend (Django 5.0.6) | 8000 | Running |
-| cryptoworld_frontend (React 18 + Vite) | 5173 | Running |
+| cryptoworld_celery (Celery worker) | — | Running |
+| cryptoworld_beat (Celery beat) | — | Running |
+| cryptoworld_frontend (React 18 + Nginx) | 5173 | Running |
 | cryptoworld_pgadmin | 5050 | Running |
 
 **APIs externas integradas:**
@@ -1979,6 +2065,9 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | Binance Public | `data-api.binance.vision` | Sin API key | ~600 req/min | OHLCV primario (velas con volumen) |
 | CoinGecko v3 | `api.coingecko.com/api/v3` | Opcional (demo key) | 30 req/min (free) | Catálogo de activos, métricas globales, OHLC fallback |
 | Alternative.me | `api.alternative.me/fng/` | Sin auth | Libre | Fear & Greed Index |
+| CryptoCompare | `min-api.cryptocompare.com` | API key opcional | 100k calls/mes (free) | Feed de noticias con categorías y sentimiento |
+| Blockchain.com Charts | `api.blockchain.info/charts` | Sin auth | Libre | Métricas on-chain BTC (hashrate, TXs, fees, mempool) |
+| Blockchair | `api.blockchair.com/{chain}/stats` | Sin auth | 10 req/min (free) | Estadísticas multi-chain: BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR |
 
 **Endpoints implementados y validados:**
 | Método | Ruta | Auth | Estado | Fuente |
@@ -2009,8 +2098,15 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | POST | `/api/analysis/backtest/` | Sí | ✅ **Datos reales** | Backtesting de 5 estrategias (RSI, MACD, Bollinger, SMA, EMA) |
 | GET | `/api/analysis/strategies/` | Sí | ✅ Funcional | Lista estática |
 | GET | `/api/market/overview/` | Sí | ✅ **Datos reales** | CoinGecko /global + Alternative.me |
-| GET | `/api/blockchain/metrics/` | Sí | ⚠️ Stub (datos sintéticos) | — |
-| GET | `/api/news/` | Sí | ⚠️ Stub (3 noticias fijas) | — |
+| GET | `/api/blockchain/metrics/` | Sí | ✅ **Datos reales** | Blockchain.com Charts API (BTC on-chain) |
+| GET | `/api/blockchain/multichain/` | Sí | ✅ **Datos reales** | Blockchair (10 blockchains) |
+| GET | `/api/news/` | Sí | ✅ **Datos reales** | CryptoCompare News API |
+| GET | `/api/portfolio/` | Sí | ✅ Funcional | DB (trade_history) |
+| POST | `/api/portfolio/trade/` | Sí | ✅ Funcional | DB |
+| DELETE | `/api/portfolio/trade/{id}/` | Sí | ✅ Funcional | DB |
+| GET | `/api/alerts/` | Sí | ✅ Funcional | DB |
+| POST | `/api/alerts/` | Sí | ✅ Funcional | DB |
+| DELETE | `/api/alerts/{id}/` | Sí | ✅ Funcional | DB |
 | GET | `/api/admin/users/` | Admin | ✅ Funcional | DB |
 | POST | `/api/admin/users/` | Admin | ✅ Funcional | DB |
 | PATCH | `/api/admin/users/{id}/` | Admin | ✅ Funcional | DB |
@@ -2022,134 +2118,126 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | Domain — Entities (4 entidades) | ✅ Completo |
 | Domain — Repository interfaces | ✅ Completo |
 | Domain — Value Objects | ✅ Completo |
-| Domain — Services (técnico + usuario) | ✅ Completo (TechnicalAnalysisService con indicadores reales) |
-| Application — 24 casos de uso | ✅ Auth completo, market data real, OHLCV real (Strategy Pattern), análisis técnico real |
-| Application — DTOs | ✅ Completo (auth, asset, market_intelligence con campo `source`) |
-| Infrastructure — ORM Models | ✅ Completo (5 modelos, 3 migraciones) |
+| Domain — Services (técnico + usuario) | ✅ Completo |
+| Application — 35+ casos de uso | ✅ Auth, market, OHLCV (Strategy), análisis técnico, portfolio, alertas, noticias, on-chain |
+| Application — DTOs | ✅ Completo (auth, asset, market, portfolio con LONG/SHORT) |
+| Infrastructure — ORM Models | ✅ Completo (7 modelos principales, 4 migraciones) |
 | Infrastructure — Repositories impl | ✅ Completo |
-| Infrastructure — External APIs | ✅ **BinancePublicClient + CoinGeckoClient** (incl. `get_ohlc()`) |
-| Interfaces — API (31 endpoints) | ✅ Completo |
+| Infrastructure — External APIs | ✅ Binance, CoinGecko, Alternative.me, CryptoCompare, Blockchain.com, Blockchair |
+| Infrastructure — Celery / Redis | ✅ Completo (worker + beat; tarea de evaluación de alertas) |
+| Interfaces — API (38+ endpoints) | ✅ Completo |
 | Frontend — Auth flow | ✅ Completo |
-| Frontend — Dashboard con datos reales | ✅ **Completo (overview + tabla activos + logos)** |
-| Frontend — Gráfico OHLCV profesional | ✅ **KLineChart v9 (15 herramientas, 20+ indicadores, badge de fuente)** |
-| Frontend — Panel de análisis técnico | ✅ **Completo (señales, RSI, MACD, predicción, patrones, backtesting)** |
-| Frontend — Panel Admin con sync | ✅ **Completo (feedback de resultados)** |
+| Frontend — Dashboard con datos reales | ✅ Completo (overview + tabla activos + logos) |
+| Frontend — Gráfico OHLCV profesional | ✅ KLineChart v9 (15 herramientas, 20+ indicadores, badge fuente) |
+| Frontend — Panel de análisis técnico | ✅ Completo (señales, RSI, MACD, predicción, patrones, backtesting) |
+| Frontend — Panel Admin con sync | ✅ Completo (feedback de resultados, enlace en azul) |
+| Frontend — Portfolio LONG/SHORT | ✅ Completo (KPIs condicionales, badges, sublabels contextuales) |
+| Frontend — Alertas | ✅ Completo (crear, listar, eliminar) |
+| Frontend — Noticias | ✅ Completo (CryptoCompare, categorías, sentimiento) |
+| Frontend — Blockchain on-chain + MultiChain | ✅ Completo (Blockchain.com + selector de 10 chains Blockchair) |
 | Tests unitarios | ✅ Implementados y pasando |
 | Tests integración | ✅ Implementados y pasando |
 
-### Validación de la integración de datos reales (Abril 2026)
+### Archivos nuevos y modificados — Fase Celery + Noticias + On-chain + Portfolio + Alertas (v1.30–v1.47)
 
-Pruebas ejecutadas contra los contenedores Docker en ejecución:
-
-| Test | Resultado |
-|---|---|
-| `POST /api/admin/market/sync/` con `per_page=20` | `assets_created: 20, errors: []` |
-| `GET /api/market/overview/` | `total_market_cap_usd: "2531262966084"`, `fear_greed_index: 17` |
-| `GET /api/assets/BTC/ohlcv/?interval=1h&limit=10` | `{"source":"binance","candles":10}`, precio ~$71.534 |
-| `GET /api/assets/HYPE/ohlcv/?interval=1h&limit=48` | `{"source":"coingecko","candles":48}`, precio ~$38-39 (antes devolvía $3.200 falso) |
-| `GET /api/assets/BGB/ohlcv/?interval=1h&limit=48` | `{"source":"coingecko","candles":48}`, precio ~$1.89 (antes crasheaba) |
-| `GET /api/assets/FAKECOIN/ohlcv/` | HTTP 404 (antes devolvía datos inventados) |
-| `GET /api/analysis/signals/?symbol=HYPE&interval=1h` | `{"data_source":"coingecko","verdict":"COMPRA","rsi":65.84}` |
-
-### Archivos nuevos y modificados (Fase de datos reales + gráficos)
-
-#### Backend — Nuevos adaptadores de APIs externas
+#### Backend — Infraestructura Celery
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
-| `infrastructure/external_apis/binance_client.py` | Nuevo | Cliente HTTP para Binance Public API. Método `get_klines()` → OHLCV con volumen. Sin API key. |
-| `infrastructure/external_apis/coingecko_client.py` | Nuevo | Cliente HTTP para CoinGecko API v3. Métodos `get_markets()` (catálogo) y `get_global()` (métricas globales). Sesión con API key opcional. |
+| `config/celery.py` | Nuevo | Configuración de la aplicación Celery, integración con Django |
+| `config/settings.py` | Modificado | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_BEAT_SCHEDULE` |
+| `core/tasks.py` | Nuevo | Tarea Celery `evaluate_price_alerts()`: evalúa alertas activas contra precio actual y notifica |
 
-#### Backend — Nuevos casos de uso
-
-| Archivo | Tipo | Descripción |
-|---|---|---|
-| `application/use_cases/sync_market_data.py` | Nuevo | `SyncMarketDataUseCase` — Obtiene top N de CoinGecko, hace upsert en `CryptoAsset` y crea `MarketDataSnapshot`. Devuelve `SyncResultDTO` con estadísticas. |
-| `application/use_cases/get_asset_ohlcv.py` | Reescrito | `GetAssetOhlcvUseCase` — Ahora usa `BinancePublicClient` para datos OHLCV reales (con volumen), con fallback a datos sintéticos. |
-| `application/use_cases/get_market_overview.py` | Reescrito | `GetMarketOverviewUseCase` — Ahora usa CoinGecko `/global` + Alternative.me Fear & Greed Index, con fallbacks. |
-
-#### Backend — Archivos modificados
-
-| Archivo | Cambio |
-|---|---|
-| `interfaces/api/admin_views.py` | `AdminMarketSyncView` conectado al `SyncMarketDataUseCase` real. Validación de `per_page`. |
-| `config/settings.py` | Añadido `COINGECKO_API_KEY` (variable de entorno opcional). |
-| `requirements.txt` | Añadido `requests==2.32.3`. |
-
-#### Frontend — Nuevos componentes y servicios
+#### Backend — APIs externas nuevas
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
-| `components/OhlcvChart.tsx` | Nuevo | Componente de gráfico con KLineChart v9. 15 herramientas de dibujo, 20+ indicadores técnicos, resizable, dark theme, badge de fuente de datos. |
-| `services/marketService.ts` | Nuevo | Servicio con `getOhlcv()` (devuelve `OhlcvResponse` con `source` + `candles`) y `getMarketOverview()`. |
+| `infrastructure/external_apis/cryptocompare_client.py` | Nuevo | Cliente CryptoCompare News API. Método `get_news(categories, lang)` |
+| `infrastructure/external_apis/blockchain_charts_client.py` | Nuevo | Cliente Blockchain.com Charts API. Métricas on-chain BTC (hashrate, tx-count, fees, mempool, etc.) |
+| `infrastructure/external_apis/blockchair_client.py` | Nuevo | Cliente Blockchair. Método `get_stats(symbol)` → normaliza hashrate H/s→TH/s, burned_24h wei→ETH |
 
-#### Frontend — Archivos modificados
+#### Backend — Casos de uso nuevos
 
-| Archivo | Cambio |
-|---|---|
-| `package.json` | Dependencia `klinecharts ^9` (reemplaza `lightweight-charts`). |
-| `pages/AssetDetailPage.tsx` | Integrado `OhlcvChart` entre header y panel de análisis. Logos reales cuando disponibles. |
-| `pages/DashboardPage.tsx` | Widget de Market Overview (4 tarjetas: cap total, vol 24h, BTC dominance, Fear & Greed). Logos reales en la tabla de activos. |
-| `pages/AdminDashboardPage.tsx` | Botón de sync con loading state y tarjeta de resultados (created/updated/snapshots/errors). |
-| `services/analysisService.ts` | Interfaz `CryptoAsset` ampliada con campo `logo_url`. |
-
-### Archivos nuevos y modificados — Fase Strategy Pattern OHLCV + Análisis Técnico (Abril 2026)
-
-#### Backend — Casos de uso nuevos / reescritos
-
-| Archivo | Tipo | Descripción |
+| Archivo | Clase | Descripción |
 |---|---|---|
-| `application/use_cases/get_asset_ohlcv.py` | Reescrito | Strategy Pattern: `_try_binance()` → `_try_coingecko()` → `OhlcvNotAvailableError`. Elimina `_synthetic_fallback()`. Devuelve `(candles, source)`. |
-| `application/use_cases/ohlcv_fetcher.py` | Nuevo | Servicio compartido `fetch_ohlcv_dataframe()`. Devuelve `OhlcvFetchResult(df, source)`. Usado por los 5 casos de uso de análisis. |
-| `application/use_cases/run_analysis.py` | Reescrito | Ya no es stub. Usa `fetch_ohlcv_dataframe()` + `calculate_indicator()`. Incluye `data_source` en resultado. |
-| `application/use_cases/get_signals_dashboard.py` | Reescrito | Panel multi-indicador. Usa `fetch_ohlcv_dataframe()`. Incluye `data_source` en dashboard. |
-| `application/use_cases/predict_price.py` | Reescrito | Predicción con Random Forest (scikit-learn). Usa `fetch_ohlcv_dataframe()`. |
-| `application/use_cases/detect_patterns.py` | Reescrito | Detección de 12 patrones de velas japonesas. Usa `fetch_ohlcv_dataframe()`. |
-| `application/use_cases/run_backtest.py` | Reescrito | Backtesting de 5 estrategias (RSI, MACD, Bollinger, SMA, EMA). Usa `fetch_ohlcv_dataframe()`. |
+| `use_cases/get_news_feed.py` | `GetNewsFeedUseCase` | Obtiene noticias de CryptoCompare; soporta filtro por categoría |
+| `use_cases/get_onchain_metrics.py` | `GetOnchainMetricsUseCase` | Obtiene métricas on-chain BTC de Blockchain.com Charts |
+| `use_cases/get_multichain_stats.py` | `GetMultiChainStatsUseCase` | Agrega estadísticas de los 10 chains de Blockchair |
+| `use_cases/get_portfolio.py` | `GetPortfolioUseCase` | Calcula posiciones abiertas LONG/SHORT y PnL completo desde trade_history |
+| `use_cases/add_trade.py` | `AddTradeUseCase` | Registra operación BUY o SELL (SELL sin BUY previo crea posición SHORT) |
+| `use_cases/delete_trade.py` | `DeleteTradeUseCase` | Elimina un trade del historial por ID |
+| `use_cases/get_alerts.py` | `GetAlertsUseCase` | Lista alertas activas del usuario |
+| `use_cases/create_alert.py` | `CreateAlertUseCase` | Crea alerta de precio con condición ABOVE/BELOW |
+| `use_cases/delete_alert.py` | `DeleteAlertUseCase` | Elimina una alerta por ID |
+| `use_cases/request_password_reset.py` | Modificado | Añade logging de debug para emails en dev |
 
-#### Backend — Clientes externos modificados
+#### Backend — Modelos ORM (migración 0004)
 
-| Archivo | Cambio |
-|---|---|
-| `infrastructure/external_apis/coingecko_client.py` | Nuevo método `get_ohlc(coin_id, vs_currency, days)` → `GET /coins/{id}/ohlc`, granularidad automática. |
+| Modelo | Tabla | Descripción |
+|---|---|---|
+| `TradeHistory` | `trade_history` | Registro de cada operación BUY/SELL: usuario, símbolo, tipo, cantidad, precio, timestamp |
+| `PriceAlert` | `price_alerts` | Alerta de precio: usuario, símbolo, condición, precio objetivo, is_active |
 
-#### Backend — DTOs y serializadores modificados
-
-| Archivo | Cambio |
-|---|---|
-| `application/dto/market_intelligence_dto.py` | `OhlcvCandleOutputDTO` gana campo `source: str = "binance"` como séptimo campo. |
-| `interfaces/api/serializers.py` | `OhlcvCandleSerializer` gana campo `source = serializers.CharField()`. |
-| `interfaces/api/views.py` | `AssetOhlcvView.get()`: captura `OhlcvNotAvailableError` → HTTP 404; desempaqueta `(candles, source)`; devuelve `{"source": ..., "candles": [...]}`. |
-
-#### Frontend — Modificados para Strategy Pattern
+#### Backend — DTOs modificados
 
 | Archivo | Cambio |
 |---|---|
-| `services/marketService.ts` | Nueva interfaz `OhlcvResponse { source: string; candles: OhlcvCandle[] }`. `getOhlcv()` devuelve `Promise<OhlcvResponse>`. `OhlcvCandle` gana campo `source`. |
-| `components/OhlcvChart.tsx` | Badge de fuente (verde=Binance, ámbar=CoinGecko). Indicadores de volumen (VOL, OBV, PVT, VR, EMV) desactivados automáticamente cuando `source=coingecko`. Error 404 con mensaje descriptivo. |
+| `dto/portfolio_dto.py` | `PortfolioPositionDTO` gana `position_type: str`. `PortfolioSummaryDTO` gana `long_count`, `short_count`, `total_long_invested_usd`, `total_short_exposure_usd` |
+| `dto/alerts_dto.py` | Nuevos DTOs `PriceAlertDTO`, `CreateAlertInputDTO` |
 
-### Patrón Adapter aplicado a las APIs externas
+#### Backend — Serializers y vistas modificados
 
-Los clientes de APIs externas (`BinancePublicClient`, `CoinGeckoClient`) siguen el **Adapter Pattern** de Arquitectura Hexagonal:
+| Archivo | Cambio |
+|---|---|
+| `interfaces/api/serializers.py` | `PortfolioPositionSerializer` gana campo `position_type` |
+| `interfaces/api/views.py` | `PortfolioView` devuelve los 4 nuevos campos del summary; nuevas vistas para blockchain multichain |
+| `interfaces/api/urls.py` | Rutas `/portfolio/`, `/portfolio/trade/`, `/alerts/`, `/blockchain/multichain/`, `/news/` |
+
+#### Frontend — Páginas nuevas/modificadas
+
+| Archivo | Cambio |
+|---|---|
+| `pages/PortfolioPage.tsx` | KPIs condicionales LONG-only vs mixed; badges LONG/SHORT; sublabels contextuales en columnas; "Valor posición" como header |
+| `pages/AlertsPage.tsx` | Nueva: crear, listar y eliminar alertas con condición y activo |
+| `pages/NewsPage.tsx` | Nueva: feed de noticias CryptoCompare con categorías y sentimiento |
+| `pages/BlockchainPage.tsx` | Nuevo panel MultiChain: selector de 10 cadenas + grid de estadísticas Blockchair |
+| `components/AppShell.tsx` | Enlace "Panel Admin" cambiado a color azul |
+| `components/Navbar.tsx` | Ídem |
+
+#### Frontend — Servicios nuevos/modificados
+
+| Archivo | Cambio |
+|---|---|
+| `services/portfolioService.ts` | `PortfolioPosition` gana `position_type`; `PortfolioSummary` gana 4 campos nuevos |
+| `services/blockchainService.ts` | Interfaz `MultiChainStats` y llamada al endpoint multichain |
+| `services/newsService.ts` | Nuevo: interfaz `NewsArticle`, llamada al feed de noticias |
+| `services/alertsService.ts` | Nuevo: CRUD de alertas |
+
+### Lógica de portfolio LONG/SHORT (v1.43–v1.47)
+
+El motor de portfolio calcula posiciones abiertas a partir del historial de trades sin almacenar posiciones explícitamente:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Capa de Aplicación (use_cases/)                     │
-│                                                      │
-│  GetAssetOhlcvUseCase ◄── BinancePublicClient        │
-│  SyncMarketDataUseCase ◄── CoinGeckoClient           │
-│  GetMarketOverviewUseCase ◄── CoinGeckoClient        │
-│                              + Alternative.me (HTTP)  │
-└─────────────────────────────────────────────────────┘
+Para cada símbolo del usuario:
+  net_qty = suma(BUY.quantity) - suma(SELL.quantity)
+
+  Si net_qty > 0  →  LONG
+    invested   = suma(BUY.quantity * BUY.price)  / BUY.total_qty * net_qty
+    current    = net_qty * current_price
+    pnl        = current - invested
+
+  Si net_qty < 0  →  SHORT (posición en descubierto)
+    short_qty  = abs(net_qty)
+    received   = suma(SELL.quantity * SELL.price) sin cobertura
+    buyback    = short_qty * current_price        (coste recompra)
+    pnl        = received - buyback
+
+  Si net_qty == 0  →  posición cerrada, ignorada
 ```
 
-Cada cliente encapsula:
-- URL base y configuración de timeout
-- Sesión HTTP reutilizable (`requests.Session`)
-- Manejo de errores específico (`BinanceClientError`, `CoinGeckoClientError`)
-- Logging estructurado
-
-Si en el futuro se cambia Binance por otro proveedor OHLCV, solo se sustituye el adaptador; el caso de uso y el frontend no cambian.
+**KPIs diferenciados en el resumen del portfolio:**
+- Si solo hay posiciones LONG: layout clásico de 4 tarjetas (Capital invertido / Valor actual / PnL USD / PnL %)
+- Si hay posiciones LONG y SHORT: tarjeta LONG (borde verde, capital invertido + nº posiciones) + tarjeta SHORT (borde naranja, exposición actual + coste de recompra) + PnL USD + PnL %
 
 ### Roadmap de fases futuras
 
@@ -2160,52 +2248,14 @@ Si en el futuro se cambia Binance por otro proveedor OHLCV, solo se sustituye el
 - ~~Sprint 2 — Análisis técnico real (RSI, MACD, Bollinger, señales, backtesting, predicción)~~ ✅
 - ~~Sprint 2b — Strategy Pattern OHLCV (eliminar datos sintéticos, cobertura CoinGecko)~~ ✅
 - ~~Sprint 3 — Frontend con gráficos profesionales (KLineChart v9, herramientas de dibujo, badge fuente)~~ ✅
+- ~~Sprint 4 — Portfolio personal LONG/SHORT con PnL + Sistema de alertas~~ ✅
+- ~~Sprint 5a — Feed de noticias real (CryptoCompare)~~ ✅
+- ~~Sprint 5b — Métricas on-chain reales (Blockchain.com Charts + Blockchair MultiChain)~~ ✅
+- ~~Sprint 5c — Celery + Redis para tareas asíncronas y evaluación periódica de alertas~~ ✅
 
-**Próximo — Sprint 4: Portfolio y Alertas**
-- CRUD de portfolio personal (posiciones, precio de entrada, P&L)
-- Sistema de alertas (precio objetivo, % de cambio)
-- Historial de análisis ejecutados por usuario
-
-**Sprint 5 — Datos restantes**
-- Sustituir stub de `get_news_feed.py` por feed real (GDELT, CryptoPanic o RSS)
-- Sustituir stub de `get_onchain_metrics.py` por datos reales (CoinMetrics, Glassnode)
-- Scheduling automático del sync de mercado (cron/Celery)
-
-### Proceso seguido en la fase v1.29.4 (Abril 2026)
-
-Se combina la implementación del análisis técnico real con la resolución del problema de cobertura de datos OHLCV:
-
-1. **Detección del problema de datos sintéticos**
-   - Se identificó que tokens no listados en Binance Spot (HYPE, BGB, etc.) recibían precios inventados del método `_synthetic_fallback()`.
-   - Un análisis técnico sobre precios falsos carece de valor; el problema tenía que resolverse antes de implementar los indicadores.
-
-2. **Diseño e implementación del Strategy Pattern (Infrastructure + Application)**
-   - Se añadió `get_ohlc()` a `CoinGeckoClient` (método nuevo en la capa de infraestructura).
-   - Se reescribió `GetAssetOhlcvUseCase` con la cadena Binance → CoinGecko → `OhlcvNotAvailableError`.
-   - Se añadió el campo `source` al DTO `OhlcvCandleOutputDTO` para propagar la procedencia de los datos.
-
-3. **Servicio compartido `ohlcv_fetcher.py` (Application)**
-   - Extraída la lógica de la cadena en un servicio reutilizable que devuelve `OhlcvFetchResult(df, source)`.
-   - Se evita duplicar ~60 líneas en 5 casos de uso distintos.
-
-4. **Implementación real del análisis técnico (Application + Domain)**
-   - `RunAnalysisUseCase`, `GetSignalsDashboardUseCase`, `PredictPriceUseCase`, `DetectPatternsUseCase` y `RunBacktestUseCase` fueron reescritos para usar `fetch_ohlcv_dataframe()`.
-   - `TechnicalAnalysisService` en la capa de dominio calcula los indicadores sobre el DataFrame de pandas.
-
-5. **Actualización de la capa de interfaces (Interfaces)**
-   - `AssetOhlcvView` actualizada para manejar `OhlcvNotAvailableError` → HTTP 404 y devolver `{source, candles}`.
-   - Serializer `OhlcvCandleSerializer` actualizado con campo `source`.
-
-6. **Actualización del frontend**
-   - Badge de fuente en la barra de herramientas del gráfico.
-   - Desactivación automática de indicadores dependientes de volumen cuando `source=coingecko`.
-   - Mensaje descriptivo en caso de HTTP 404 (activo no disponible).
-
-7. **Verificación de la transparencia de datos confirmada:**
-   - BTC: `source=binance`, 10 velas, precio real ~$71.534 ✅
-   - HYPE: `source=coingecko`, 48 velas, precio real ~$38 (antes: $3.200 falso) ✅
-   - BGB: `source=coingecko`, 48 velas, precio real ~$1.89 (antes: crash) ✅
-   - FAKECOIN: HTTP 404 (antes: datos inventados) ✅
+**Próximo — Sprint 6: Historial y notificaciones**
+- Historial de análisis ejecutados por usuario (persistencia en `analysis_executions`)
+- Notificaciones push/email cuando se dispara una alerta de precio
 
 ---
 
@@ -2226,538 +2276,15 @@ Se combina la implementación del análisis técnico real con la resolución del
 | 11 | OHLCV | Tokens HYPE/BGB devuelven precio `$3.200` falso | `GetAssetOhlcvUseCase._synthetic_fallback()` generaba velas inventadas cuando Binance no listaba el par | Eliminar `_synthetic_fallback()` e implementar Strategy Pattern: Binance → CoinGecko OHLC → `OhlcvNotAvailableError` |
 | 12 | Encoding | `replace_string_in_file` no encuentra el texto en `views.py` | El archivo tiene BOM UTF-8 (`EF BB BF`) que PowerShell preserva pero la herramienta de edición no reconoce | Editar mediante script Python con `open(f, 'r', encoding='utf-8-sig')` y `write_text(encoding='utf-8-sig')` |
 | 13 | CoinGecko | Granularidad OHLC no configurable en plan gratuito | La API free fuerza granularidad automática: 30 min (1-2d), 4h (3-30d), 4 días (31+d) | Mapear `interval + limit → days` con `_interval_limit_to_days()` y documentar la limitación en el badge del frontend |
+| 14 | Portfolio | KPI cards mostraban `$NaN` | 4 campos nuevos del DTO (`long_count`, `short_count`, `total_long_invested_usd`, `total_short_exposure_usd`) calculados en Python pero nunca incluidos en el diccionario de respuesta de `PortfolioView` | Añadir los 4 campos al `return Response(...)` en `views.py` |
+| 15 | Portfolio | Badge LONG/SHORT incorrecto (BTC SHORT aparecía como LONG) | Campo `position_type` presente en `PortfolioPositionDTO` pero ausente en `PortfolioPositionSerializer` | Añadir `position_type = serializers.CharField(default="LONG")` al serializer |
+| 16 | Portfolio | Columna "Valor recompra" confusa para posiciones LONG | El mismo header describía conceptos distintos según el tipo de posición | Renombrar a "Valor posición" con sublabels contextuales por celda: "valor actual" (LONG) / "coste recompra" (SHORT) |
+| 17 | SELL sin BUY | `AddTradeUseCase` rechazaba SELL si no había BUY previo | Validación demasiado estricta que impedía crear posiciones SHORT | Eliminar la validación; un SELL sin compra previa crea una posición en descubierto (SHORT) |
+| 18 | Password reset | Email de recuperación no llegaba en dev y sin traza en logs | `RequestPasswordResetUseCase` no tenía logging; era difícil saber si el email se enviaba | Añadir `logger.debug()` para email no encontrado y `logger.info()` tras `send_mail()` |
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v1.29.4 — Abril 2026*  
-*Última actualización: abril de 2026*
+*Documento técnico completo del proyecto CryptoWorld — Estado v1.47.0 — Mayo 2026*  
+*Última actualización: mayo de 2026*
 
 <!-- FIN DEL DOCUMENTO -->
-
-#### Error 5: Error TypeScript en useAuth.ts — JSX en archivo .ts
-- **Síntoma:** `TS1005: '>' expected` en línea 101 de `useAuth.ts`
-- **Causa:** Se usaba sintaxis JSX (`<AuthContext.Provider>`) en un archivo `.ts` (sin extensión `.tsx`)
-- **Solución:** Reemplazar JSX por `React.createElement()` en `useAuth.ts`
-
-#### Error 6: TypeScript no reconoce `import.meta.env`
-- **Síntoma:** `TS2339: Property 'env' does not exist on type 'ImportMeta'`
-- **Causa:** Faltaba el archivo de declaraciones de tipos de Vite
-- **Solución:** Crear `frontend/src/vite-env.d.ts` con:
-  ```typescript
-  /// <reference types="vite/client" />
-  interface ImportMetaEnv { readonly VITE_API_URL: string }
-  interface ImportMeta { readonly env: ImportMetaEnv }
-  ```
-
-**Resultado de Fase 2:** `docker compose up --build` finaliza con éxito. Las tres imágenes Docker se construyen correctamente.
-
----
-
-### Fase 3 — Corrección del loop de reinicio del backend (Marzo 2026)
-
-#### Error 7: Backend en loop de reinicio — `AUTH_USER_MODEL refers to model 'core.User' that has not been installed`
-
-- **Síntoma:** El contenedor `cryptoworld_backend` reiniciaba indefinidamente. Al ejecutar `docker compose exec backend python src/manage.py migrate` respondía: `Container is restarting, wait until the container is running`
-
-- **Diagnóstico:** Log del contenedor mostraba:
-  ```
-  ImproperlyConfigured: AUTH_USER_MODEL refers to model 'core.User' that has not been installed
-  LookupError: App 'core' doesn't have a 'User' model.
-  ```
-
-- **Causa raíz:** Django descubre los modelos de una app cargando automáticamente el módulo `<app_label>.models`. Los modelos ORM del proyecto estaban en `core/infrastructure/persistence/models.py`, pero no existía `core/models.py`. Al no encontrar el modelo `User` bajo la app `core`, Django lanzaba `ImproperlyConfigured` en el arranque.
-
-- **Solución:** Crear `backend/src/core/models.py` como adaptador de importación:
-  ```python
-  from core.infrastructure.persistence.models import (
-      UserManager, User, CryptoAsset,
-      MarketDataSnapshot, AnalysisExecution,
-  )
-  ```
-  Este archivo no contiene lógica, solo reexporta los modelos para que el sistema de apps de Django los registre bajo la etiqueta `core`.
-
-- **Resultado:** Docker levanta completamente. Los tres contenedores (postgres, backend, frontend) quedan en estado `running`.
-
-#### Error 8: `relation "users" does not exist` — Falta directorio migrations
-
-- **Síntoma:** El backend levantaba (el error del `core/models.py` ya estaba resuelto), pero seguía en loop. El nuevo error en logs era:
-  ```
-  django.db.utils.ProgrammingError: relation "users" does not exist
-  ```
-
-- **Causa raíz:** La app `core` nunca había tenido ejecutado `makemigrations`, por lo que el directorio `core/migrations/` no existía. Django intentaba ejecutar `migrate` en el arranque (según el `command` del docker-compose.yml), fallaba porque no había archivos de migración, el proceso salía con código 1 y Docker reiniciaba el contenedor.
-
-- **Solución:** Generar las migraciones con un contenedor one-off (sin interrumpir los otros servicios). El volumen montado `./backend/src:/app/src` hace que los archivos se creen directamente en el host:
-  ```powershell
-  docker compose run --rm backend python src/manage.py makemigrations core
-  ```
-  Esto creó `backend/src/core/migrations/0001_initial.py` con las 4 tablas del modelo.
-
-- **Resultado:** Al reiniciar automáticamente, el backend detectó las migraciones, las aplicó a PostgreSQL (`core.0001_initial... OK`) y arrancó el servidor Django correctamente.
-
----
-
-### Fase 4 — Sistema de Autenticación Completo (Marzo 2026)
-
-**Objetivo:** Implementar el sistema de autenticación completo antes de la integración con APIs externas. Funcionalidades: logout seguro, verificación de email, recuperación de contraseña, cambio de contraseña y autenticación de doble factor (2FA/TOTP).
-
-#### 4.1 Diseño del sistema de autenticación
-
-Se optó por un enfoque de **seguridad por capas** siguiendo los mismos principios de Clean Architecture:
-
-- **Logout seguro:** blacklist del `refresh_token` mediante `rest_framework_simplejwt.token_blacklist`, invalidando el token en servidor en lugar de depender solo del lado cliente.
-- **Verificación de email:** tokens firmados con HMAC usando `django.contrib.auth.tokens.default_token_generator`. El token incluye el hash de la contraseña actual del usuario en su firma, lo que lo invalida automáticamente si la contraseña cambia.
-- **Recuperación de contraseña:** mismo mecanismo de token HMAC. Por seguridad, el endpoint **no revela** si el email existe en el sistema (respuesta idéntica en ambos casos), evitando ataques de enumeración de usuarios.
-- **2FA TOTP:** implementado según RFC 6238 usando `pyotp`. Compatible con Google Authenticator, Authy y cualquier app TOTP estándar.
-- **Flujo 2FA en dos pasos:** para no romper el flujo de login tradicional, se diseñó un token JWT especial de corta duración (`type=pre_2fa`, 5 minutos) que actúa como "prueba de contraseña válida" sin otorgar acceso completo:
-
-```
-POST /api/auth/login/ (email + password válidos, 2FA activo)
-  → { "requires_2fa": true, "pre_auth_token": "eyJ..." }
-                                       ↓ (5 min para completar)
-POST /api/auth/2fa/login/ (pre_auth_token + código TOTP)
-  → { "access_token": "...", "refresh_token": "..." }
-```
-
-#### 4.2 Cambios en el modelo de usuario
-
-Se añadieron tres campos al modelo `User` en `infrastructure/persistence/models.py`:
-
-```python
-is_email_verified = models.BooleanField(default=False)
-totp_secret       = models.CharField(max_length=64, null=True, blank=True)
-is_2fa_enabled    = models.BooleanField(default=False)
-```
-
-Y se propagaron a la entidad de dominio `UserEntity`:
-```python
-is_email_verified: bool = False
-totp_secret: Optional[str] = None
-is_2fa_enabled: bool = False
-```
-
-Migración generada: `0002_user_auth_fields.py`.
-
-También se añadieron métodos de conveniencia al repositorio `DjangoUserRepository`:
-- `set_email_verified(user_id)` — actualiza solo el campo `is_email_verified`
-- `set_password(user_id, raw_password)` — hashea y guarda nueva contraseña
-- `set_totp_secret(user_id, secret)` — guarda/borra el secreto TOTP
-- `set_2fa_enabled(user_id, enabled)` — activa/desactiva 2FA
-- `get_model_by_id(user_id)` — devuelve el modelo ORM directamente cuando es necesario
-
-#### 4.3 Casos de uso creados
-
-| Archivo | Clase | Responsabilidad |
-|---|---|---|
-| `logout.py` | `LogoutUseCase` | Blacklist del refresh_token vía SimpleJWT |
-| `send_verification_email.py` | `SendVerificationEmailUseCase` | Genera token HMAC + envía email de verificación |
-| `verify_email.py` | `VerifyEmailUseCase` | Valida token del link y marca `is_email_verified=True` |
-| `request_password_reset.py` | `RequestPasswordResetUseCase` | Genera token HMAC + envía email de recuperación |
-| `confirm_password_reset.py` | `ConfirmPasswordResetUseCase` | Valida token + aplica nueva contraseña |
-| `change_password.py` | `ChangePasswordUseCase` | Verifica contraseña actual + cambia a la nueva |
-| `setup_2fa.py` | `Setup2FAUseCase` | Genera secreto TOTP + QR base64 para el cliente |
-| `enable_2fa.py` | `Enable2FAUseCase` | Verifica primer código TOTP → activa 2FA |
-| `disable_2fa.py` | `Disable2FAUseCase` | Verifica código TOTP → desactiva 2FA y borra secreto |
-| `verify_2fa_login.py` | `Verify2FALoginUseCase` + `PreAuthToken` | Valida `pre_auth_token` + TOTP → emite tokens completos |
-
-#### 4.4 Configuración de email
-
-En desarrollo, Django usa `console.EmailBackend` que imprime el email completo en los logs de Docker (subject, destinatario, cuerpo y link), sin necesidad de un servidor SMTP. Para producción se puede configurar vía variables de entorno:
-
-```env
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-EMAIL_HOST=smtp.ejemplo.com
-EMAIL_PORT=587
-EMAIL_HOST_USER=noreply@cryptoworld.com
-EMAIL_HOST_PASSWORD=secreto
-FRONTEND_URL=https://app.cryptoworld.com
-```
-
-#### 4.5 Nuevos endpoints implementados
-
-| Método | Ruta | Auth | Descripción |
-|--------|------|------|-------------|
-| POST | `/api/auth/logout/` | ✅ Requerida | Invalida el refresh_token |
-| GET | `/api/auth/me/` | ✅ Requerida | Perfil del usuario autenticado |
-| GET | `/api/auth/verify-email/` | ❌ Pública | Confirmar email con token del link |
-| POST | `/api/auth/verify-email/resend/` | ✅ Requerida | Reenviar email de verificación |
-| POST | `/api/auth/password-reset/` | ❌ Pública | Solicitar link de recuperación |
-| POST | `/api/auth/password-reset/confirm/` | ❌ Pública | Confirmar nueva contraseña |
-| POST | `/api/auth/change-password/` | ✅ Requerida | Cambiar contraseña (requiere actual) |
-| POST | `/api/auth/2fa/setup/` | ✅ Requerida | Iniciar setup: genera secreto + QR |
-| POST | `/api/auth/2fa/enable/` | ✅ Requerida | Activar 2FA con primer código TOTP |
-| POST | `/api/auth/2fa/disable/` | ✅ Requerida | Desactivar 2FA (requiere código TOTP) |
-| POST | `/api/auth/2fa/login/` | ❌ Pública | Segunda fase del login con 2FA |
-
-#### 4.6 Validación completa del flujo 2FA (Marzo 2026)
-
-```
-1. POST /api/auth/login/           → { requires_2fa: false } (sin 2FA activo)
-2. GET  /api/auth/me/              → { is_2fa_enabled: false, is_email_verified: false }
-3. POST /api/auth/2fa/setup/       → { totp_secret: "BASE32...", qr_code_base64: "data:image/png..." }
-4. POST /api/auth/2fa/enable/      → { message: "2FA activado correctamente." }
-5. POST /api/auth/login/           → { requires_2fa: true, pre_auth_token: "eyJ..." }
-6. POST /api/auth/2fa/login/       → { access_token: "eyJ...", refresh_token: "eyJ..." }
-7. POST /api/auth/logout/          → { message: "Sesión cerrada correctamente." }
-8. POST /api/auth/password-reset/  → email impreso en logs de Docker con link completo
-9. POST /api/auth/change-password/ → { message: "Contraseña cambiada correctamente." }
-```
-
-Todos los endpoints retornaron HTTP 200/201 en pruebas reales contra el contenedor Docker.
-
-#### 4.7 Problema de encoding durante la implementación
-
-Al usar PowerShell `Set-Content` para truncar el archivo `views.py`, el contenido se reescribió con codificación CP1252 interpretada como UTF-8, corrompiendo todos los caracteres españoles en docstrings y comentarios (`á` → `Ã¡`, `ó` → `Ã³`, etc.).
-
-**Solución:** script Python ejecutado dentro del contenedor que invirtió la doble codificación (decode UTF-8 → encode CP1252, recuperando los bytes UTF-8 originales):
-
-```python
-with open(path, 'rb') as f: raw = f.read()
-fixed = raw.decode('utf-8').encode('cp1252')
-with open(path, 'wb') as f: f.write(fixed)
-```
-
-El archivo quedó correctamente codificado en UTF-8 y Django recargó sin errores.
-
----
-
-## 5. Estructura del Proyecto
-
-### Árbol completo (estado actual v1.2.0)
-
-```
-CryptoWorld/
-├── .env                          ← Variables de entorno (no en Git)
-├── .env.example                  ← Plantilla de variables
-├── .gitignore
-├── docker-compose.yml            ← Orquestación de servicios
-├── Memoria_TFG.md                ← Este documento
-├── README.md
-│
-├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── pytest.ini
-│   ├── tests/
-│   │   ├── conftest.py
-│   │   ├── unit/
-│   │   │   └── test_domain_entities.py
-│   │   └── integration/
-│   │       └── test_api_endpoints.py
-│   └── src/
-│       ├── manage.py
-│       ├── config/
-│       │   ├── settings.py
-│       │   ├── urls.py
-│       │   └── wsgi.py
-│       └── core/
-│           ├── apps.py
-│           ├── models.py                ← NUEVO: adaptador de importación
-│           ├── __init__.py
-│           ├── domain/
-│           │   ├── entities/
-│           │   │   ├── user_entity.py
-│           │   │   ├── crypto_asset_entity.py
-│           │   │   ├── market_data_snapshot_entity.py
-│           │   │   └── analysis_execution_entity.py
-│           │   ├── repositories/
-│           │   │   ├── i_user_repository.py
-│           │   │   └── i_crypto_asset_repository.py
-│           │   ├── services/
-│           │   │   └── user_domain_service.py
-│           │   └── value_objects/
-│           │       ├── email.py
-│           │       └── crypto_symbol.py
-│           ├── application/
-│           │   ├── use_cases/
-│           │   │   ├── register_user_use_case.py
-│           │   │   ├── get_assets_use_case.py
-│           │   │   ├── run_analysis_use_case.py
-│           │   │   ├── logout.py                      ← NUEVO: blacklist refresh token
-│           │   │   ├── send_verification_email.py     ← NUEVO: enviar email de activación
-│           │   │   ├── verify_email.py                ← NUEVO: confirmar email con token
-│           │   │   ├── request_password_reset.py      ← NUEVO: enviar link de recuperación
-│           │   │   ├── confirm_password_reset.py      ← NUEVO: aplicar nueva contraseña
-│           │   │   ├── change_password.py             ← NUEVO: cambiar contraseña autenticado
-│           │   │   ├── setup_2fa.py                   ← NUEVO: generar secreto TOTP + QR
-│           │   │   ├── enable_2fa.py                  ← NUEVO: activar 2FA con primer TOTP
-│           │   │   ├── disable_2fa.py                 ← NUEVO: desactivar 2FA
-│           │   │   └── verify_2fa_login.py            ← NUEVO: segunda fase login 2FA
-│           │   └── dto/
-│           │       ├── auth_dto.py                    ← AMPLIADO: +9 nuevos DTOs
-│           │       └── asset_dto.py
-│           ├── infrastructure/
-│           │   ├── persistence/
-│           │   │   ├── models.py             ← AMPLIADO: +3 campos en User (is_email_verified, totp_secret, is_2fa_enabled)
-│           │   │   └── repositories_impl.py  ← AMPLIADO: +5 métodos en DjangoUserRepository
-│           │   └── external_apis/            ← (pendiente) CoinGecko
-│           ├── interfaces/
-│           │   └── api/
-│           │       ├── views.py       ← AMPLIADO: +11 nuevas vistas de auth
-│           │       ├── serializers.py ← AMPLIADO: +9 nuevos serializers
-│           │       └── urls.py        ← AMPLIADO: +11 nuevas rutas
-│           └── migrations/
-│               ├── 0001_initial.py           ← sin cambios
-│               └── 0002_user_auth_fields.py  ← NUEVO: is_email_verified, totp_secret, is_2fa_enabled
-│
-├── frontend/
-│   ├── Dockerfile
-│   ├── nginx.conf
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── tsconfig.json
-│   └── src/
-│       ├── main.tsx
-│       ├── App.tsx
-│       ├── routes.tsx
-│       ├── index.css
-│       ├── vite-env.d.ts
-│       ├── hooks/
-│       │   └── useAuth.ts
-│       ├── services/
-│       │   ├── api.ts
-│       │   ├── authService.ts
-│       │   └── analysisService.ts
-│       ├── components/
-│       │   ├── Navbar.tsx
-│       │   └── ProtectedRoute.tsx
-│       └── pages/
-│           ├── LoginPage.tsx
-│           ├── DashboardPage.tsx
-│           └── AssetDetailPage.tsx
-│
-└── info/                         ← Documentación adicional del proyecto
-```
-
----
-
-## 6. Decisiones de Diseño Justificadas
-
-### 6.1 Por qué Clean Architecture
-
-La Clean Architecture permite que el núcleo del sistema (dominio y casos de uso) sea completamente independiente de frameworks, bases de datos e interfaces externas. Esto es especialmente relevante en un TFG donde se quiere demostrar dominio de principios SOLID y patrones de diseño.
-
-**Ventajas concretas en este proyecto:**
-- El `GetAssetsUseCase` no sabe si los datos vienen de PostgreSQL o de CoinGecko API
-- El `User` del dominio (`UserEntity`) es una clase Python pura sin dependencias Django
-- Los tests unitarios del dominio se ejecutan sin necesidad de base de datos
-
-### 6.2 Por qué AUTH_USER_MODEL personalizado
-
-Django provee un modelo `User` predeterminado con `username` como campo principal de autenticación. En este proyecto se optó por email como identificador porque:
-- Es más natural en aplicaciones modernas
-- Elimina la duplicidad username/email
-- Es una práctica estándar en sistemas financieros/fintech
-
-### 6.3 Por qué JWT en lugar de sesiones
-
-Las sesiones de Django se almacenan en servidor (base de datos o cache). Al usar contenedores Docker stateless y pensando en escalabilidad horizontal futura, JWT es más apropiado:
-- El token viaja en el cliente (localStorage)
-- El backend no necesita consultar BD para validar cada petición
-- Compatible con arquitecturas API-first y aplicaciones móviles futuras
-
-### 6.4 Por qué core/models.py como adaptador de importación
-
-Django requiere que los modelos de una app sean descubribles desde `<app>.models`. Dado que en Clean Architecture los modelos ORM pertenecen a la capa de infraestructura, se creó `core/models.py` como un archivo de reexportación (Adapter Pattern) que:
-- Mantiene la separación de capas intacta
-- Satisface el mecanismo de autodescubrimiento de Django
-- No añade lógica, solo conecta capas
-
-### 6.5 Por qué Docker Compose para desarrollo
-
-- Garantiza entorno reproducible (elimina el "en mi máquina funciona")
-- Aísla PostgreSQL del sistema host
-- Facilita CI/CD en fases posteriores
-- El `healthcheck` de PostgreSQL evita que Django arranque antes de que la BD esté lista
-
-### 6.6 Por qué TOTP para 2FA (en lugar de SMS)
-
-Se eligió TOTP (Time-based One-Time Password, RFC 6238) frente a la verificación por SMS por varias razones:
-- **Sin dependencia externa:** no requiere proveedor de SMS (Twilio, AWS SNS), reduciendo costes y complejidad en el TFG.
-- **Mayor seguridad:** los ataques de SIM swapping no son posibles con TOTP.
-- **Estándar abierto:** funciona con cualquier app autenticadora (Google Authenticator, Authy, Bitwarden, etc.).
-- **Offline:** el código se genera en el dispositivo del usuario, sin necesidad de red.
-
-### 6.7 Por qué token temporal Pre-Auth en la segunda fase del login con 2FA
-
-El flujo de 2FA requiere dos peticiones HTTP, lo que crea un problema de estado: "¿cómo sabemos que el usuario del paso 2 es el mismo que validó la contraseña en el paso 1?" sin almacenar estado en servidor (sesiones) ni exponer tokens de acceso completos de forma prematura.
-
-Solución: emitir un JWT especial con `token_type = "pre_2fa"` y `lifetime = 5 minutos` que:
-- Solo sirve para llamar a `/api/auth/2fa/login/`
-- No tiene permisos de acceso a recursos protegidos
-- Expira en 5 minutos si el usuario no completa el segundo factor
-- Sigue el mismo patrón stateless del resto del sistema
-
----
-
-## 7. Problemas Encontrados y Soluciones
-
-| # | Fase | Error | Causa | Solución | Archivos modificados |
-|---|------|-------|-------|----------|---------------------|
-| 1 | Docker | `pipe error` | Docker Desktop parado | Iniciar Docker Desktop | — |
-| 2 | Docker | `version is obsolete` | Campo `version` obsoleto en Compose v2 | Eliminar `version: "3.9"` | `docker-compose.yml` |
-| 3 | Docker Build | `npm ci` falla | Sin `package-lock.json` | Cambiar a `npm install` | `frontend/Dockerfile` |
-| 4 | Docker Build | pip timeout | Red lenta | `--timeout=300 --retries=5` | `backend/Dockerfile` |
-| 5 | TypeScript | `TS1005: '>' expected` | JSX en archivo `.ts` | Usar `React.createElement()` | `frontend/src/hooks/useAuth.ts` |
-| 6 | TypeScript | `'env' not on ImportMeta` | Falta declaración tipos Vite | Crear `vite-env.d.ts` | `frontend/src/vite-env.d.ts` (nuevo) |
-| 7 | Django Runtime | `AUTH_USER_MODEL not installed` | Falta `core/models.py` | Crear adaptador de importación | `backend/src/core/models.py` (nuevo) |
-| 8 | Django Runtime | `relation "users" does not exist` | La app `core` no tenía directorio `migrations/` | `docker compose run --rm backend python src/manage.py makemigrations core` para generar `0001_initial.py` | `backend/src/core/migrations/0001_initial.py` (nuevo) |
-| 9 | Auth — 2FA | `No module named 'pyotp'` | Paquetes nuevos no instalados en imagen Docker existente | `docker compose build backend` (rebuild de imagen) | `backend/requirements.txt` |
-| 10 | Encoding | Caracteres españoles corruptos en `views.py` (`á` → `Ã¡`) | PowerShell `Set-Content` leyó UTF-8 como CP1252 y reescribió como UTF-8 (doble codificación) | Script Python dentro del contenedor invirtió la codificación: `raw.decode('utf-8').encode('cp1252')` | `backend/src/core/interfaces/api/views.py` |
-
----
-
-## 8. Estado Actual del Sistema
-
-### Servicios Docker
-| Servicio | Puerto | Estado |
-|----------|--------|--------|
-| `cryptoworld_postgres` | 5432 | ✅ Running (healthy) |
-| `cryptoworld_backend` | 8000 | ✅ Running — servidor Django operativo |
-| `cryptoworld_frontend` | 80 (externo 5173) | ✅ Running — SPA React sirviendo |
-
-### Endpoints API disponibles
-| Método | Ruta | Estado | Descripción |
-|--------|------|--------|-------------|
-| GET | `/api/health/` | ✅ Implementado | Health check del sistema |
-| POST | `/api/auth/register/` | ✅ Implementado | Registro + email de verificación automático |
-| POST | `/api/auth/login/` | ✅ Implementado | Login (soporta 2FA con pre_auth_token) |
-| POST | `/api/auth/logout/` | ✅ Implementado | Logout seguro (blacklist refresh_token) |
-| GET | `/api/auth/me/` | ✅ Implementado | Perfil del usuario autenticado |
-| POST | `/api/auth/token/refresh/` | ✅ Implementado | Renovación de access token |
-| GET | `/api/auth/verify-email/` | ✅ Implementado | Confirmar email con token HMAC |
-| POST | `/api/auth/verify-email/resend/` | ✅ Implementado | Reenviar email de verificación |
-| POST | `/api/auth/password-reset/` | ✅ Implementado | Solicitar link de recuperación |
-| POST | `/api/auth/password-reset/confirm/` | ✅ Implementado | Confirmar nueva contraseña |
-| POST | `/api/auth/change-password/` | ✅ Implementado | Cambiar contraseña (requiere actual) |
-| POST | `/api/auth/2fa/setup/` | ✅ Implementado | Generar secreto TOTP + QR base64 |
-| POST | `/api/auth/2fa/enable/` | ✅ Implementado | Activar 2FA con primer código TOTP |
-| POST | `/api/auth/2fa/disable/` | ✅ Implementado | Desactivar 2FA |
-| POST | `/api/auth/2fa/login/` | ✅ Implementado | Segunda fase del login con 2FA |
-| GET | `/api/assets/` | ⚠️ Mock data | Lista de activos (datos ficticios) |
-| POST | `/api/analysis/run/` | ⚠️ Stub | Ejecutar análisis (sin implementar) |
-
-### Capas implementadas
-| Capa | Estado | Notas |
-|------|--------|-------|
-| Domain — Entities | ✅ Completo | 4 entidades + `UserEntity` ampliada con campos 2FA/email |
-| Domain — Repositories (interfaces) | ✅ Completo | IUserRepository, ICryptoAssetRepository |
-| Domain — Value Objects | ✅ Completo | Email, CryptoSymbol |
-| Domain — Services | ✅ Completo | UserDomainService |
-| Application — Use Cases auth | ✅ Completo | 10 casos de uso: register, logout, verify_email, password_reset (x2), change_password, 2FA (x4) |
-| Application — Use Cases datos | ⚠️ Parcial | GetAssets (mock), RunAnalysis (stub) |
-| Application — DTOs | ✅ Completo | auth_dto (13 DTOs), asset_dto |
-| Infrastructure — ORM Models | ✅ Completo | 4 modelos Django + 3 campos nuevos en User |
-| Infrastructure — Repositories impl | ✅ Completo | +5 métodos nuevos en DjangoUserRepository |
-| Infrastructure — External APIs | ❌ Pendiente | CoinGecko API |
-| Interfaces — API Views | ✅ Completo | 17 endpoints totales (auth completo) |
-| Frontend — Auth flow | ✅ Completo | Login, JWT, rutas protegidas |
-| Frontend — Dashboard | ⚠️ Parcial | Sin datos reales |
-| Tests | ⚠️ Parcial | Esqueleto creado, sin ejecutar |
-
-### Migraciones aplicadas
-| Migración | Descripción | Estado |
-|-----------|-------------|--------|
-| `core.0001_initial` | Tablas: users, crypto_assets, market_data_snapshots, analysis_executions | ✅ Aplicada |
-| `core.0002_user_auth_fields` | Campos: is_email_verified, totp_secret, is_2fa_enabled en users | ✅ Aplicada |
-| `token_blacklist.*` (12 migraciones) | Tablas OutstandingToken y BlacklistedToken para logout seguro | ✅ Aplicadas |
-
-### Validación completa del stack (v1.2.0 — Marzo 2026)
-| Test | Resultado |
-|------|-----------|
-| `GET /api/health/` | ✅ 200 `{"status":"ok","version":"1.0.0"}` |
-| `POST /api/auth/register/` | ✅ 201 — Email de verificación impreso en logs Docker |
-| `POST /api/auth/login/` (sin 2FA) | ✅ 200 — `requires_2fa: false` + tokens JWT |
-| `GET /api/auth/me/` | ✅ 200 — Perfil con `is_2fa_enabled`, `is_email_verified` |
-| `POST /api/auth/2fa/setup/` | ✅ 200 — Secreto base32 + QR PNG base64 |
-| `POST /api/auth/2fa/enable/` | ✅ 200 — "2FA activado correctamente." |
-| `POST /api/auth/login/` (con 2FA) | ✅ 200 — `requires_2fa: true` + `pre_auth_token` |
-| `POST /api/auth/2fa/login/` | ✅ 200 — tokens JWT completos |
-| `POST /api/auth/logout/` | ✅ 200 — refresh_token blacklisteado |
-| `POST /api/auth/password-reset/` | ✅ 200 — Email de recuperación en logs Docker |
-| `POST /api/auth/change-password/` | ✅ 200 — "Contraseña cambiada correctamente." |
-| `GET /api/assets/` con JWT | ✅ 200 — Devuelve datos mock |
-| Frontend `http://localhost:5173` | ✅ Sirviendo la SPA React |
-
----
-
-## 9. Próximos Pasos
-
-### Completado en Fase 4 ✅
-
-Los siguientes ítems que figuraban como pendientes han sido implementados:
-
-- ✅ Sistema de autenticación completo (login, logout, registro)
-- ✅ Tokens JWT con refresh y blacklist (logout seguro)
-- ✅ Verificación de email con token HMAC
-- ✅ Recuperación y cambio de contraseña
-- ✅ 2FA TOTP compatible con Google Authenticator / Authy
-- ✅ Endpoint `/api/auth/me/` con perfil del usuario autenticado
-- ✅ Migración 0002 con los nuevos campos del modelo User
-
-### Sprint 1 — Integración CoinGecko API (próximo)
-
-**Objetivo:** sustituir el mock data por datos de mercado reales.
-
-**Tareas:**
-1. Crear `infrastructure/external_apis/coingecko_client.py` con cliente HTTP (httpx/requests)
-2. Implementar `GetLiveMarketDataUseCase` en la capa application
-3. Definir `ICoinGeckoRepository` en el dominio
-4. Conectar endpoint `GET /api/assets/` con datos reales vía CoinGecko
-5. Cachear respuestas en Redis/base de datos para evitar rate-limiting
-6. Guardar snapshots periódicos en `market_data_snapshots`
-
-**Archivos a crear/modificar:**
-```
-backend/src/core/
-├── domain/repositories/i_market_data_repository.py   (nuevo)
-├── application/use_cases/get_live_market_data.py      (nuevo)
-├── infrastructure/external_apis/
-│   └── coingecko_client.py                            (nuevo)
-└── infrastructure/persistence/
-    └── market_data_repository_impl.py                 (nuevo/modificar)
-```
-
-### Sprint 2 — Análisis Técnico
-
-**Objetivo:** implementar los indicadores de análisis técnico en la capa de dominio.
-
-- RSI (Relative Strength Index) en `domain/services/`
-- MACD en `domain/services/`
-- Bandas de Bollinger en `domain/services/`
-- Conectar con `RunAnalysisUseCase` y endpoint `/api/analysis/run/`
-
-### Sprint 3 — Mejoras Frontend
-
-**Objetivo:** conectar la interfaz con los datos reales del backend.
-
-- Gráficos de precios históricos con Recharts/Tremor
-- Tabla de mercado con datos reales paginados
-- Página de detalle de activo con indicadores técnicos
-- Integrar flujo completo 2FA en el frontend (formulario de código TOTP)
-- Integrar verificación de email en el flujo de registro
-
-### Sprint 4 — Portfolio y Alertas
-
-- CRUD de portfolio personal (posiciones, precio de entrada)
-- Sistema de alertas (precio objetivo, % de cambio)
-- Historial de análisis ejecutados por usuario
-
-### Largo plazo — Calidad y Documentación
-
-- Suite completa de tests unitarios e integración (pytest + factory_boy)
-- Documentación API con Swagger/OpenAPI (`drf-spectacular`)
-- Optimización de consultas PostgreSQL con índices
-- Despliegue en servidor (Render, Railway o VPS)
-- Memoria TFG final en LaTeX
-
----
-
-*Documento generado automáticamente durante el desarrollo. Actualizar con cada sprint completado.*
-
-*Última actualización: Marzo 2026 — v1.2.0 (auth completo)*
-
--->
-<!-- FIN DEL CONTENIDO ANTIGUO -->
