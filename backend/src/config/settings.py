@@ -11,6 +11,7 @@ No contiene lógica de negocio. Solo configuración del framework.
 from pathlib import Path
 from datetime import timedelta
 import os
+import re
 import dj_database_url
 from dotenv import load_dotenv
 
@@ -33,7 +34,7 @@ SECRET_KEY = os.environ.get(
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost 127.0.0.1").split(" ")
+ALLOWED_HOSTS = re.split(r'[,\s]+', os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost 127.0.0.1").strip())
 
 # ------------------------------------------------------------------
 # Aplicaciones instaladas
@@ -181,10 +182,10 @@ SIMPLE_JWT = {
 # ------------------------------------------------------------------
 # CORS — Permitir peticiones desde el frontend React
 # ------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = os.environ.get(
+CORS_ALLOWED_ORIGINS = re.split(r'[,\s]+', os.environ.get(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173 http://127.0.0.1:5173"
-).split(" ")
+).strip())
 
 CORS_ALLOW_CREDENTIALS = True
 
