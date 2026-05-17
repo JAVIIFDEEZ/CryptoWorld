@@ -4,7 +4,7 @@
 **Autor:** Javier  
 **Titulación:** 4º Ingeniería Informática  
 **Universidad:** Universidad de Castilla-La Mancha  
-**Fecha del documento:** Mayo 2026 (v1.47.0)  
+**Fecha del documento:** Mayo 2026 (v1.51.0)  
 
 > **NOTA PARA LA IA REDACTORA:** Este documento es un briefing técnico completo del proyecto CryptoWorld tal como está implementado en mayo de 2026. Contiene el código real de los archivos más importantes, la justificación de cada decisión de diseño, y todos los detalles técnicos necesarios para redactar una memoria académica de TFG. No es necesario inferir nada—todo lo que existe en el proyecto está documentado aquí. El objetivo es una memoria académica formal para un TFG de Ingeniería Informática en la UCLM.
 
@@ -40,33 +40,42 @@
 
 **CryptoWorld** es una plataforma web de análisis de criptomonedas desarrollada como Trabajo de Fin de Grado. El proyecto combina un backend API REST con un frontend Single Page Application (SPA).
 
-### Funcionalidades implementadas (Mayo 2026 — v1.47.0)
+### Funcionalidades implementadas (Mayo 2026 — v1.51.0)
 - Sistema de autenticación completo: registro, login, logout seguro
 - Verificación de email mediante token HMAC
 - Recuperación y cambio de contraseña (con logging de depuración en dev)
 - Autenticación de Doble Factor (2FA) mediante TOTP (compatible con Google Authenticator)
+- **Página de configuración de cuenta** (SettingsPage): cambio de contraseña con campos show/hide y eliminación de cuenta con confirmación de contraseña
 - **Sincronización de catálogo de activos desde CoinGecko** (top N por market cap, logos, precios)
 - **Datos OHLCV reales con cadena de fuentes** (Strategy Pattern: Binance → CoinGecko fallback → HTTP 404)
 - **Métricas globales del mercado** (market cap total, volumen 24h, dominancia BTC, Fear & Greed Index)
-- **Gráfico de velas interactivo profesional** (KLineChart v9: 15 herramientas de dibujo, 20+ indicadores técnicos, redimensionable)
-- **Panel de administración** con gestión de usuarios y sincronización de mercado
+- **Gráfico de velas interactivo profesional** (KLineChart v9: 15 herramientas de dibujo, 14 indicadores técnicos toggleables, redimensionable)
+- **Panel de administración** con gestión de usuarios (listar, toggle activo/admin, crear nuevo admin) y sincronización de mercado
 - Dashboard frontend con datos reales, logos y métricas en tiempo real
-- **Análisis técnico implementado con datos reales**: RSI, MACD, Bollinger, MA, EMA, SAR, señales multi-indicador, backtesting y predicción
+- **Análisis técnico implementado con datos reales**: RSI, MACD, Bollinger, MA, EMA, SAR, señales multi-indicador (10 indicadores con COMPRA/VENTA/NEUTRAL), backtesting y predicción ML
+- **Panel de análisis con 5 pestañas**: Señales, Indicadores, Predicción ML, Patrones, Backtesting
 - **Badge de fuente de datos**: el frontend indica visualmente si el gráfico usa datos de Binance o CoinGecko
 - **Indicadores de volumen desactivados automáticamente** cuando la fuente es CoinGecko (API no provee volumen)
-- **Celery + Redis**: sincronización periódica de mercado y evaluación de alertas de forma asíncrona
+- **Celery + Redis**: sincronización periódica de mercado cada 10 min y evaluación de alertas cada 2 min
 - **Feed de noticias real** (CryptoCompare News API con categorías, sentimiento y búsqueda)
-- **Métricas on-chain BTC** (Blockchain.com Charts API: hashrate, transacciones, fees, mempool, etc.)
+- **Métricas on-chain BTC** (Blockchain.com Charts API: 8 métricas — hashrate, transacciones, fees, mempool, active_addresses, difficulty, miners_revenue, avg_block_size)
 - **Panel MultiChain** (Blockchair API: estadísticas instantáneas de 10 blockchains: BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR)
 - **Portfolio personal con PnL**: historial de trades BUY/SELL, posiciones LONG y SHORT abiertas, cálculo de PnL por posición y global
 - **Posiciones SHORT nativas**: SELL sin compra previa genera posición en descubierto con PnL invertido (gana cuando el precio baja)
 - **KPIs diferenciados LONG/SHORT**: en el resumen del portfolio se muestra capital LONG invertido y exposición SHORT por separado
 - **Badges visuales LONG/SHORT**: cada posición muestra un badge verde (LONG) o naranja (SHORT) con sublabels contextuales
-- **Sistema de alertas**: crear, listar y eliminar alertas de precio por activo con condición ABOVE/BELOW
+- **Modal de añadir trade**: autocompletado del precio actual, campo Total editable (calcula Qty automáticamente)
+- **Sistema de alertas**: crear, listar, toggle activo/inactivo y eliminar alertas de precio por activo con condición ABOVE/BELOW
+- **TickerBar animado**: barra de precios en tiempo real con animación requestAnimationFrame, pausa en hover, refresco automático cada 60s
+- **Despliegue en producción**: Railway (backend + Gunicorn) + Vercel (frontend + SPA rewrites)
+- **Promoción de admin en despliegue**: variable `PROMOTE_ADMIN_USERNAME` en `start.sh` para promover usuario a admin/superuser en Railway
 
 ### Funcionalidades pendientes (roadmap)
-- Historial de análisis ejecutados por usuario
-- Notificaciones push/email cuando se dispara una alerta
+- Crear servicios Celery Worker y Beat en Railway (scripts listos, requieren nuevos servicios)
+- Activar SMTP `EMAIL_BACKEND` en producción para emails reales
+- Tests de integración para endpoints de Portfolio, Alertas y Análisis
+- Paginación en `GET /api/assets/` (actualmente devuelve todos)
+- Refresco automático del `access_token` (actualmente solo blacklist en logout)
 
 ---
 
@@ -114,6 +123,8 @@
 | PostgreSQL | 16-alpine | Base de datos relacional |
 | pgAdmin4 | latest | Interfaz web de administración de BD |
 | nginx | alpine | Servidor estático frontend en producción |
+| Railway | - | Plataforma de despliegue del backend (Nixpacks + Gunicorn) |
+| Vercel | - | Plataforma de despliegue del frontend (SPA rewrites) |
 
 ---
 
@@ -1405,6 +1416,96 @@ CRYPTOCOMPARE_API_KEY=optional_key_here
 COINGECKO_API_KEY=optional_key_here
 ```
 
+### Despliegue en Producción — Railway + Vercel
+
+#### Backend en Railway
+
+**Configuración (`backend/railway.json`):**
+```json
+{
+  "build": { "builder": "NIXPACKS" },
+  "deploy": { "startCommand": "bash start.sh" }
+}
+```
+**Configuración Nixpacks (`backend/nixpacks.toml`):**
+```toml
+[phases.build]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "bash start.sh"
+```
+
+**Script de arranque `backend/start.sh` (con funcionalidad de promoción de admin):**
+```bash
+#!/bin/bash
+set -e
+cd src
+
+# 1. Ejecutar migraciones de base de datos
+python manage.py migrate --noinput
+
+# 2. Recolectar archivos estáticos (whitenoise en Railway)
+python manage.py collectstatic --noinput
+
+# 3. Promoción de admin (one-time, si PROMOTE_ADMIN_USERNAME está definido)
+# Uso: en Railway, definir PROMOTE_ADMIN_USERNAME=<username>
+# Una vez promovido, eliminar la variable de entorno.
+if [ -n "${PROMOTE_ADMIN_USERNAME}" ]; then
+  echo "Promoviendo usuario '${PROMOTE_ADMIN_USERNAME}' a admin/staff/superuser..."
+  python manage.py shell -c "
+from django.contrib.auth import get_user_model
+User = get_user_model()
+try:
+    user = User.objects.get(username='${PROMOTE_ADMIN_USERNAME}')
+    user.is_staff = True
+    user.is_superuser = True
+    user.is_email_verified = True
+    user.save()
+    print(f'Usuario {user.username} promovido a admin')
+except User.DoesNotExist:
+    print(f'ERROR: Usuario ${PROMOTE_ADMIN_USERNAME} no encontrado')
+"
+fi
+
+# 4. Iniciar Gunicorn
+exec gunicorn config.wsgi:application \
+  --bind 0.0.0.0:${PORT:-8000} \
+  --workers 3 \
+  --timeout 120 \
+  --access-logfile - \
+  --error-logfile -
+```
+
+**Punto clave — `.gitattributes` (evitar CRLF en Windows):**
+```
+*.sh text eol=lf
+```
+Sin esta línea, PowerShell en Windows convierte los finales de línea de `start.sh` a CRLF al hacer commit. Bash en Linux/Railway falla con `bad interpreter: /bin/bash^M`.
+
+**Variables de entorno Railway:**
+- `DATABASE_URL` — prioridad sobre variables `DB_*` individuales (dj-database-url)
+- `REDIS_URL` — broker para Celery
+- `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`
+- `PROMOTE_ADMIN_USERNAME` — usar solo una vez para el primer admin, luego eliminar
+
+**URL producción backend:** `https://cryptoworld-production.up.railway.app`
+
+#### Frontend en Vercel
+
+**Configuración (`frontend/vercel.json`) — SPA rewrites:**
+```json
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://cryptoworld-production.up.railway.app/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
+```
+Sin el rewrite de SPA, al navegar directamente a `/dashboard` Vercel devuelve 404 (busca el archivo `dashboard/index.html` que no existe). La regla `"/(.*)" → "/index.html"` delega toda la navegación al router de React.
+
+**URL producción frontend:** `https://crypto-world-iota.vercel.app`
+
 ---
 
 ## 7. FRONTEND: ARQUITECTURA REACT SPA
@@ -1499,6 +1600,9 @@ export interface AuthUser {
   id: number
   email: string
   username: string
+  isAdmin: boolean           // is_staff del backend
+  is2FAEnabled: boolean
+  isEmailVerified: boolean
 }
 
 interface AuthContextType {
@@ -1506,7 +1610,9 @@ interface AuthContextType {
   token: string | null
   isAuthenticated: boolean
   isLoading: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<{ requires2FA: boolean; preAuthToken?: string }>
+  verify2FALogin: (preAuthToken: string, totpCode: string) => Promise<void>
+  applyAuthenticatedSession: (accessToken: string, refreshToken: string, userData: AuthUser) => void
   logout: () => void
 }
 
@@ -1526,23 +1632,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
   const [isLoading, setIsLoading] = useState(false)
 
+  const applyAuthenticatedSession = useCallback(
+    (accessToken: string, _refreshToken: string, userData: AuthUser) => {
+      setToken(accessToken)
+      setUser(userData)
+      localStorage.setItem(TOKEN_KEY, accessToken)
+      localStorage.setItem(USER_KEY, JSON.stringify(userData))
+    }, []
+  )
+
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true)
     try {
       const response = await authService.login({ email, password })
-      setToken(response.access_token)
-      const authUser: AuthUser = {
-        id: response.user_id,
-        email: response.email,
-        username: response.username,
+      if (response.requires_2fa) {
+        // Primer paso del 2FA: devuelve token de pre-autenticación
+        return { requires2FA: true, preAuthToken: response.pre_auth_token }
       }
-      setUser(authUser)
-      localStorage.setItem(TOKEN_KEY, response.access_token)
-      localStorage.setItem(USER_KEY, JSON.stringify(authUser))
+      // Login directo (sin 2FA): guardar sesión
+      applyAuthenticatedSession(response.access_token, response.refresh_token, {
+        id: response.user_id, email: response.email, username: response.username,
+        isAdmin: response.is_admin ?? false,
+        is2FAEnabled: response.is_2fa_enabled ?? false,
+        isEmailVerified: response.is_email_verified ?? false,
+      })
+      return { requires2FA: false }
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [applyAuthenticatedSession])
+
+  const verify2FALogin = useCallback(async (preAuthToken: string, totpCode: string) => {
+    const response = await authService.verify2FA({ pre_auth_token: preAuthToken, totp_code: totpCode })
+    applyAuthenticatedSession(response.access_token, response.refresh_token, {
+      id: response.user_id, email: response.email, username: response.username,
+      isAdmin: response.is_admin ?? false,
+      is2FAEnabled: true,
+      isEmailVerified: response.is_email_verified ?? false,
+    })
+  }, [applyAuthenticatedSession])
 
   const logout = useCallback(() => {
     setUser(null)
@@ -1557,7 +1685,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value: {
         user, token,
         isAuthenticated: !!token,
-        isLoading, login, logout,
+        isLoading, login, verify2FALogin, applyAuthenticatedSession, logout,
       }
     },
     children
@@ -1572,6 +1700,8 @@ export function useAuth(): AuthContextType {
 ```
 
 **Nota técnica importante:** El archivo usa `React.createElement()` en lugar de JSX (`<AuthContext.Provider>`) porque tiene extensión `.ts` (no `.tsx`). JSX solo puede usarse en archivos `.tsx`.
+
+**Campos `isAdmin` en `AuthUser`:** el backend devuelve `is_admin` en el payload de `/auth/me/` y en el login. El `AppShell` lee `user.isAdmin` para mostrar u ocultar el enlace de administración en la barra lateral.
 
 ### `components/ProtectedRoute.tsx` — Guard de autenticación (código real)
 
@@ -1607,14 +1737,19 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import VerifyEmailPage from '@/pages/VerifyEmailPage'
+import ForgotPasswordPage from '@/pages/ForgotPasswordPage'
+import ResetPasswordPage from '@/pages/ResetPasswordPage'
 import DashboardPage from '@/pages/DashboardPage'
 import MarketPage from '@/pages/MarketPage'
 import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
 import AssetDetailPage from '@/pages/AssetDetailPage'
+import BlockchainPage from '@/pages/BlockchainPage'
+import PortfolioPage from '@/pages/PortfolioPage'
+import NewsPage from '@/pages/NewsPage'
+import AlertsPage from '@/pages/AlertsPage'
 import Security2FAPage from '@/pages/Security2FAPage'
 import SettingsPage from '@/pages/SettingsPage'
 import AdminDashboardPage from '@/pages/AdminDashboardPage'
-import PrototypePlaceholderPage from '@/pages/PrototypePlaceholderPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AdminRoute from '@/components/AdminRoute'
 import AppShell from '@/components/AppShell'
@@ -1626,6 +1761,8 @@ function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/auth/password-reset/confirm" element={<ResetPasswordPage />} />
 
       {/* Rutas protegidas: el guard comprueba JWT antes de renderizar */}
       <Route element={<ProtectedRoute />}>
@@ -1633,10 +1770,10 @@ function AppRoutes() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/market" element={<MarketPage />} />
           <Route path="/analysis" element={<TechnicalAnalysisPage />} />
-          <Route path="/blockchain" element={<PrototypePlaceholderPage />} />
-          <Route path="/portfolio" element={<PrototypePlaceholderPage />} />
-          <Route path="/news" element={<PrototypePlaceholderPage />} />
-          <Route path="/alerts" element={<PrototypePlaceholderPage />} />
+          <Route path="/blockchain" element={<BlockchainPage />} />
+          <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/news" element={<NewsPage />} />
+          <Route path="/alerts" element={<AlertsPage />} />
           <Route path="/security/2fa" element={<Security2FAPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/assets/:symbol" element={<AssetDetailPage />} />
@@ -1920,11 +2057,14 @@ class TestAssetsEndpoint:
 │  ─────────────────────────────────  │
 │  id (PK)                            │
 │  user_id (FK → users)               │
-│  asset_symbol                       │
+│  asset_id (FK → crypto_assets)      │
 │  trade_type ("BUY" | "SELL")        │
-│  quantity (Decimal 20,8)            │
+│  quantity (Decimal 38,18)           │
 │  price_usd (Decimal 20,8)           │
-│  timestamp                          │
+│  total_usd (Decimal 38,8)           │
+│  notes (CharField 500, nullable)    │
+│  executed_at (DateTimeField)        │
+│  created_at (auto_now_add)          │
 │                                     │
 │  El motor de portfolio usa esta     │
 │  tabla para calcular posiciones     │
@@ -1935,14 +2075,18 @@ class TestAssetsEndpoint:
 │  ─────────────────────────────────  │
 │  id (PK)                            │
 │  user_id (FK → users)               │
-│  asset_symbol                       │
+│  asset_id (FK → crypto_assets)      │
 │  condition ("ABOVE" | "BELOW")      │
-│  target_price (Decimal 20,8)        │
-│  is_active (Boolean)                │
-│  created_at                         │
+│  threshold_price (Decimal 20,8)     │
+│  is_active (Boolean, default=True)  │
+│  is_triggered (Boolean)             │
+│  triggered_at (DateTimeField null)  │
+│  notes (CharField 500, nullable)    │
+│  created_at (auto_now_add)          │
+│  updated_at (auto_now)              │
 │                                     │
-│  Celery Beat evalúa periódicamente  │
-│  alertas activas y notifica.        │
+│  Celery evalúa alertas cada 2 min   │
+│  y establece is_triggered=True.     │
 └─────────────────────────────────────┘
 ```
 
@@ -2046,7 +2190,7 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 
 ## 11. ESTADO ACTUAL Y ROADMAP
 
-### Estado actual — Mayo 2026 (v1.47.0 — Portfolio LONG/SHORT + MultiChain + Noticias + Alertas)
+### Estado actual — Mayo 2026 (v1.51.0 — Settings + Admin mejorado + Railway/Vercel + TickerBar + Alertas toggle)
 
 **Servicios Docker activos:**
 | Contenedor | Puerto | Estado |
@@ -2102,14 +2246,17 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | GET | `/api/blockchain/multichain/` | Sí | ✅ **Datos reales** | Blockchair (10 blockchains) |
 | GET | `/api/news/` | Sí | ✅ **Datos reales** | CryptoCompare News API |
 | GET | `/api/portfolio/` | Sí | ✅ Funcional | DB (trade_history) |
-| POST | `/api/portfolio/trade/` | Sí | ✅ Funcional | DB |
-| DELETE | `/api/portfolio/trade/{id}/` | Sí | ✅ Funcional | DB |
+| GET | `/api/portfolio/trades/` | Sí | ✅ Funcional | DB |
+| POST | `/api/portfolio/trades/` | Sí | ✅ Funcional | DB |
+| DELETE | `/api/portfolio/trades/<trade_id>/` | Sí | ✅ Funcional | DB |
 | GET | `/api/alerts/` | Sí | ✅ Funcional | DB |
 | POST | `/api/alerts/` | Sí | ✅ Funcional | DB |
-| DELETE | `/api/alerts/{id}/` | Sí | ✅ Funcional | DB |
+| PATCH | `/api/alerts/<alert_id>/toggle/` | Sí | ✅ Funcional | DB |
+| DELETE | `/api/alerts/<alert_id>/` | Sí | ✅ Funcional | DB |
 | GET | `/api/admin/users/` | Admin | ✅ Funcional | DB |
 | POST | `/api/admin/users/` | Admin | ✅ Funcional | DB |
-| PATCH | `/api/admin/users/{id}/` | Admin | ✅ Funcional | DB |
+| PATCH | `/api/admin/users/<user_id>/` | Admin | ✅ Funcional | DB |
+| DELETE | `/api/admin/users/<user_id>/` | Admin | ✅ Funcional | DB |
 | POST | `/api/admin/market/sync/` | Admin | ✅ **Datos reales** | CoinGecko /coins/markets |
 
 **Capas implementadas:**
@@ -2130,11 +2277,15 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | Frontend — Dashboard con datos reales | ✅ Completo (overview + tabla activos + logos) |
 | Frontend — Gráfico OHLCV profesional | ✅ KLineChart v9 (15 herramientas, 20+ indicadores, badge fuente) |
 | Frontend — Panel de análisis técnico | ✅ Completo (señales, RSI, MACD, predicción, patrones, backtesting) |
-| Frontend — Panel Admin con sync | ✅ Completo (feedback de resultados, enlace en azul) |
+| Frontend — Panel Admin con sync | ✅ Completo (crear admin, toggle is_active/is_admin, selector per_page) |
 | Frontend — Portfolio LONG/SHORT | ✅ Completo (KPIs condicionales, badges, sublabels contextuales) |
-| Frontend — Alertas | ✅ Completo (crear, listar, eliminar) |
+| Frontend — Alertas | ✅ Completo (crear, listar, toggle activo/inactivo, eliminar) |
 | Frontend — Noticias | ✅ Completo (CryptoCompare, categorías, sentimiento) |
 | Frontend — Blockchain on-chain + MultiChain | ✅ Completo (Blockchain.com + selector de 10 chains Blockchair) |
+| Frontend — Settings | ✅ Completo (cambio contraseña con show/hide, eliminar cuenta con confirmación) |
+| Frontend — TickerBar animado | ✅ Completo (requestAnimationFrame, pausa en hover, refresco 60s) |
+| Deploy — Railway (backend) | ✅ Completo (Nixpacks, start.sh, PROMOTE_ADMIN_USERNAME) |
+| Deploy — Vercel (frontend) | ✅ Completo (SPA rewrites, proxy /api/* → Railway) |
 | Tests unitarios | ✅ Implementados y pasando |
 | Tests integración | ✅ Implementados y pasando |
 
@@ -2146,14 +2297,14 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 |---|---|---|
 | `config/celery.py` | Nuevo | Configuración de la aplicación Celery, integración con Django |
 | `config/settings.py` | Modificado | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_BEAT_SCHEDULE` |
-| `core/tasks.py` | Nuevo | Tarea Celery `evaluate_price_alerts()`: evalúa alertas activas contra precio actual y notifica |
+| `core/tasks.py` | Nuevo | Tareas Celery: `check_price_alerts` (cada 2 min), `sync_market_prices` (cada 10 min) |
 
 #### Backend — APIs externas nuevas
 
 | Archivo | Tipo | Descripción |
 |---|---|---|
 | `infrastructure/external_apis/cryptocompare_client.py` | Nuevo | Cliente CryptoCompare News API. Método `get_news(categories, lang)` |
-| `infrastructure/external_apis/blockchain_charts_client.py` | Nuevo | Cliente Blockchain.com Charts API. Métricas on-chain BTC (hashrate, tx-count, fees, mempool, etc.) |
+| `infrastructure/external_apis/blockchain_charts_client.py` | Nuevo | Cliente Blockchain.com Charts API. 8 métricas on-chain BTC (hashrate, tx-count, fees, mempool, active_addresses, difficulty, miners_revenue, avg_block_size) |
 | `infrastructure/external_apis/blockchair_client.py` | Nuevo | Cliente Blockchair. Método `get_stats(symbol)` → normaliza hashrate H/s→TH/s, burned_24h wei→ETH |
 
 #### Backend — Casos de uso nuevos
@@ -2164,45 +2315,60 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | `use_cases/get_onchain_metrics.py` | `GetOnchainMetricsUseCase` | Obtiene métricas on-chain BTC de Blockchain.com Charts |
 | `use_cases/get_multichain_stats.py` | `GetMultiChainStatsUseCase` | Agrega estadísticas de los 10 chains de Blockchair |
 | `use_cases/get_portfolio.py` | `GetPortfolioUseCase` | Calcula posiciones abiertas LONG/SHORT y PnL completo desde trade_history |
-| `use_cases/add_trade.py` | `AddTradeUseCase` | Registra operación BUY o SELL (SELL sin BUY previo crea posición SHORT) |
+| `use_cases/add_trade.py` | `AddTradeUseCase` | Registra operación BUY o SELL. Valida: activo existe, qty > 0, price > 0. SELL sin BUY crea posición SHORT |
 | `use_cases/delete_trade.py` | `DeleteTradeUseCase` | Elimina un trade del historial por ID |
-| `use_cases/get_alerts.py` | `GetAlertsUseCase` | Lista alertas activas del usuario |
-| `use_cases/create_alert.py` | `CreateAlertUseCase` | Crea alerta de precio con condición ABOVE/BELOW |
-| `use_cases/delete_alert.py` | `DeleteAlertUseCase` | Elimina una alerta por ID |
+| `use_cases/get_trade_history.py` | `GetTradeHistoryUseCase` | Lista historial de trades del usuario |
+| `use_cases/manage_alerts.py` | `ManageAlertsUseCase` | CRUD de alertas + toggle is_active |
 | `use_cases/request_password_reset.py` | Modificado | Añade logging de debug para emails en dev |
 
 #### Backend — Modelos ORM (migración 0004)
 
 | Modelo | Tabla | Descripción |
 |---|---|---|
-| `TradeHistory` | `trade_history` | Registro de cada operación BUY/SELL: usuario, símbolo, tipo, cantidad, precio, timestamp |
-| `PriceAlert` | `price_alerts` | Alerta de precio: usuario, símbolo, condición, precio objetivo, is_active |
+| `TradeHistory` | `trade_history` | trade_type BUY/SELL, quantity Decimal(38,18), price_usd, total_usd, notes, executed_at, created_at |
+| `PriceAlert` | `price_alerts` | condition ABOVE/BELOW, threshold_price, is_active, is_triggered, triggered_at, notes, created_at, updated_at |
 
 #### Backend — DTOs modificados
 
 | Archivo | Cambio |
 |---|---|
 | `dto/portfolio_dto.py` | `PortfolioPositionDTO` gana `position_type: str`. `PortfolioSummaryDTO` gana `long_count`, `short_count`, `total_long_invested_usd`, `total_short_exposure_usd` |
-| `dto/alerts_dto.py` | Nuevos DTOs `PriceAlertDTO`, `CreateAlertInputDTO` |
+| `dto/alerts_dto.py` | Nuevos DTOs `PriceAlertDTO`, `CreateAlertInputDTO`, `ToggleAlertInputDTO` |
 
 #### Backend — Serializers y vistas modificados
 
 | Archivo | Cambio |
 |---|---|
 | `interfaces/api/serializers.py` | `PortfolioPositionSerializer` gana campo `position_type` |
-| `interfaces/api/views.py` | `PortfolioView` devuelve los 4 nuevos campos del summary; nuevas vistas para blockchain multichain |
-| `interfaces/api/urls.py` | Rutas `/portfolio/`, `/portfolio/trade/`, `/alerts/`, `/blockchain/multichain/`, `/news/` |
+| `interfaces/api/views.py` | `PortfolioView` devuelve los 4 nuevos campos del summary; `AlertToggleView` (PATCH dedicado); `AdminUserListView` soporta GET + POST (crear superuser con `is_email_verified=True` auto) |
+| `interfaces/api/admin_views.py` | `AdminUserDetailView` soporta PATCH (toggle is_active/is_admin) + DELETE |
+| `interfaces/api/urls.py` | Rutas `/portfolio/`, `/portfolio/trades/`, `/alerts/`, `/alerts/<id>/toggle/`, `/blockchain/multichain/`, `/news/` |
+
+### Archivos nuevos y modificados — Fase Settings + Admin + Deploy (v1.48–v1.51)
+
+#### Backend — Despliegue Railway
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `backend/start.sh` | Modificado | Añade feature `PROMOTE_ADMIN_USERNAME`: promueve usuario a admin/staff/superuser con `is_email_verified=True` antes de arrancar Gunicorn |
+| `backend/railway.json` | Nuevo | Builder Nixpacks + start command `bash start.sh` |
+| `backend/nixpacks.toml` | Nuevo | Instrucciones de build para Railway |
+| `.gitattributes` | Nuevo | `*.sh text eol=lf` — evita conversión CRLF en Windows que rompe bash en Linux/Railway |
 
 #### Frontend — Páginas nuevas/modificadas
 
 | Archivo | Cambio |
 |---|---|
-| `pages/PortfolioPage.tsx` | KPIs condicionales LONG-only vs mixed; badges LONG/SHORT; sublabels contextuales en columnas; "Valor posición" como header |
-| `pages/AlertsPage.tsx` | Nueva: crear, listar y eliminar alertas con condición y activo |
-| `pages/NewsPage.tsx` | Nueva: feed de noticias CryptoCompare con categorías y sentimiento |
+| `pages/PortfolioPage.tsx` | KPIs condicionales LONG-only vs mixed; badges LONG/SHORT; sublabels contextuales; modal AddTrade con precio auto y campo Total editable |
+| `pages/AlertsPage.tsx` | Nueva: crear, listar, toggle activo/inactivo y eliminar alertas con condición y activo |
+| `pages/NewsPage.tsx` | Nueva: feed de noticias CryptoCompare con categorías, sentimiento (positive/negative/neutral) y búsqueda |
 | `pages/BlockchainPage.tsx` | Nuevo panel MultiChain: selector de 10 cadenas + grid de estadísticas Blockchair |
-| `components/AppShell.tsx` | Enlace "Panel Admin" cambiado a color azul |
-| `components/Navbar.tsx` | Ídem |
+| `pages/SettingsPage.tsx` | Nueva: cambio de contraseña (show/hide en los 3 campos) + eliminar cuenta (modal con confirmación de contraseña) |
+| `pages/AdminDashboardPage.tsx` | Mejorado: modal "Crear Admin" (POST `/admin/users/`), toggle is_active/is_admin con feedback, selector `per_page` para sync |
+| `components/AppShell.tsx` | Enlace admin visible solo si `user.isAdmin`; TickerBar integrado en la parte superior; icono de ajustes → `/settings` |
+| `components/TickerBar.tsx` | Nuevo: barra animada requestAnimationFrame (0.6px/frame), pausa en hover, refresco 60s, lista duplicada para scroll infinito |
+| `components/AnalysisPanel.tsx` | 5 pestañas: Señales (con badges COMPRA/COMPRA_FUERTE/VENTA/VENTA_FUERTE/NEUTRAL), Indicadores, Predicción ML, Patrones, Backtesting |
+| `frontend/vercel.json` | Nuevo: rewrites SPA + proxy `/api/*` → Railway backend |
 
 #### Frontend — Servicios nuevos/modificados
 
@@ -2211,7 +2377,7 @@ TradingView Lightweight Charts v4 fue la librería inicial para gráficos financ
 | `services/portfolioService.ts` | `PortfolioPosition` gana `position_type`; `PortfolioSummary` gana 4 campos nuevos |
 | `services/blockchainService.ts` | Interfaz `MultiChainStats` y llamada al endpoint multichain |
 | `services/newsService.ts` | Nuevo: interfaz `NewsArticle`, llamada al feed de noticias |
-| `services/alertsService.ts` | Nuevo: CRUD de alertas |
+| `services/alertsService.ts` | Nuevo: CRUD de alertas + `toggleAlert` usa `PATCH alerts/<id>/toggle/` (endpoint dedicado) |
 
 ### Lógica de portfolio LONG/SHORT (v1.43–v1.47)
 
@@ -2252,10 +2418,16 @@ Para cada símbolo del usuario:
 - ~~Sprint 5a — Feed de noticias real (CryptoCompare)~~ ✅
 - ~~Sprint 5b — Métricas on-chain reales (Blockchain.com Charts + Blockchair MultiChain)~~ ✅
 - ~~Sprint 5c — Celery + Redis para tareas asíncronas y evaluación periódica de alertas~~ ✅
+- ~~Sprint 6a — Settings (cambio contraseña + eliminar cuenta) + Admin mejorado (crear admin)~~ ✅
+- ~~Sprint 6b — Despliegue producción Railway + Vercel~~ ✅
+- ~~Sprint 6c — TickerBar animado + AnalysisPanel 5 pestañas + toggle alertas~~ ✅
 
-**Próximo — Sprint 6: Historial y notificaciones**
-- Historial de análisis ejecutados por usuario (persistencia en `analysis_executions`)
-- Notificaciones push/email cuando se dispara una alerta de precio
+**Pendiente:**
+- Crear servicios Celery Worker y Beat en Railway (scripts listos, requieren nuevos servicios en Railway)
+- Activar SMTP `EMAIL_BACKEND` en producción para emails reales
+- Tests de integración para endpoints Portfolio, Alertas y Análisis
+- Paginación en `GET /api/assets/` (actualmente devuelve todos)
+- Refresco automático del `access_token` en el frontend
 
 ---
 
@@ -2281,10 +2453,15 @@ Para cada símbolo del usuario:
 | 16 | Portfolio | Columna "Valor recompra" confusa para posiciones LONG | El mismo header describía conceptos distintos según el tipo de posición | Renombrar a "Valor posición" con sublabels contextuales por celda: "valor actual" (LONG) / "coste recompra" (SHORT) |
 | 17 | SELL sin BUY | `AddTradeUseCase` rechazaba SELL si no había BUY previo | Validación demasiado estricta que impedía crear posiciones SHORT | Eliminar la validación; un SELL sin compra previa crea una posición en descubierto (SHORT) |
 | 18 | Password reset | Email de recuperación no llegaba en dev y sin traza en logs | `RequestPasswordResetUseCase` no tenía logging; era difícil saber si el email se enviaba | Añadir `logger.debug()` para email no encontrado y `logger.info()` tras `send_mail()` |
+| 19 | Railway Deploy | "No repositories found" en Railway | GitHub App de Railway sin permiso al repositorio | Conceder acceso al repositorio desde GitHub → Settings → Applications → Railway |
+| 20 | Railway Deploy | Build falla buscando `manage.py` en raíz | Railway construye desde la raíz del repo, pero el backend está en `/backend` | Configurar Root Directory = `backend` en el servicio de Railway |
+| 21 | Railway Deploy | `executable 'cd' not found` en start command | Sintaxis `cd src && python...` con `&&` no es válida como start command en Railway | Usar `bash start.sh` como start command; el `cd` va dentro del script |
+| 22 | Railway Deploy | `bad interpreter: /bin/bash^M` en Railway | Windows convierte LF→CRLF en `start.sh` al hacer git commit | Crear `.gitattributes` con `*.sh text eol=lf` para forzar LF en scripts bash |
+| 23 | Vercel SPA | Error React #31 / 404 al navegar directamente a `/dashboard` | Vercel sirve archivos estáticos y busca `dashboard/index.html` que no existe | Crear `frontend/vercel.json` con rewrite `"/(.*)" → "/index.html"` para delegar en React Router |
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v1.47.0 — Mayo 2026*  
+*Documento técnico completo del proyecto CryptoWorld — Estado v1.51.0 — Mayo 2026*  
 *Última actualización: mayo de 2026*
 
 <!-- FIN DEL DOCUMENTO -->
