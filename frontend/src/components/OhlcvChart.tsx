@@ -260,7 +260,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await marketService.getOhlcv(symbol, interval, 300)
+      const response = await marketService.getOhlcv(symbol, interval, 1000)
       setDataSource(response.source)
       const data = response.candles
         .map((c) => ({
