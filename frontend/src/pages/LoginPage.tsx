@@ -209,7 +209,7 @@ function LoginPage() {
             {preAuthToken && (
               <div>
                 <label htmlFor="totp" className="block text-sm font-medium text-slate-300 mb-1.5">
-                  Codigo de autenticacion (2FA)
+                  Código de autenticación (2FA)
                 </label>
                 <input
                   id="totp"
