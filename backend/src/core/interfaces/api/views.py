@@ -233,7 +233,7 @@ class LoginView(APIView):
 
         if user is None:
             return Response(
-                {"error": "Credenciales invÃ¡lidas."},
+                {"error": "Credenciales inválidas."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
@@ -247,7 +247,7 @@ class LoginView(APIView):
         if not user.is_email_verified:
             return Response(
                 {
-                    "error": "Debes verificar tu email antes de iniciar sesiÃ³n.",
+                    "error": "Debes verificar tu email antes de iniciar sesión.",
                     "error_code": "email_not_verified",
                 },
                 status=status.HTTP_403_FORBIDDEN,
@@ -302,7 +302,7 @@ class LogoutView(APIView):
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"message": "SesiÃ³n cerrada correctamente."}, status=status.HTTP_200_OK)
+        return Response({"message": "Sesión cerrada correctamente."}, status=status.HTTP_200_OK)
 
 
 class MeView(APIView):
@@ -375,7 +375,7 @@ class ResendVerificationEmailView(APIView):
             SendVerificationEmailUseCase().execute(user.pk)
 
         return Response(
-            {"message": "Si el email existe y no estÃ¡ verificado, recibirÃ¡s un enlace."},
+            {"message": "Si el email existe y no está verificado, recibirás un enlace."},
             status=status.HTTP_200_OK,
         )
 
@@ -398,7 +398,7 @@ class PasswordResetRequestView(APIView):
 
         # Respuesta siempre igual para no revelar si el email existe
         return Response(
-            {"message": "Si el email existe, recibirÃ¡s un enlace de recuperaciÃ³n."},
+            {"message": "Si el email existe, recibirás un enlace de recuperación."},
             status=status.HTTP_200_OK,
         )
 
@@ -427,7 +427,7 @@ class PasswordResetConfirmView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
-            {"message": "ContraseÃ±a restablecida correctamente."},
+            {"message": "Contraseña restablecida correctamente."},
             status=status.HTTP_200_OK,
         )
 
@@ -457,7 +457,7 @@ class ChangePasswordView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
-            {"message": "ContraseÃ±a cambiada correctamente."},
+            {"message": "Contraseña cambiada correctamente."},
             status=status.HTTP_200_OK,
         )
 
