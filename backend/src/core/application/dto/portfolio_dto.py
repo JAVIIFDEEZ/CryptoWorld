@@ -64,3 +64,70 @@ class PortfolioSummaryDTO:
     short_count: int = 0
     total_long_invested_usd: str = "0.00"     # Capital comprometido en posiciones LONG
     total_short_exposure_usd: str = "0.00"    # Coste de recompra actual de posiciones SHORT
+
+
+# ── DTOs del modelo de posiciones explícitas ──────────────────────────────────
+
+@dataclass(frozen=True)
+class OpenPositionInputDTO:
+    """Datos para abrir una nueva posición (LONG o SHORT)."""
+    asset_symbol: str
+    direction: str        # "LONG" | "SHORT"
+    quantity: float
+    entry_price: float
+    opened_at: str        # ISO 8601 string
+    label: str = ""
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class ClosePositionInputDTO:
+    """Datos para cerrar parcial o totalmente una posición."""
+    close_quantity: float
+    close_price: float
+    executed_at: str      # ISO 8601 string
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class AddToPositionInputDTO:
+    """Datos para ampliar una posición existente (escalar entrada, recalcula AVCO)."""
+    quantity: float
+    entry_price: float
+    executed_at: str      # ISO 8601 string
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class PositionDTO:
+    """Representación pública completa de una posición."""
+    id: int
+    asset_symbol: str
+    asset_name: str
+    logo_url: Optional[str]
+    direction: str              # "LONG" | "SHORT"
+    status: str                 # "OPEN" | "CLOSED"
+    label: str
+    avg_entry_price: str
+    open_quantity: str          # Cantidad actualmente abierta
+    initial_quantity: str       # Cantidad total históricamente entrada
+    current_price: str          # Precio live (sólo en OPEN)
+    unrealized_pnl_usd: str     # PnL no realizado (sólo en OPEN)
+    unrealized_pnl_pct: str     # PnL % no realizado (sólo en OPEN)
+    realized_pnl_usd: str       # PnL acumulado de cierres parciales
+    total_pnl_usd: str          # realized + unrealized
+    is_profit: bool
+    opened_at: str
+    closed_at: Optional[str]
+    trades_count: int
+
+
+@dataclass(frozen=True)
+class PositionSummaryDTO:
+    """Resumen de posiciones del usuario."""
+    open_positions: list        # lista de PositionDTO con status=OPEN
+    closed_positions: list      # lista de PositionDTO con status=CLOSED
+    total_unrealized_pnl_usd: str
+    total_realized_pnl_usd: str
+    open_long_count: int
+    open_short_count: int
