@@ -220,17 +220,82 @@ class AnalysisExecution(models.Model):
         return f"{self.asset.symbol} — {self.analysis_type} ({self.status})"
 
 
+class Position(models.Model):
+    """
+    Posición explícita de trading: LONG o SHORT sobre un activo.
+
+    Soporta modo hedge (múltiples posiciones simultáneas en la misma dirección
+    o dirección opuesta sobre el mismo activo). El coste medio (AVCO) se
+    recalcula al añadir entradas. Las salidas parciales acumulan realized_pnl.
+    """
+
+    DIRECTION_CHOICES = [
+        ("LONG", "Long"),
+        ("SHORT", "Short"),
+    ]
+    STATUS_CHOICES = [
+        ("OPEN", "Abierta"),
+        ("CLOSED", "Cerrada"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="positions",
+    )
+    asset = models.ForeignKey(
+        CryptoAsset,
+        on_delete=models.CASCADE,
+        related_name="positions",
+    )
+    direction = models.CharField(max_length=5, choices=DIRECTION_CHOICES)
+    status = models.CharField(max_length=6, choices=STATUS_CHOICES, default="OPEN")
+    label = models.CharField(max_length=200, blank=True, default="")
+
+    # Precio de entrada ponderado (AVCO) — se actualiza al escalar la posición
+    avg_entry_price = models.DecimalField(max_digits=20, decimal_places=8, default=0)
+    # Cantidad actualmente abierta (disminuye con cierres parciales)
+    open_quantity = models.DecimalField(max_digits=38, decimal_places=18, default=0)
+    # Cantidad total históricamente entrada (nunca decrece)
+    initial_quantity = models.DecimalField(max_digits=38, decimal_places=18, default=0)
+
+    # PnL realizado acumulado de cierres parciales anteriores
+    realized_pnl = models.DecimalField(max_digits=38, decimal_places=8, default=0)
+
+    opened_at = models.DateTimeField()
+    closed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "positions"
+        verbose_name = "Posición"
+        verbose_name_plural = "Posiciones"
+        ordering = ["-opened_at"]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.user.email} — {self.direction} {self.open_quantity} "
+            f"{self.asset.symbol} @ {self.avg_entry_price} [{self.status}]"
+        )
+
+
 class TradeHistory(models.Model):
     """
     Historial de operaciones de compra/venta dentro del portfolio del usuario.
 
     Cada registro representa una transacción individual (BUY o SELL).
-    El portfolio se recalcula a partir de estos trades.
+    Puede estar asociado a una posición explícita (campo `position`).
     """
 
     TRADE_TYPE_CHOICES = [
         ("BUY", "Compra"),
         ("SELL", "Venta"),
+    ]
+    INTENT_CHOICES = [
+        ("OPEN", "Apertura"),
+        ("ADD", "Ampliación"),
+        ("CLOSE", "Cierre"),
     ]
 
     user = models.ForeignKey(
@@ -243,7 +308,19 @@ class TradeHistory(models.Model):
         on_delete=models.CASCADE,
         related_name="trades",
     )
+    # Posición a la que pertenece este trade (opcional para compatibilidad)
+    position = models.ForeignKey(
+        Position,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="trades",
+    )
     trade_type = models.CharField(max_length=4, choices=TRADE_TYPE_CHOICES)
+    # Intención del trade: apertura, ampliación o cierre de posición
+    trade_intent = models.CharField(
+        max_length=5, choices=INTENT_CHOICES, null=True, blank=True
+    )
     quantity = models.DecimalField(max_digits=38, decimal_places=18)
     price_usd = models.DecimalField(max_digits=20, decimal_places=8)
     total_usd = models.DecimalField(max_digits=38, decimal_places=8)
