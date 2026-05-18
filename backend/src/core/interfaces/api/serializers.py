@@ -166,7 +166,7 @@ class OhlcvQuerySerializer(serializers.Serializer):
         default="1h",
         required=False,
     )
-    limit = serializers.IntegerField(min_value=10, max_value=500, default=120, required=False)
+    limit = serializers.IntegerField(min_value=10, max_value=1000, default=300, required=False)
 
 
 class OhlcvCandleSerializer(serializers.Serializer):
@@ -377,4 +377,80 @@ class AlertOutputSerializer(serializers.Serializer):
     notes = serializers.CharField()
     created_at = serializers.CharField()
 
+
+# ── Positions (modelo explícito) ──────────────────────────────────
+
+class OpenPositionSerializer(serializers.Serializer):
+    """Valida POST /api/portfolio/positions/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    direction = serializers.ChoiceField(choices=["LONG", "SHORT"])
+    quantity = serializers.FloatField(min_value=0.000000001)
+    entry_price = serializers.FloatField(min_value=0.000000001)
+    opened_at = serializers.DateTimeField()
+    label = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class ClosePositionSerializer(serializers.Serializer):
+    """Valida POST /api/portfolio/positions/<id>/close/."""
+    close_quantity = serializers.FloatField(min_value=0.000000001)
+    close_price = serializers.FloatField(min_value=0.000000001)
+    executed_at = serializers.DateTimeField()
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class AddToPositionSerializer(serializers.Serializer):
+    """Valida POST /api/portfolio/positions/<id>/add/."""
+    quantity = serializers.FloatField(min_value=0.000000001)
+    entry_price = serializers.FloatField(min_value=0.000000001)
+    executed_at = serializers.DateTimeField()
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class UpdatePositionSerializer(serializers.Serializer):
+    """Valida PATCH /api/portfolio/positions/<id>/  (sólo etiqueta)."""
+    label = serializers.CharField(max_length=200, allow_blank=True)
+
+
+class PositionOutputSerializer(serializers.Serializer):
+    """Serializa una posición del portfolio."""
+    id = serializers.IntegerField()
+    asset_symbol = serializers.CharField()
+    asset_name = serializers.CharField()
+    logo_url = serializers.CharField(allow_null=True)
+    direction = serializers.CharField()
+    status = serializers.CharField()
+    label = serializers.CharField()
+    avg_entry_price = serializers.CharField()
+    open_quantity = serializers.CharField()
+    initial_quantity = serializers.CharField()
+    current_price = serializers.CharField()
+    unrealized_pnl_usd = serializers.CharField()
+    unrealized_pnl_pct = serializers.CharField()
+    realized_pnl_usd = serializers.CharField()
+    total_pnl_usd = serializers.CharField()
+    is_profit = serializers.BooleanField()
+    opened_at = serializers.CharField()
+    closed_at = serializers.CharField(allow_null=True)
+    trades_count = serializers.IntegerField()
+
+
+class PositionSummaryOutputSerializer(serializers.Serializer):
+    """Serializa el resumen de posiciones del usuario."""
+    open_positions = PositionOutputSerializer(many=True)
+    closed_positions = PositionOutputSerializer(many=True)
+    total_unrealized_pnl_usd = serializers.CharField()
+    total_realized_pnl_usd = serializers.CharField()
+    open_long_count = serializers.IntegerField()
+    open_short_count = serializers.IntegerField()
+
+
+class PositionsQuerySerializer(serializers.Serializer):
+    """Valida query params de GET /api/portfolio/positions/."""
+    status = serializers.ChoiceField(
+        choices=["", "OPEN", "CLOSED"],
+        required=False,
+        default="",
+        allow_blank=True,
+    )
 

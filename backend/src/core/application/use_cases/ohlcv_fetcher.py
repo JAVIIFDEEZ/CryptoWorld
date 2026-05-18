@@ -109,7 +109,8 @@ def _binance_klines_to_df(raw: list) -> pd.DataFrame:
     for col in ("open", "high", "low", "close", "volume"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["open", "high", "low", "close", "volume"])
-    return df[["open", "high", "low", "close", "volume"]].reset_index(drop=True)
+    df["timestamp"] = pd.to_numeric(df["open_time"], errors="coerce")
+    return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
 
 
 def _coingecko_ohlc_to_df(raw: list) -> pd.DataFrame:
@@ -120,8 +121,9 @@ def _coingecko_ohlc_to_df(raw: list) -> pd.DataFrame:
     for col in ("open", "high", "low", "close"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["volume"] = 0.0
+    df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["open", "high", "low", "close"])
-    return df[["open", "high", "low", "close", "volume"]].reset_index(drop=True)
+    return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
 
 
 def _interval_limit_to_days(interval: str, limit: int) -> int:

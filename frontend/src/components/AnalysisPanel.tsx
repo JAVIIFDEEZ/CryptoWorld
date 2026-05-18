@@ -560,6 +560,33 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
         <p className="text-xs text-slate-300 mt-1">{data.description}</p>
       </div>
 
+      {/* Periodo analizado */}
+      {(data.start_date || data.candles_count) && (
+        <div className="bg-blue-950/40 border border-blue-700/30 rounded-lg px-3 py-2 flex flex-wrap gap-x-5 gap-y-1">
+          {data.start_date && data.end_date && (
+            <span className="text-[11px]">
+              <span className="text-slate-500 uppercase text-[10px] mr-1">Periodo:</span>
+              <span className="text-slate-300 font-mono">{data.start_date}</span>
+              <span className="mx-1 text-slate-600">→</span>
+              <span className="text-slate-300 font-mono">{data.end_date}</span>
+              <span className="text-slate-500 ml-1">(UTC)</span>
+            </span>
+          )}
+          {data.candles_count && (
+            <span className="text-[11px]">
+              <span className="text-slate-500 uppercase text-[10px] mr-1">Velas:</span>
+              <span className="text-slate-300">{data.candles_count.toLocaleString()}</span>
+            </span>
+          )}
+          {data.interval && (
+            <span className="text-[11px]">
+              <span className="text-slate-500 uppercase text-[10px] mr-1">Intervalo:</span>
+              <span className="text-slate-300">{data.interval}</span>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Métricas principales */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricCard

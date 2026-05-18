@@ -57,6 +57,13 @@ from core.interfaces.api.serializers import (
     TradeHistoryQuerySerializer,
     CreateAlertSerializer,
     AlertOutputSerializer,
+    OpenPositionSerializer,
+    ClosePositionSerializer,
+    AddToPositionSerializer,
+    UpdatePositionSerializer,
+    PositionOutputSerializer,
+    PositionSummaryOutputSerializer,
+    PositionsQuerySerializer,
 )
 from core.application.use_cases.register_user import RegisterUserUseCase
 from core.application.use_cases.get_assets import GetAssetsUseCase
@@ -85,6 +92,11 @@ from core.application.use_cases.get_portfolio import GetPortfolioUseCase
 from core.application.use_cases.add_trade import AddTradeUseCase
 from core.application.use_cases.get_trade_history import GetTradeHistoryUseCase
 from core.application.use_cases.delete_trade import DeleteTradeUseCase
+from core.application.use_cases.open_position import OpenPositionUseCase
+from core.application.use_cases.close_position import ClosePositionUseCase
+from core.application.use_cases.scale_position import ScalePositionUseCase
+from core.application.use_cases.get_positions import GetPositionsUseCase
+from core.infrastructure.persistence.models import Position as PositionModel
 from core.application.use_cases.manage_alerts import (
     CreateAlertUseCase,
     ListAlertsUseCase,
@@ -110,7 +122,12 @@ from core.application.dto.asset_dto import (
     PatternsRequestDTO,
     BacktestRequestDTO,
 )
-from core.application.dto.portfolio_dto import AddTradeInputDTO
+from core.application.dto.portfolio_dto import (
+    AddTradeInputDTO,
+    OpenPositionInputDTO,
+    ClosePositionInputDTO,
+    AddToPositionInputDTO,
+)
 from core.application.dto.alerts_dto import CreateAlertInputDTO
 from core.infrastructure.persistence.repositories_impl import (
     DjangoUserRepository,
@@ -1099,3 +1116,159 @@ class AlertToggleView(APIView):
             AlertOutputSerializer(vars(alert)).data,
             status=status.HTTP_200_OK,
         )
+
+
+# ── Positions (modelo explícito) ──────────────────────────────────────────────
+
+class PositionListView(APIView):
+    """
+    GET  /api/portfolio/positions/  — Listar posiciones (filtrar por ?status=OPEN|CLOSED).
+    POST /api/portfolio/positions/  — Abrir una nueva posición LONG o SHORT.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query_ser = PositionsQuerySerializer(data=request.query_params)
+        if not query_ser.is_valid():
+            return Response(query_ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        status_filter = query_ser.validated_data.get("status") or None
+        summary = GetPositionsUseCase().execute(user=request.user, status=status_filter)
+
+        return Response(
+            PositionSummaryOutputSerializer(vars(summary)).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = OpenPositionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            position = OpenPositionUseCase().execute(
+                user=request.user,
+                dto=OpenPositionInputDTO(
+                    asset_symbol=v["asset_symbol"],
+                    direction=v["direction"],
+                    quantity=float(v["quantity"]),
+                    entry_price=float(v["entry_price"]),
+                    opened_at=v["opened_at"].isoformat(),
+                    label=v.get("label", ""),
+                    notes=v.get("notes", ""),
+                ),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            PositionOutputSerializer(vars(position)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PositionDetailView(APIView):
+    """
+    PATCH  /api/portfolio/positions/<position_id>/  — Actualizar label.
+    DELETE /api/portfolio/positions/<position_id>/  — Eliminar (sólo sin trades).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, position_id: int):
+        serializer = UpdatePositionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            pos = PositionModel.objects.get(pk=position_id, user=request.user)
+        except PositionModel.DoesNotExist:
+            return Response({"error": "Posición no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        pos.label = serializer.validated_data["label"]
+        pos.save(update_fields=["label", "updated_at"])
+
+        from core.application.use_cases.open_position import _build_position_dto
+        from decimal import Decimal
+        current_price = Decimal(str(pos.asset.current_price or pos.avg_entry_price))
+        dto = _build_position_dto(pos, current_price)
+        return Response(PositionOutputSerializer(vars(dto)).data, status=status.HTTP_200_OK)
+
+    def delete(self, request, position_id: int):
+        try:
+            pos = PositionModel.objects.get(pk=position_id, user=request.user)
+        except PositionModel.DoesNotExist:
+            return Response({"error": "Posición no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        if pos.trades.exists():
+            return Response(
+                {"error": "No se puede eliminar una posición que ya tiene trades asociados."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        pos.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PositionAddView(APIView):
+    """
+    POST /api/portfolio/positions/<position_id>/add/ — Ampliar posición (escalar entrada, AVCO).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, position_id: int):
+        serializer = AddToPositionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            position = ScalePositionUseCase().execute(
+                user=request.user,
+                position_id=position_id,
+                dto=AddToPositionInputDTO(
+                    quantity=float(v["quantity"]),
+                    entry_price=float(v["entry_price"]),
+                    executed_at=v["executed_at"].isoformat(),
+                    notes=v.get("notes", ""),
+                ),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            PositionOutputSerializer(vars(position)).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+class PositionCloseView(APIView):
+    """
+    POST /api/portfolio/positions/<position_id>/close/ — Cerrar posición parcial o totalmente.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, position_id: int):
+        serializer = ClosePositionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            position = ClosePositionUseCase().execute(
+                user=request.user,
+                position_id=position_id,
+                dto=ClosePositionInputDTO(
+                    close_quantity=float(v["close_quantity"]),
+                    close_price=float(v["close_price"]),
+                    executed_at=v["executed_at"].isoformat(),
+                    notes=v.get("notes", ""),
+                ),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            PositionOutputSerializer(vars(position)).data,
+            status=status.HTTP_200_OK,
+        )
+

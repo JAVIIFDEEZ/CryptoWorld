@@ -1,9 +1,12 @@
 /**
- * pages/BlockchainPage.tsx — Métricas on-chain de Bitcoin y multi-chain.
+ * pages/BlockchainPage.tsx — Explorador on-chain multi-chain.
  *
- * Fuentes:
- *   - BTC histórico: Blockchain.com Charts API (sin auth)
- *   - Multi-chain snapshot: Blockchair API (BTC, ETH, LTC, DOGE, BCH, XRP, ADA, DOT, XLM, XMR)
+ * Arquitectura de fuentes:
+ *   - Blockchair API   → estadísticas actuales (snapshot) para las 10 chains
+ *   - Blockchain.com   → series históricas de 8 métricas (solo BTC, gratuito)
+ *
+ * UX: el usuario navega por chain; Blockchair es la fuente principal;
+ * cuando se selecciona BTC se muestra además la sección de gráficos históricos.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -80,13 +83,15 @@ const METRICS_ORDER: OnChainMetric[] = [
   'avg_block_size',
 ]
 
-// ────────────────────────── Panel multi-chain (Blockchair) ────────
+// ────────────────────────── Colores por chain ────────────────────
 
-const MULTICHAIN_COLORS: Record<string, string> = {
+const CHAIN_COLORS: Record<string, string> = {
   BTC: '#f59e0b', ETH: '#6366f1', LTC: '#a3a3a3', DOGE: '#d97706',
   BCH: '#22c55e', XRP: '#0ea5e9', ADA: '#3b82f6', DOT: '#e879f9',
   XLM: '#38bdf8', XMR: '#f97316',
 }
+
+// ────────────────────────── Helpers de formato ───────────────────
 
 function fmtStatValue(value: number | string | null, unit: string): string {
   if (value === null || value === undefined) return '—'
@@ -112,315 +117,352 @@ function fmtGeneric(n: number): string {
   return n.toFixed(n < 1 ? 6 : 2)
 }
 
-function MultiChainPanel() {
-  const [symbol, setSymbol] = useState<MultiChainSymbol>('ETH')
-  const [stats, setStats] = useState<MultiChainStatItem[]>([])
-  const [meta, setMeta] = useState<{ best_block_time: string | null; best_block_height: number | null; source: string }>({ best_block_time: null, best_block_height: null, source: '' })
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  const fetch = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await blockchainService.getMultiChainStats(symbol)
-      if (res.error) { setError(res.error); setStats([]) }
-      else {
-        setStats(res.stats)
-        setMeta({ best_block_time: res.best_block_time, best_block_height: res.best_block_height, source: res.source })
-      }
-    } catch {
-      setError('Error al cargar estadísticas multi-chain')
-    } finally {
-      setLoading(false)
-    }
-  }, [symbol])
-
-  useEffect(() => { fetch() }, [fetch])
-
-  const color = MULTICHAIN_COLORS[symbol] ?? '#6366f1'
-
-  return (
-    <div className="mt-8">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold" style={{ backgroundColor: color + '33', color }}>⛓</div>
-        <div>
-          <h2 className="text-lg font-bold">Estadísticas Multi-chain</h2>
-          <p className="text-xs text-gray-400">Snapshot actual · Fuente: Blockchair</p>
-        </div>
-      </div>
-
-      {/* Selector de chain */}
-      <div className="flex flex-wrap gap-2 mb-5">
-        {MULTICHAIN_SYMBOLS.map(s => (
-          <button
-            key={s}
-            onClick={() => setSymbol(s)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border ${symbol === s ? 'text-white border-transparent' : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'}`}
-            style={symbol === s ? { backgroundColor: MULTICHAIN_COLORS[s] + '33', borderColor: MULTICHAIN_COLORS[s], color: MULTICHAIN_COLORS[s] } : {}}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-
-      {loading && (
-        <div className="flex justify-center py-10">
-          <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: color, borderTopColor: 'transparent' }} />
-        </div>
-      )}
-
-      {error && !loading && (
-        <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">{error}</div>
-      )}
-
-      {!loading && !error && stats.length > 0 && (
-        <>
-          {meta.best_block_time && (
-            <p className="text-xs text-gray-500 mb-3">
-              Último bloque: #{meta.best_block_height?.toLocaleString()} · {new Date(meta.best_block_time).toLocaleString('es-ES')}
-            </p>
-          )}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {stats.map(stat => (
-              <div key={stat.key} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
-                <p className="text-xs text-gray-400 mb-1 truncate">{stat.label}</p>
-                <p className="text-lg font-bold font-mono" style={{ color }}>{fmtStatValue(stat.value, stat.unit)}</p>
-                {stat.unit && stat.unit !== 'USD' && stat.unit !== '%' && (
-                  <p className="text-xs text-gray-500 mt-0.5">{stat.unit}</p>
-                )}
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-600 mt-3">Fuente: {meta.source}</p>
-        </>
-      )}
-    </div>
-  )
+function fmtValue(v: number): string {
+  if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`
+  return v.toFixed(2)
 }
 
 // ────────────────────────── Página principal ─────────────────────
 
 export default function BlockchainPage() {
+  const [chain, setChain] = useState<MultiChainSymbol>('BTC')
+
+  // ── Blockchair snapshot ──
+  const [snapStats, setSnapStats] = useState<MultiChainStatItem[]>([])
+  const [snapMeta, setSnapMeta] = useState<{
+    best_block_time: string | null
+    best_block_height: number | null
+    source: string
+  }>({ best_block_time: null, best_block_height: null, source: '' })
+  const [snapLoading, setSnapLoading] = useState(false)
+  const [snapError, setSnapError] = useState('')
+
+  // ── Blockchain.com historical (BTC only) ──
   const [metric, setMetric] = useState<OnChainMetric>('active_addresses')
   const [days, setDays] = useState(30)
-  const [data, setData] = useState<MetricPoint[]>([])
-  const [metaInfo, setMetaInfo] = useState({ label: '', description: '', source: '' })
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [chartData, setChartData] = useState<MetricPoint[]>([])
+  const [chartMeta, setChartMeta] = useState({ label: '', description: '', source: '' })
+  const [chartLoading, setChartLoading] = useState(false)
+  const [chartError, setChartError] = useState('')
   const [hovered, setHovered] = useState<MetricPoint | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const fetchMetric = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const color = CHAIN_COLORS[chain] ?? '#6366f1'
+  const chartColor = METRIC_COLORS[metric]
+
+  // Cargar snapshot Blockchair al cambiar chain
+  const fetchSnapshot = useCallback(async () => {
+    setSnapLoading(true)
+    setSnapError('')
     try {
-      const res = await blockchainService.getMetrics(metric, days)
+      const res = await blockchainService.getMultiChainStats(chain)
       if (res.error) {
-        setError(res.error)
-        setData([])
+        setSnapError(res.error)
+        setSnapStats([])
       } else {
-        setData(res.data)
-        setMetaInfo({
-          label: res.metric_label,
-          description: res.description,
+        setSnapStats(res.stats)
+        setSnapMeta({
+          best_block_time: res.best_block_time,
+          best_block_height: res.best_block_height,
           source: res.source,
         })
       }
     } catch {
-      setError('Error al cargar las métricas on-chain')
+      setSnapError('Error al cargar estadísticas de la blockchain')
     } finally {
-      setLoading(false)
+      setSnapLoading(false)
     }
-  }, [metric, days])
+  }, [chain])
 
-  useEffect(() => {
-    fetchMetric()
-  }, [fetchMetric])
+  useEffect(() => { fetchSnapshot() }, [fetchSnapshot])
 
-  const fmtValue = (v: number) => {
-    if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`
-    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
-    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
-    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`
-    return v.toFixed(2)
-  }
+  // Cargar gráfico Blockchain.com (solo cuando chain == BTC)
+  const fetchChart = useCallback(async () => {
+    if (chain !== 'BTC') return
+    setChartLoading(true)
+    setChartError('')
+    try {
+      const res = await blockchainService.getMetrics(metric, days)
+      if (res.error) {
+        setChartError(res.error)
+        setChartData([])
+      } else {
+        setChartData(res.data)
+        setChartMeta({ label: res.metric_label, description: res.description, source: res.source })
+      }
+    } catch {
+      setChartError('Error al cargar las métricas históricas')
+    } finally {
+      setChartLoading(false)
+    }
+  }, [chain, metric, days])
 
-  const latestValue = data.length > 0 ? data[data.length - 1].value : null
-  const firstValue = data.length > 0 ? data[0].value : null
+  useEffect(() => { fetchChart() }, [fetchChart])
+
+  const latestValue = chartData.length > 0 ? chartData[chartData.length - 1].value : null
+  const firstValue = chartData.length > 0 ? chartData[0].value : null
   const pct =
     latestValue != null && firstValue != null && firstValue !== 0
       ? ((latestValue - firstValue) / firstValue) * 100
       : null
   const isUp = pct != null && pct >= 0
-  const color = METRIC_COLORS[metric]
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-5xl mx-auto">
-        {/* Cabecera */}
+
+        {/* ── Cabecera ── */}
         <div className="mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-yellow-500/20 flex items-center justify-center text-xl">₿</div>
-            <div>
-              <h1 className="text-2xl font-bold">Blockchain Analytics</h1>
-              <p className="text-gray-400 text-sm">Métricas on-chain de Bitcoin · Solo BTC</p>
-            </div>
-          </div>
+          <h1 className="text-2xl font-bold">Blockchain Analytics</h1>
+          <p className="text-gray-400 text-sm mt-1">
+            Estadísticas on-chain en tiempo real · 10 blockchains
+          </p>
         </div>
 
-        {/* Selector de métricas */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
-          {METRICS_ORDER.map(m => (
+        {/* ── Selector de chain ── */}
+        <div className="flex flex-wrap gap-2 mb-6">
+          {MULTICHAIN_SYMBOLS.map(s => (
             <button
-              key={m}
-              onClick={() => setMetric(m)}
-              className={`px-3 py-2 rounded-xl text-xs font-medium text-left transition-colors ${
-                metric === m
-                  ? 'text-white border'
-                  : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
+              key={s}
+              onClick={() => setChain(s)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors border ${
+                chain === s ? 'text-white border-transparent' : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'
               }`}
-              style={metric === m ? { backgroundColor: `${METRIC_COLORS[m]}22`, borderColor: METRIC_COLORS[m] } : {}}
+              style={chain === s ? { backgroundColor: CHAIN_COLORS[s] + '33', borderColor: CHAIN_COLORS[s], color: CHAIN_COLORS[s] } : {}}
             >
-              {METRIC_LABELS[m]}
+              {s}
             </button>
           ))}
         </div>
 
-        {/* Selector de período */}
-        <div className="flex gap-2 mb-6">
-          {[7, 30, 90, 180, 365].map(d => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                days === d ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
-              }`}
-            >
-              {d === 365 ? '1A' : d === 180 ? '6M' : d === 90 ? '3M' : d === 30 ? '1M' : '7D'}
-            </button>
-          ))}
-        </div>
-
-        {/* Gráfico */}
-        <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-          {/* Estadísticas */}
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <p className="text-xs text-gray-400 mb-1">{metaInfo.label || METRIC_LABELS[metric]}</p>
-              {latestValue != null && (
-                <p className="text-3xl font-bold font-mono">{fmtValue(latestValue)}</p>
-              )}
-              {pct != null && (
-                <p className={`text-sm font-medium mt-1 ${isUp ? 'text-green-400' : 'text-red-400'}`}>
-                  {isUp ? '▲' : '▼'} {Math.abs(pct).toFixed(2)}% en {days}d
-                </p>
-              )}
-              {metaInfo.description && (
-                <p className="text-xs text-gray-500 mt-1 max-w-md">{metaInfo.description}</p>
-              )}
-            </div>
-            {hovered && (
-              <div className="text-right text-sm">
-                <p className="text-gray-400 text-xs">
-                  {new Date(hovered.timestamp * 1000).toLocaleDateString('es-ES')}
-                </p>
-                <p className="font-mono font-bold">{fmtValue(hovered.value)}</p>
-              </div>
-            )}
-          </div>
-
-          {loading && (
-            <div className="flex justify-center py-16">
+        {/* ── Snapshot Blockchair ── */}
+        <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
               <div
-                className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold"
+                style={{ backgroundColor: color + '33', color }}
+              >
+                ⛓
+              </div>
+              <div>
+                <h2 className="text-lg font-bold">{chain} — Estadísticas actuales</h2>
+                <p className="text-xs text-gray-400">Snapshot · Fuente: Blockchair</p>
+              </div>
+            </div>
+            <button
+              onClick={fetchSnapshot}
+              disabled={snapLoading}
+              className="text-xs text-gray-400 hover:text-white px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50"
+            >
+              ↻ Actualizar
+            </button>
+          </div>
+
+          {snapMeta.best_block_time && (
+            <p className="text-xs text-gray-500 mb-4">
+              Último bloque: #{snapMeta.best_block_height?.toLocaleString()} ·{' '}
+              {new Date(snapMeta.best_block_time).toLocaleString('es-ES')}
+            </p>
+          )}
+
+          {snapLoading && (
+            <div className="flex justify-center py-10">
+              <div
+                className="w-7 h-7 border-2 rounded-full animate-spin"
                 style={{ borderColor: color, borderTopColor: 'transparent' }}
               />
             </div>
           )}
 
-          {error && !loading && (
+          {snapError && !snapLoading && (
             <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
-              {error}
+              {snapError}
             </div>
           )}
 
-          {!loading && !error && data.length === 1 && (
-            <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4 text-yellow-400 text-sm text-center py-8">
-              Solo hay 1 dato disponible para el período de 7 días en esta métrica.
-              <br />
-              <span className="text-yellow-500/70 text-xs">Selecciona 1M o más para ver la gráfica.</span>
-            </div>
-          )}
-
-          {!loading && !error && data.length > 1 && (
-            <div
-              ref={containerRef}
-              className="relative cursor-crosshair"
-              onMouseMove={e => {
-                if (!containerRef.current) return
-                const rect = containerRef.current.getBoundingClientRect()
-                const pct = (e.clientX - rect.left) / rect.width
-                const idx = Math.round(pct * (data.length - 1))
-                const clamped = Math.max(0, Math.min(data.length - 1, idx))
-                setHovered(data[clamped])
-              }}
-              onMouseLeave={() => setHovered(null)}
-            >
-              <SparkLine points={data} color={color} />
-            </div>
-          )}
-
-          {!loading && !error && data.length === 0 && (
-            <div className="py-12 text-center text-gray-500 text-sm">
-              No hay datos disponibles para esta métrica y período.
-            </div>
-          )}
-
-          {metaInfo.source && (
-            <p className="text-xs text-gray-600 mt-3">
-              Fuente: {metaInfo.source}
-            </p>
+          {!snapLoading && !snapError && snapStats.length > 0 && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {snapStats.map(stat => (
+                  <div key={stat.key} className="bg-gray-700/50 rounded-xl p-4 border border-gray-600/50">
+                    <p className="text-xs text-gray-400 mb-1 truncate">{stat.label}</p>
+                    <p className="text-lg font-bold font-mono" style={{ color }}>
+                      {fmtStatValue(stat.value, stat.unit)}
+                    </p>
+                    {stat.unit && stat.unit !== 'USD' && stat.unit !== '%' && (
+                      <p className="text-xs text-gray-500 mt-0.5">{stat.unit}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-600 mt-3">Fuente: {snapMeta.source}</p>
+            </>
           )}
         </div>
 
-        {/* Tabla de últimos valores */}
-        {data.length > 0 && !loading && (
-          <div className="mt-6 bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-700">
-              <h3 className="text-sm font-medium text-gray-300">Últimos 10 valores</h3>
+        {/* ── Sección histórica BTC (solo si chain == BTC) ── */}
+        {chain === 'BTC' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-2 h-2 rounded-full bg-yellow-500" />
+              <h2 className="text-base font-semibold text-gray-200">
+                Histórico BTC — Series temporales
+              </h2>
+              <span className="text-xs text-gray-500 ml-1">Fuente: Blockchain.com</span>
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-gray-400 border-b border-gray-700">
-                  <th className="text-left px-4 py-2">Fecha</th>
-                  <th className="text-right px-4 py-2">{METRIC_LABELS[metric]}</th>
-                  <th className="text-right px-4 py-2">Var. diaria</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.slice(-10).reverse().map((p, i, arr) => {
-                  const prev = arr[i + 1]
-                  const change = prev ? ((p.value - prev.value) / prev.value) * 100 : null
-                  return (
-                    <tr key={p.timestamp} className="border-b border-gray-700/40 hover:bg-gray-700/30">
-                      <td className="px-4 py-2 text-gray-400">
-                        {new Date(p.timestamp * 1000).toLocaleDateString('es-ES')}
-                      </td>
-                      <td className="text-right px-4 py-2 font-mono">{fmtValue(p.value)}</td>
-                      <td className={`text-right px-4 py-2 font-mono text-xs ${change == null ? '' : change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {change != null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '—'}
-                      </td>
+
+            {/* Selector de métricas */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+              {METRICS_ORDER.map(m => (
+                <button
+                  key={m}
+                  onClick={() => setMetric(m)}
+                  className={`px-3 py-2 rounded-xl text-xs font-medium text-left transition-colors ${
+                    metric === m
+                      ? 'text-white border'
+                      : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
+                  }`}
+                  style={metric === m ? { backgroundColor: `${chartColor}22`, borderColor: chartColor } : {}}
+                >
+                  {METRIC_LABELS[m]}
+                </button>
+              ))}
+            </div>
+
+            {/* Selector de período */}
+            <div className="flex gap-2 mb-4">
+              {[7, 30, 90, 180, 365].map(d => (
+                <button
+                  key={d}
+                  onClick={() => setDays(d)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+                    days === d ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {d === 365 ? '1A' : d === 180 ? '6M' : d === 90 ? '3M' : d === 30 ? '1M' : '7D'}
+                </button>
+              ))}
+            </div>
+
+            {/* Gráfico */}
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">{chartMeta.label || METRIC_LABELS[metric]}</p>
+                  {latestValue != null && (
+                    <p className="text-3xl font-bold font-mono">{fmtValue(latestValue)}</p>
+                  )}
+                  {pct != null && (
+                    <p className={`text-sm font-medium mt-1 ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+                      {isUp ? '▲' : '▼'} {Math.abs(pct).toFixed(2)}% en {days}d
+                    </p>
+                  )}
+                  {chartMeta.description && (
+                    <p className="text-xs text-gray-500 mt-1 max-w-md">{chartMeta.description}</p>
+                  )}
+                </div>
+                {hovered && (
+                  <div className="text-right text-sm">
+                    <p className="text-gray-400 text-xs">
+                      {new Date(hovered.timestamp * 1000).toLocaleDateString('es-ES')}
+                    </p>
+                    <p className="font-mono font-bold">{fmtValue(hovered.value)}</p>
+                  </div>
+                )}
+              </div>
+
+              {chartLoading && (
+                <div className="flex justify-center py-16">
+                  <div
+                    className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+                    style={{ borderColor: chartColor, borderTopColor: 'transparent' }}
+                  />
+                </div>
+              )}
+
+              {chartError && !chartLoading && (
+                <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
+                  {chartError}
+                </div>
+              )}
+
+              {!chartLoading && !chartError && chartData.length === 1 && (
+                <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4 text-yellow-400 text-sm text-center py-8">
+                  Solo hay 1 dato disponible para el período de 7 días en esta métrica.
+                  <br />
+                  <span className="text-yellow-500/70 text-xs">Selecciona 1M o más para ver la gráfica.</span>
+                </div>
+              )}
+
+              {!chartLoading && !chartError && chartData.length > 1 && (
+                <div
+                  ref={containerRef}
+                  className="relative cursor-crosshair"
+                  onMouseMove={e => {
+                    if (!containerRef.current) return
+                    const rect = containerRef.current.getBoundingClientRect()
+                    const pct = (e.clientX - rect.left) / rect.width
+                    const idx = Math.round(pct * (chartData.length - 1))
+                    const clamped = Math.max(0, Math.min(chartData.length - 1, idx))
+                    setHovered(chartData[clamped])
+                  }}
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  <SparkLine points={chartData} color={chartColor} />
+                </div>
+              )}
+
+              {!chartLoading && !chartError && chartData.length === 0 && (
+                <div className="py-12 text-center text-gray-500 text-sm">
+                  No hay datos disponibles para esta métrica y período.
+                </div>
+              )}
+
+              {chartMeta.source && (
+                <p className="text-xs text-gray-600 mt-3">Fuente: {chartMeta.source}</p>
+              )}
+            </div>
+
+            {/* Tabla de últimos valores */}
+            {chartData.length > 0 && !chartLoading && (
+              <div className="mt-4 bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-700">
+                  <h3 className="text-sm font-medium text-gray-300">Últimos 10 valores</h3>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-400 border-b border-gray-700">
+                      <th className="text-left px-4 py-2">Fecha</th>
+                      <th className="text-right px-4 py-2">{METRIC_LABELS[metric]}</th>
+                      <th className="text-right px-4 py-2">Var. diaria</th>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {chartData.slice(-10).reverse().map((p, i, arr) => {
+                      const prev = arr[i + 1]
+                      const change = prev ? ((p.value - prev.value) / prev.value) * 100 : null
+                      return (
+                        <tr key={p.timestamp} className="border-b border-gray-700/40 hover:bg-gray-700/30">
+                          <td className="px-4 py-2 text-gray-400">
+                            {new Date(p.timestamp * 1000).toLocaleDateString('es-ES')}
+                          </td>
+                          <td className="text-right px-4 py-2 font-mono">{fmtValue(p.value)}</td>
+                          <td className={`text-right px-4 py-2 font-mono text-xs ${change == null ? '' : change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {change != null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
-
-        {/* Panel multi-chain (Blockchair) */}
-        <MultiChainPanel />
 
       </div>
     </div>

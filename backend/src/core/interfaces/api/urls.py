@@ -95,6 +95,12 @@ urlpatterns = [
     path("portfolio/trades/", views.TradeListView.as_view(), name="portfolio-trades"),
     path("portfolio/trades/<int:trade_id>/", views.TradeDetailView.as_view(), name="portfolio-trade-detail"),
 
+    # ── Portfolio — Posiciones explícitas ────────────────────────────
+    path("portfolio/positions/", views.PositionListView.as_view(), name="position-list"),
+    path("portfolio/positions/<int:position_id>/", views.PositionDetailView.as_view(), name="position-detail"),
+    path("portfolio/positions/<int:position_id>/add/", views.PositionAddView.as_view(), name="position-add"),
+    path("portfolio/positions/<int:position_id>/close/", views.PositionCloseView.as_view(), name="position-close"),
+
     # ── Alerts ───────────────────────────────────────────────────────
     path("alerts/", views.AlertListView.as_view(), name="alert-list"),
     path("alerts/<int:alert_id>/", views.AlertDetailView.as_view(), name="alert-detail"),

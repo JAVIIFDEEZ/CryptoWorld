@@ -1,11 +1,19 @@
 /**
  * services/portfolioService.ts — API calls para el módulo Portfolio.
  *
- * Endpoints:
- *   GET  /api/portfolio/            → Resumen del portfolio con PnL
+ * Endpoints legacy (compatibilidad):
+ *   GET  /api/portfolio/            → Resumen net-position
  *   GET  /api/portfolio/trades/     → Historial de operaciones
  *   POST /api/portfolio/trades/     → Registrar nueva operación
  *   DELETE /api/portfolio/trades/:id/ → Eliminar operación
+ *
+ * Endpoints de posiciones explícitas (nuevos):
+ *   GET  /api/portfolio/positions/            → Lista de posiciones abiertas/cerradas
+ *   POST /api/portfolio/positions/            → Abrir nueva posición
+ *   PATCH /api/portfolio/positions/:id/       → Actualizar etiqueta
+ *   DELETE /api/portfolio/positions/:id/      → Eliminar posición (sin trades)
+ *   POST /api/portfolio/positions/:id/add/    → Ampliar posición (AVCO)
+ *   POST /api/portfolio/positions/:id/close/  → Cerrar posición (parcial o total)
  */
 
 import apiClient from './api'
@@ -66,6 +74,63 @@ export interface TradeFilters {
   limit?: number
 }
 
+// ── Tipos para el modelo de posiciones explícitas ──────────────────────────
+
+export interface Position {
+  id: number
+  asset_symbol: string
+  asset_name: string
+  logo_url: string | null
+  direction: 'LONG' | 'SHORT'
+  status: 'OPEN' | 'CLOSED'
+  label: string
+  avg_entry_price: string
+  open_quantity: string
+  initial_quantity: string
+  current_price: string
+  unrealized_pnl_usd: string
+  unrealized_pnl_pct: string
+  realized_pnl_usd: string
+  total_pnl_usd: string
+  is_profit: boolean
+  opened_at: string
+  closed_at: string | null
+  trades_count: number
+}
+
+export interface PositionSummary {
+  open_positions: Position[]
+  closed_positions: Position[]
+  total_unrealized_pnl_usd: string
+  total_realized_pnl_usd: string
+  open_long_count: number
+  open_short_count: number
+}
+
+export interface OpenPositionPayload {
+  asset_symbol: string
+  direction: 'LONG' | 'SHORT'
+  quantity: number
+  entry_price: number
+  opened_at: string   // ISO 8601
+  label?: string
+  notes?: string
+}
+
+export interface ClosePositionPayload {
+  close_quantity: number
+  close_price: number
+  executed_at: string  // ISO 8601
+  notes?: string
+}
+
+export interface AddToPositionPayload {
+  quantity: number
+  entry_price: number
+  executed_at: string  // ISO 8601
+  notes?: string
+}
+
 export const portfolioService = {
   /** Obtener el precio actual de un activo por símbolo (null si no está en el catálogo) */
   getAssetPrice: async (symbol: string): Promise<number | null> => {
@@ -81,7 +146,7 @@ export const portfolioService = {
     }
   },
 
-  /** Obtener resumen del portfolio con posiciones abiertas y PnL */
+  /** Obtener resumen del portfolio con posiciones abiertas y PnL (legacy) */
   getSummary: async (): Promise<PortfolioSummary> => {
     const { data } = await apiClient.get('/portfolio/')
     return data
@@ -97,7 +162,7 @@ export const portfolioService = {
     return data
   },
 
-  /** Registrar una nueva operación (compra o venta) */
+  /** Registrar una nueva operación (compra o venta) — legacy */
   addTrade: async (payload: AddTradePayload): Promise<Trade> => {
     const { data } = await apiClient.post('/portfolio/trades/', payload)
     return data
@@ -106,5 +171,43 @@ export const portfolioService = {
   /** Eliminar una operación del historial */
   deleteTrade: async (tradeId: number): Promise<void> => {
     await apiClient.delete(`/portfolio/trades/${tradeId}/`)
+  },
+
+  // ── Posiciones explícitas ──────────────────────────────────────────
+
+  /** Obtener todas las posiciones (OPEN + CLOSED) del usuario */
+  getPositions: async (statusFilter?: 'OPEN' | 'CLOSED'): Promise<PositionSummary> => {
+    const params = statusFilter ? `?status=${statusFilter}` : ''
+    const { data } = await apiClient.get(`/portfolio/positions/${params}`)
+    return data
+  },
+
+  /** Abrir una nueva posición LONG o SHORT */
+  openPosition: async (payload: OpenPositionPayload): Promise<Position> => {
+    const { data } = await apiClient.post('/portfolio/positions/', payload)
+    return data
+  },
+
+  /** Ampliar una posición existente (recalcula AVCO) */
+  addToPosition: async (positionId: number, payload: AddToPositionPayload): Promise<Position> => {
+    const { data } = await apiClient.post(`/portfolio/positions/${positionId}/add/`, payload)
+    return data
+  },
+
+  /** Cerrar una posición (parcial o total) */
+  closePosition: async (positionId: number, payload: ClosePositionPayload): Promise<Position> => {
+    const { data } = await apiClient.post(`/portfolio/positions/${positionId}/close/`, payload)
+    return data
+  },
+
+  /** Actualizar la etiqueta de una posición */
+  updatePositionLabel: async (positionId: number, label: string): Promise<Position> => {
+    const { data } = await apiClient.patch(`/portfolio/positions/${positionId}/`, { label })
+    return data
+  },
+
+  /** Eliminar una posición (sólo si no tiene trades) */
+  deletePosition: async (positionId: number): Promise<void> => {
+    await apiClient.delete(`/portfolio/positions/${positionId}/`)
   },
 }
