@@ -66,8 +66,8 @@ const TOOL_CATEGORIES: readonly ToolCategory[] = [
       { id: 'parallelStraightLine', label: 'Canal paralelo',  icon: '⫼' },
       { id: 'priceChannelLine',     label: 'Canal de precio',  icon: '⫿' },
       { id: 'fibonacciLine',        label: 'Fibonacci',        icon: 'φ' },
-      { id: 'simpleAnnotation',     label: 'Anotación',        icon: '📝' },
-      { id: 'simpleTag',            label: 'Etiqueta',         icon: '🏷' },
+      { id: 'simpleAnnotation',     label: 'Anotación',        icon: '✏' },
+      { id: 'simpleTag',            label: 'Etiqueta',         icon: '▤' },
     ],
   },
 ]
@@ -115,7 +115,7 @@ const INDICATORS: readonly IndicatorDef[] = [
 // ── Tipos de gráfico ─────────────────────────────────────────────
 
 const CHART_TYPES = [
-  { type: 'candle_solid',  label: 'Velas',    icon: '🕯' },
+  { type: 'candle_solid',  label: 'Velas',    icon: '▊' },
   { type: 'candle_stroke', label: 'Huecas',   icon: '⬜' },
   { type: 'ohlc',          label: 'OHLC',     icon: '┤' },
   { type: 'area',          label: 'Área',     icon: '▓' },
@@ -465,7 +465,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
             className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
             title="Tipo de gráfico"
           >
-            {CHART_TYPES.find((ct) => ct.type === chartType)?.icon ?? '🕯'} Tipo ▾
+            {CHART_TYPES.find((ct) => ct.type === chartType)?.label ?? 'Velas'} ▾
           </button>
           {showChartTypes && (
             <div className="absolute left-0 top-full mt-1 w-40 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl z-50 py-1">
@@ -477,7 +477,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
                     chartType === ct.type ? 'bg-blue-600/30 text-blue-300' : 'text-slate-200 hover:bg-slate-700'
                   }`}
                 >
-                  <span>{ct.icon}</span> {ct.label}
+                  <span>{ct.icon}</span>{ct.label}
                 </button>
               ))}
             </div>
@@ -492,7 +492,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
               showIndicators ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-700'
             }`}
           >
-            📊 Indicadores
+            Indicadores
             <span className="text-[10px] bg-slate-600 text-slate-200 rounded-full w-4 h-4 inline-flex items-center justify-center ml-0.5">
               {activeIndicators.size}
             </span>
@@ -532,7 +532,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
                   disabled={isVolDisabled}
                   title={isVolDisabled ? 'No disponible (fuente CoinGecko sin volumen)' : ind.label}
                 >
-                  <span className="text-slate-200">{ind.label}{isVolDisabled ? ' ⚠' : ''}</span>
+                  <span className="text-slate-200">{ind.label}{isVolDisabled ? ' (!)' : ''}</span>
                   {activeIndicators.has(ind.name)
                     ? <span className="text-green-400 text-sm font-bold">✓</span>
                     : <span className="text-slate-600 text-sm">○</span>}
@@ -561,7 +561,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
             magnetOn ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-700'
           }`}
         >
-          🧲
+          Imán
         </button>
       </div>
 
@@ -617,7 +617,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
               className="ml-1.5 text-slate-400 hover:text-red-400"
               title="Cancelar (Esc)"
             >
-              ✕
+              ×
             </button>
           </span>
         )}
@@ -637,7 +637,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
           title="Eliminar todos los dibujos"
           className="px-2 py-1 rounded text-xs text-slate-400 hover:text-red-400 hover:bg-red-900/20 transition-colors shrink-0"
         >
-          🗑 Limpiar
+          Limpiar
         </button>
       </div>
 
