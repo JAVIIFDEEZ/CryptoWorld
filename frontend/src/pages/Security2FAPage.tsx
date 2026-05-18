@@ -30,10 +30,10 @@ function Security2FAPage() {
     try {
       const data = await authService.setup2FA()
       setQrCodeBase64(data.qr_code_base64)
-      setMessage('QR generado. Escanealo en tu app y confirma con un codigo de 6 digitos.')
+      setMessage('QR generado. Escanéalo en tu app y confirma con un código de 6 dígitos.')
     } catch (err: unknown) {
       const axiosError = err as { response?: { data?: { error?: string } } }
-      setError(axiosError?.response?.data?.error ?? 'No se pudo iniciar la configuracion 2FA.')
+      setError(axiosError?.response?.data?.error ?? 'No se pudo iniciar la configuración 2FA.')
     } finally {
       setIsLoading(false)
     }
@@ -101,7 +101,7 @@ function Security2FAPage() {
               disabled={isLoading}
               className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white text-sm font-semibold px-4 py-2 rounded-lg"
             >
-              Generar QR de configuracion
+              Generar QR de configuración
             </button>
 
             {qrCodeBase64 && (
