@@ -1,83 +1,100 @@
-/**
- * pages/PortfolioPage.tsx — Gestión de portfolio de criptomonedas.
+﻿/**
+ * pages/PortfolioPage.tsx - Gestión de portfolio con posiciones explícitas.
  *
- * Permite al usuario ver su portfolio (posiciones abiertas + PnL),
- * registrar operaciones de compra/venta y ver el historial de trades.
+ * Modelo Hedge: cada posición es independiente (LONG o SHORT).
+ * Es posible tener múltiples posiciones simultáneas en la misma dirección
+ * o en dirección opuesta sobre el mismo activo.
+ *
+ * Tabs:
+ *   1. Posiciones Abiertas   - PnL no realizado en tiempo real
+ *   2. Posiciones Cerradas   - PnL realizado histórico
+ *   3. Historial de Trades   - registro raw de todas las operaciones
  */
 
 import { useState, useEffect, useCallback } from 'react'
 import {
   portfolioService,
-  type PortfolioSummary,
+  type Position,
+  type PositionSummary,
   type Trade,
-  type AddTradePayload,
+  type OpenPositionPayload,
+  type ClosePositionPayload,
+  type AddToPositionPayload,
 } from '../services/portfolioService'
 
-// ────────────────────────── Helpers ──────────────────────────────
+// -- Helpers --
 
-const fmt = (n: number, decimals = 2) =>
+const fmt = (n: string | number, decimals = 2) =>
   new Intl.NumberFormat('es-ES', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
-  }).format(n)
+  }).format(typeof n === 'string' ? Number.parseFloat(n) : n)
 
-const fmtUSD = (n: number) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
+const fmtUSD = (n: string | number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+    typeof n === 'string' ? Number.parseFloat(n) : n,
+  )
 
-// ────────────────────────── Formulario AddTrade ───────────────────
+const pnlColor = (is_profit: boolean) => (is_profit ? 'text-green-400' : 'text-red-400')
+const pnlBg = (is_profit: boolean) => (is_profit ? 'bg-green-900/30' : 'bg-red-900/30')
+const sign = (isProfit: boolean) => (isProfit ? '+' : '')
+const NOW_ISO = () => new Date().toISOString().slice(0, 16)
 
-const EMPTY_FORM: AddTradePayload = {
-  asset_symbol: '',
-  trade_type: 'BUY',
-  quantity: 0,
-  price_usd: 0,
-  executed_at: new Date().toISOString().slice(0, 16),
-  notes: '',
+// -- Badges --
+
+function DirectionBadge({ direction }: { direction: 'LONG' | 'SHORT' }) {
+  return direction === 'LONG' ? (
+    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-700/50">
+      LONG
+    </span>
+  ) : (
+    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-orange-900/50 text-orange-400 border border-orange-700/50">
+      SHORT
+    </span>
+  )
 }
 
-function AddTradeModal({
+// -- Modal: Abrir posición --
+
+function OpenPositionModal({
   onClose,
-  onAdded,
+  onCreated,
 }: {
   onClose: () => void
-  onAdded: () => void
+  onCreated: () => void
 }) {
-  const [form, setForm] = useState<AddTradePayload>(EMPTY_FORM)
+  const [form, setForm] = useState<OpenPositionPayload>({
+    asset_symbol: '',
+    direction: 'LONG',
+    quantity: 0,
+    entry_price: 0,
+    opened_at: NOW_ISO(),
+    label: '',
+    notes: '',
+  })
   const [totalUsd, setTotalUsd] = useState('')
   const [loading, setLoading] = useState(false)
   const [fetchingPrice, setFetchingPrice] = useState(false)
   const [priceNote, setPriceNote] = useState('')
   const [error, setError] = useState('')
 
-  // Cantidad cambia → actualiza Total
   const handleQtyChange = (val: string) => {
-    const qty = parseFloat(val) || 0
-    if (qty > 0 && form.price_usd > 0) {
-      setTotalUsd((qty * form.price_usd).toFixed(2))
-    }
+    const qty = Number.parseFloat(val) || 0
+    if (qty > 0 && form.entry_price > 0) setTotalUsd((qty * form.entry_price).toFixed(2))
     setForm(f => ({ ...f, quantity: qty }))
   }
-
-  // Precio cambia → actualiza Total
   const handlePriceChange = (val: string) => {
-    const price = parseFloat(val) || 0
-    if (price > 0 && form.quantity > 0) {
-      setTotalUsd((form.quantity * price).toFixed(2))
-    }
-    setForm(f => ({ ...f, price_usd: price }))
+    const price = Number.parseFloat(val) || 0
+    if (price > 0 && form.quantity > 0) setTotalUsd((form.quantity * price).toFixed(2))
+    setForm(f => ({ ...f, entry_price: price }))
     if (val) setPriceNote('')
   }
-
-  // Total cambia → calcula Cantidad = Total / Precio
   const handleTotalChange = (val: string) => {
     setTotalUsd(val)
-    const total = parseFloat(val) || 0
-    if (total > 0 && form.price_usd > 0) {
-      setForm(f => ({ ...f, quantity: parseFloat((total / f.price_usd).toFixed(10)) }))
-    }
+    const total = Number.parseFloat(val) || 0
+    if (total > 0 && form.entry_price > 0)
+      setForm(f => ({ ...f, quantity: Number.parseFloat((total / f.entry_price).toFixed(10)) }))
   }
-
-  // Obtener precio actual del catálogo
   const fetchPrice = async () => {
     if (!form.asset_symbol) return
     setFetchingPrice(true)
@@ -85,13 +102,11 @@ function AddTradeModal({
     const price = await portfolioService.getAssetPrice(form.asset_symbol)
     if (price !== null && price > 0) {
       const qty = form.quantity
-      const tot = parseFloat(totalUsd) || 0
-      setForm(f => ({ ...f, price_usd: price }))
-      if (qty > 0) {
-        setTotalUsd((qty * price).toFixed(2))
-      } else if (tot > 0) {
-        setForm(f => ({ ...f, price_usd: price, quantity: parseFloat((tot / price).toFixed(10)) }))
-      }
+      const tot = Number.parseFloat(totalUsd) || 0
+      setForm(f => ({ ...f, entry_price: price }))
+      if (qty > 0) setTotalUsd((qty * price).toFixed(2))
+      else if (tot > 0)
+        setForm(f => ({ ...f, entry_price: price, quantity: Number.parseFloat((tot / price).toFixed(10)) }))
       setPriceNote(
         `Precio actual: $${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`,
       )
@@ -100,183 +115,129 @@ function AddTradeModal({
     }
     setFetchingPrice(false)
   }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     if (form.quantity <= 0) { setError('La cantidad debe ser mayor que cero.'); return }
-    if (form.price_usd <= 0) { setError('El precio debe ser mayor que cero.'); return }
+    if (form.entry_price <= 0) { setError('El precio debe ser mayor que cero.'); return }
     setLoading(true)
     try {
-      await portfolioService.addTrade({
-        ...form,
-        executed_at: new Date(form.executed_at).toISOString(),
-      })
-      onAdded()
+      await portfolioService.openPosition({ ...form, opened_at: new Date(form.opened_at).toISOString() })
+      onCreated()
       onClose()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      setError(msg ?? 'Error al registrar la operación')
+      setError(msg ?? 'Error al abrir la posición')
     } finally {
       setLoading(false)
     }
   }
-
-  const displayTotal = totalUsd || (form.quantity > 0 && form.price_usd > 0
-    ? (form.quantity * form.price_usd).toFixed(2)
-    : '')
-
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
+      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-5">
-          <h2 className="text-lg font-bold text-white">Registrar operación</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">✕</button>
+          <h2 className="text-lg font-bold text-white">Abrir posición</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Símbolo + botón precio */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">Símbolo</label>
             <div className="flex gap-2">
               <input
                 className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm uppercase placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                placeholder="BTC, ETH, SOL…"
+                placeholder="BTC, ETH, SOL..."
                 value={form.asset_symbol}
-                onChange={e => {
-                  setForm(f => ({ ...f, asset_symbol: e.target.value.toUpperCase() }))
-                  setPriceNote('')
-                }}
+                onChange={e => { setForm(f => ({ ...f, asset_symbol: e.target.value.toUpperCase() })); setPriceNote('') }}
                 required
               />
               <button
                 type="button"
                 onClick={fetchPrice}
                 disabled={fetchingPrice || !form.asset_symbol}
-                className="shrink-0 px-3 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white text-xs font-medium transition-colors whitespace-nowrap"
+                className="shrink-0 px-3 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white text-xs font-medium whitespace-nowrap"
               >
-                {fetchingPrice ? '…' : '📈 Precio actual'}
+                {fetchingPrice ? '...' : 'Precio actual'}
               </button>
             </div>
             {priceNote && (
-              <p className={`text-xs mt-1 ${priceNote.includes('no está') || priceNote.includes('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+              <p className={`text-xs mt-1 ${priceNote.includes('no está') ? 'text-red-400' : 'text-emerald-400'}`}>
                 {priceNote}
               </p>
             )}
           </div>
-
-          {/* Tipo */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Tipo</label>
+            <label className="block text-xs text-gray-400 mb-1">Dirección</label>
             <div className="flex gap-2">
-              {(['BUY', 'SELL'] as const).map(t => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setForm(f => ({ ...f, trade_type: t }))}
+              {(['LONG', 'SHORT'] as const).map(d => (
+                <button key={d} type="button"
+                  onClick={() => setForm(f => ({ ...f, direction: d }))}
                   className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    form.trade_type === t
-                      ? t === 'BUY'
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-red-600 text-white'
+                    form.direction === d
+                      ? d === 'LONG'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-orange-600 text-white'
                       : 'bg-gray-700 text-gray-400 hover:text-white'
                   }`}
                 >
-                  {t === 'BUY' ? '↑ Compra' : '↓ Venta'}
+                  {d === 'LONG' ? '↑ LONG' : '↓ SHORT'}
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Total USD — campo principal */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">
-              Total a invertir (USD)
-              <span className="ml-1 text-gray-600">— o introduce cantidad y precio manualmente</span>
-            </label>
+            <label className="block text-xs text-gray-400 mb-1">Total (USD)</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                placeholder="500"
+              <input type="number" step="any" min="0" placeholder="500"
                 className="w-full bg-gray-700 text-white rounded-lg pl-7 pr-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                value={displayTotal}
-                onChange={e => handleTotalChange(e.target.value)}
-              />
+                value={totalUsd} onChange={e => handleTotalChange(e.target.value)} />
             </div>
           </div>
-
-          {/* Cantidad + Precio */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Cantidad (tokens)</label>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                placeholder="0.005"
+              <input type="number" step="any" min="0" placeholder="0.005"
                 className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                value={form.quantity || ''}
-                onChange={e => handleQtyChange(e.target.value)}
-                required
-              />
+                value={form.quantity || ''} onChange={e => handleQtyChange(e.target.value)} required />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Precio por token (USD)</label>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                placeholder="94000"
+              <label className="block text-xs text-gray-400 mb-1">Precio entrada (USD)</label>
+              <input type="number" step="any" min="0" placeholder="94000"
                 className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                value={form.price_usd || ''}
-                onChange={e => handlePriceChange(e.target.value)}
-                required
-              />
+                value={form.entry_price || ''} onChange={e => handlePriceChange(e.target.value)} required />
             </div>
           </div>
-
-          {/* Fecha */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Fecha y hora</label>
-            <input
-              type="datetime-local"
+            <label className="block text-xs text-gray-400 mb-1">Fecha y hora de entrada</label>
+            <input type="datetime-local"
               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={form.executed_at}
-              onChange={e => setForm(f => ({ ...f, executed_at: e.target.value }))}
-              required
-            />
+              value={form.opened_at} onChange={e => setForm(f => ({ ...f, opened_at: e.target.value }))} required />
           </div>
-
-          {/* Notas */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Etiqueta (opcional)</label>
+            <input
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Estrategia largo plazo, DCA..."
+              value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
+          </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
             <input
               className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="Exchange, estrategia…"
-              value={form.notes}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-            />
+              placeholder="Exchange, contexto..."
+              value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
-
           {error && <p className="text-red-400 text-sm">{error}</p>}
-
           <div className="flex gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm"
-            >
+            <button type="button" onClick={onClose}
+              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm">
               Cancelar
             </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium"
-            >
-              {loading ? 'Guardando…' : 'Registrar'}
+            <button type="submit" disabled={loading}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium disabled:opacity-50 text-white ${
+                form.direction === 'LONG' ? 'bg-green-600 hover:bg-green-500' : 'bg-orange-600 hover:bg-orange-500'
+              }`}>
+              {loading ? 'Abriendo...' : `Abrir ${form.direction}`}
             </button>
           </div>
         </form>
@@ -285,25 +246,500 @@ function AddTradeModal({
   )
 }
 
-// ────────────────────────── Página principal ─────────────────────
+// -- Modal: Ampliar posición --
+
+function AddToPositionModal({
+  position,
+  onClose,
+  onDone,
+}: {
+  position: Position
+  onClose: () => void
+  onDone: () => void
+}) {
+  const currentPrice = Number.parseFloat(position.current_price)
+  const [form, setForm] = useState<AddToPositionPayload>({
+    quantity: 0,
+    entry_price: Math.max(currentPrice, 0),
+    executed_at: NOW_ISO(),
+    notes: '',
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (form.quantity <= 0) { setError('La cantidad debe ser mayor que cero.'); return }
+    if (form.entry_price <= 0) { setError('El precio debe ser mayor que cero.'); return }
+    setLoading(true)
+    try {
+      await portfolioService.addToPosition(position.id, {
+        ...form,
+        executed_at: new Date(form.executed_at).toISOString(),
+      })
+      onDone()
+      onClose()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setError(msg ?? 'Error al ampliar la posición')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">Ampliar posición</h2>
+            <div className="flex items-center gap-2 mt-1">
+              <DirectionBadge direction={position.direction} />
+              <span className="text-sm text-gray-300">
+                {position.asset_symbol} · entrada media: {fmtUSD(position.avg_entry_price)}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Cantidad a añadir</label>
+              <input type="number" step="any" min="0" placeholder="0.01"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={form.quantity || ''}
+                onChange={e => setForm(f => ({ ...f, quantity: Number.parseFloat(e.target.value) || 0 }))}
+                required />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Precio entrada (USD)</label>
+              <input type="number" step="any" min="0"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={form.entry_price || ''}
+                onChange={e => setForm(f => ({ ...f, entry_price: Number.parseFloat(e.target.value) || 0 }))}
+                required />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Fecha y hora</label>
+            <input type="datetime-local"
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={form.executed_at}
+              onChange={e => setForm(f => ({ ...f, executed_at: e.target.value }))}
+              required />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
+            <input
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Exchange, contexto..."
+              value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm">
+              Cancelar
+            </button>
+            <button type="submit" disabled={loading}
+              className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
+              {loading ? 'Guardando...' : 'Ampliar posición'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// -- Modal: Cerrar posición --
+
+function ClosePositionModal({
+  position,
+  onClose,
+  onDone,
+}: {
+  position: Position
+  onClose: () => void
+  onDone: () => void
+}) {
+  const currentPrice = Number.parseFloat(position.current_price)
+  const openQty = Number.parseFloat(position.open_quantity)
+  const [form, setForm] = useState<ClosePositionPayload>({
+    close_quantity: openQty,
+    close_price: Math.max(currentPrice, 0),
+    executed_at: NOW_ISO(),
+    notes: '',
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const isFullClose = form.close_quantity >= openQty
+  const avgEntry = Number.parseFloat(position.avg_entry_price)
+  const estimatedPnl =
+    form.close_price > 0 && form.close_quantity > 0
+      ? position.direction === 'LONG'
+        ? (form.close_price - avgEntry) * form.close_quantity
+        : (avgEntry - form.close_price) * form.close_quantity
+      : null
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (form.close_quantity <= 0) { setError('La cantidad debe ser mayor que cero.'); return }
+    if (form.close_quantity > openQty) { setError(`No puedes cerrar más de ${openQty} tokens.`); return }
+    if (form.close_price <= 0) { setError('El precio de cierre debe ser mayor que cero.'); return }
+    setLoading(true)
+    try {
+      await portfolioService.closePosition(position.id, {
+        ...form,
+        executed_at: new Date(form.executed_at).toISOString(),
+      })
+      onDone()
+      onClose()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setError(msg ?? 'Error al cerrar la posición')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">Cerrar posición</h2>
+            <div className="flex items-center gap-2 mt-1">
+              <DirectionBadge direction={position.direction} />
+              <span className="text-sm text-gray-300">
+                {position.asset_symbol} · {fmt(position.open_quantity, 6)} tokens disponibles
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex gap-2">
+            {[25, 50, 75, 100].map(pct => (
+              <button key={pct} type="button"
+                onClick={() => setForm(f => ({
+                  ...f,
+                  close_quantity: Number.parseFloat((openQty * pct / 100).toFixed(10)),
+                }))}
+                className="flex-1 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300">
+                {pct}%
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Cantidad{' '}
+                {isFullClose && <span className="text-orange-400">(cierre total)</span>}
+              </label>
+              <input type="number" step="any" min="0" max={openQty}
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={form.close_quantity || ''}
+                onChange={e => setForm(f => ({ ...f, close_quantity: Number.parseFloat(e.target.value) || 0 }))}
+                required />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Precio de cierre (USD)</label>
+              <input type="number" step="any" min="0"
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={form.close_price || ''}
+                onChange={e => setForm(f => ({ ...f, close_price: Number.parseFloat(e.target.value) || 0 }))}
+                required />
+            </div>
+          </div>
+          {estimatedPnl !== null && (
+            <div className={`rounded-lg p-3 text-sm ${estimatedPnl >= 0 ? 'bg-green-900/30 text-green-300' : 'bg-red-900/30 text-red-300'}`}>
+              PnL estimado: <strong>{estimatedPnl >= 0 ? '+' : ''}{fmtUSD(estimatedPnl)}</strong>
+            </div>
+          )}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Fecha y hora</label>
+            <input type="datetime-local"
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={form.executed_at}
+              onChange={e => setForm(f => ({ ...f, executed_at: e.target.value }))}
+              required />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
+            <input
+              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Motivo del cierre..."
+              value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm">
+              Cancelar
+            </button>
+            <button type="submit" disabled={loading}
+              className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
+              {loading ? 'Cerrando...' : isFullClose ? 'Cerrar posición' : 'Cierre parcial'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// -- Tabla posiciones abiertas --
+
+function OpenPositionsTable({
+  positions,
+  onAdd,
+  onClose,
+  onDelete,
+}: {
+  positions: Position[]
+  onAdd: (p: Position) => void
+  onClose: (p: Position) => void
+  onDelete: (p: Position) => void
+}) {
+  if (positions.length === 0) {
+    return (
+      <div className="bg-gray-800 rounded-xl p-10 text-center text-gray-400">
+        <p className="text-base font-medium mb-1">Sin posiciones abiertas</p>
+        <p className="text-sm">Pulsa "Nueva posición" para abrir tu primera posición LONG o SHORT.</p>
+      </div>
+    )
+  }
+  return (
+    <div className="bg-gray-800 rounded-xl overflow-x-auto">
+      <table className="w-full text-sm min-w-[760px]">
+        <thead>
+          <tr className="text-gray-400 text-xs border-b border-gray-700">
+            <th className="text-left px-4 py-3">Activo</th>
+            <th className="text-right px-4 py-3">Cantidad abierta</th>
+            <th className="text-right px-4 py-3">Precio medio</th>
+            <th className="text-right px-4 py-3">Precio actual</th>
+            <th className="text-right px-4 py-3">PnL no realizado</th>
+            <th className="text-right px-4 py-3">PnL realizado</th>
+            <th className="text-right px-4 py-3">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {positions.map(pos => {
+            const realizedNum = Number.parseFloat(pos.realized_pnl_usd)
+            return (
+              <tr key={pos.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    {pos.logo_url && (
+                      <img src={pos.logo_url} alt={pos.asset_symbol} className="w-6 h-6 rounded-full" />
+                    )}
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{pos.asset_symbol}</span>
+                        <DirectionBadge direction={pos.direction} />
+                      </div>
+                      <p className="text-xs text-gray-400">{pos.asset_name}</p>
+                      {pos.label && <p className="text-xs text-blue-400/70 mt-0.5">{pos.label}</p>}
+                    </div>
+                  </div>
+                </td>
+                <td className="text-right px-4 py-3 font-mono">{fmt(pos.open_quantity, 6)}</td>
+                <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.avg_entry_price)}</td>
+                <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.current_price)}</td>
+                <td className={`text-right px-4 py-3 font-mono ${pnlColor(pos.is_profit)}`}>
+                  {sign(pos.is_profit)}{fmtUSD(pos.unrealized_pnl_usd)}<br />
+                  <span className="text-xs">{sign(pos.is_profit)}{fmt(pos.unrealized_pnl_pct)}%</span>
+                </td>
+                <td className={`text-right px-4 py-3 font-mono ${realizedNum >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {realizedNum >= 0 ? '+' : ''}{fmtUSD(pos.realized_pnl_usd)}
+                </td>
+                <td className="text-right px-4 py-3">
+                  <div className="flex justify-end gap-1.5">
+                    <button onClick={() => onAdd(pos)}
+                      className="px-2 py-1 rounded bg-blue-900/50 hover:bg-blue-700/60 text-blue-300 text-xs">
+                      + Ampliar
+                    </button>
+                    <button onClick={() => onClose(pos)}
+                      className="px-2 py-1 rounded bg-red-900/40 hover:bg-red-700/50 text-red-300 text-xs">
+                      Cerrar
+                    </button>
+                    {pos.trades_count === 0 && (
+                      <button onClick={() => onDelete(pos)}
+                        className="px-2 py-1 rounded bg-gray-700/50 hover:bg-gray-600/60 text-gray-400 text-xs"
+                        title="Eliminar (sin trades)">
+                        Borrar
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// -- Tabla posiciones cerradas --
+
+function ClosedPositionsTable({ positions }: { positions: Position[] }) {
+  if (positions.length === 0) {
+    return (
+      <div className="bg-gray-800 rounded-xl p-10 text-center text-gray-400">
+        <p>No hay posiciones cerradas aún.</p>
+      </div>
+    )
+  }
+  return (
+    <div className="bg-gray-800 rounded-xl overflow-x-auto">
+      <table className="w-full text-sm min-w-[640px]">
+        <thead>
+          <tr className="text-gray-400 text-xs border-b border-gray-700">
+            <th className="text-left px-4 py-3">Activo</th>
+            <th className="text-right px-4 py-3">Cantidad inicial</th>
+            <th className="text-right px-4 py-3">Precio entrada</th>
+            <th className="text-right px-4 py-3">PnL realizado</th>
+            <th className="text-right px-4 py-3">Apertura</th>
+            <th className="text-right px-4 py-3">Cierre</th>
+          </tr>
+        </thead>
+        <tbody>
+          {positions.map(pos => {
+            const realized = Number.parseFloat(pos.realized_pnl_usd)
+            const isProfit = realized >= 0
+            return (
+              <tr key={pos.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    {pos.logo_url && (
+                      <img src={pos.logo_url} alt={pos.asset_symbol} className="w-6 h-6 rounded-full" />
+                    )}
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{pos.asset_symbol}</span>
+                        <DirectionBadge direction={pos.direction} />
+                      </div>
+                      {pos.label && <p className="text-xs text-blue-400/70">{pos.label}</p>}
+                    </div>
+                  </div>
+                </td>
+                <td className="text-right px-4 py-3 font-mono">{fmt(pos.initial_quantity, 6)}</td>
+                <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.avg_entry_price)}</td>
+                <td className={`text-right px-4 py-3 font-mono font-semibold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                  {isProfit ? '+' : ''}{fmtUSD(realized)}
+                </td>
+                <td className="text-right px-4 py-3 text-gray-400 text-xs">
+                  {new Date(pos.opened_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+                </td>
+                <td className="text-right px-4 py-3 text-gray-400 text-xs">
+                  {pos.closed_at
+                    ? new Date(pos.closed_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })
+                    : '—'}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// -- Tabla historial de trades --
+
+function TradeHistoryTable({
+  trades,
+  onDelete,
+}: {
+  trades: Trade[]
+  onDelete: (id: number) => void
+}) {
+  if (trades.length === 0) {
+    return (
+      <div className="bg-gray-800 rounded-xl p-10 text-center text-gray-400">
+        <p>No hay operaciones registradas.</p>
+      </div>
+    )
+  }
+  return (
+    <div className="bg-gray-800 rounded-xl overflow-x-auto">
+      <table className="w-full text-sm min-w-[620px]">
+        <thead>
+          <tr className="text-gray-400 text-xs border-b border-gray-700">
+            <th className="text-left px-4 py-3">Fecha</th>
+            <th className="text-left px-4 py-3">Activo</th>
+            <th className="text-left px-4 py-3">Tipo</th>
+            <th className="text-right px-4 py-3">Cantidad</th>
+            <th className="text-right px-4 py-3">Precio</th>
+            <th className="text-right px-4 py-3">Total</th>
+            <th className="text-right px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {trades.map(t => (
+            <tr key={t.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
+              <td className="px-4 py-3 text-gray-400 text-xs">
+                {new Date(t.executed_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+              </td>
+              <td className="px-4 py-3 font-medium">{t.asset_symbol}</td>
+              <td className="px-4 py-3">
+                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  t.trade_type === 'BUY'
+                    ? 'bg-green-900/40 text-green-400'
+                    : 'bg-red-900/40 text-red-400'
+                }`}>
+                  {t.trade_type === 'BUY' ? '↑ Compra' : '↓ Venta'}
+                </span>
+              </td>
+              <td className="text-right px-4 py-3 font-mono">{fmt(t.quantity, 6)}</td>
+              <td className="text-right px-4 py-3 font-mono">{fmtUSD(t.price_usd)}</td>
+              <td className="text-right px-4 py-3 font-mono">{fmtUSD(t.total_usd)}</td>
+              <td className="text-right px-4 py-3">
+                <button onClick={() => onDelete(t.id)}
+                  className="text-gray-500 hover:text-red-400 text-xs transition-colors">
+                  Eliminar
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// -- Página principal --
+
+type Tab = 'open' | 'closed' | 'history'
 
 export default function PortfolioPage() {
-  const [summary, setSummary] = useState<PortfolioSummary | null>(null)
+  const [positionSummary, setPositionSummary] = useState<PositionSummary | null>(null)
   const [trades, setTrades] = useState<Trade[]>([])
-  const [tab, setTab] = useState<'portfolio' | 'history'>('portfolio')
-  const [showModal, setShowModal] = useState(false)
+  const [tab, setTab] = useState<Tab>('open')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  const [showOpenModal, setShowOpenModal] = useState(false)
+  const [addTarget, setAddTarget] = useState<Position | null>(null)
+  const [closeTarget, setCloseTarget] = useState<Position | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [sum, tradeList] = await Promise.all([
-        portfolioService.getSummary(),
-        portfolioService.getTrades({ limit: 100 }),
+      const [summary, tradeList] = await Promise.all([
+        portfolioService.getPositions(),
+        portfolioService.getTrades({ limit: 200 }),
       ])
-      setSummary(sum)
+      setPositionSummary(summary)
       setTrades(tradeList)
     } catch {
       setError('Error al cargar el portfolio')
@@ -312,34 +748,41 @@ export default function PortfolioPage() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
   const handleDeleteTrade = async (id: number) => {
     if (!confirm('¿Eliminar esta operación?')) return
-    try {
-      await portfolioService.deleteTrade(id)
-      await fetchData()
-    } catch {
-      alert('No se pudo eliminar la operación')
-    }
+    try { await portfolioService.deleteTrade(id); await fetchData() }
+    catch { alert('No se pudo eliminar la operación') }
   }
+
+  const handleDeletePosition = async (pos: Position) => {
+    if (!confirm(`¿Eliminar la posición ${pos.direction} ${pos.asset_symbol}?`)) return
+    try { await portfolioService.deletePosition(pos.id); await fetchData() }
+    catch { alert('No se pudo eliminar la posición') }
+  }
+
+  const openPositions = positionSummary?.open_positions ?? []
+  const closedPositions = positionSummary?.closed_positions ?? []
+  const totalUnrealized = Number.parseFloat(positionSummary?.total_unrealized_pnl_usd ?? '0')
+  const totalRealized = Number.parseFloat(positionSummary?.total_realized_pnl_usd ?? '0')
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {/* Cabecera */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Portfolio</h1>
-            <p className="text-gray-400 text-sm mt-1">Seguimiento de tus posiciones y operaciones</p>
+            <p className="text-gray-400 text-sm mt-1">
+              Posiciones LONG/SHORT independientes con PnL en tiempo real
+            </p>
           </div>
           <button
-            onClick={() => setShowModal(true)}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium"
+            onClick={() => setShowOpenModal(true)}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
           >
-            + Registrar operación
+            + Nueva posición
           </button>
         </div>
 
@@ -348,232 +791,86 @@ export default function PortfolioPage() {
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
-
         {error && !loading && (
-          <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
+          <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm mb-6">
             {error}
           </div>
         )}
 
-        {!loading && !error && summary && (
+        {!loading && !error && positionSummary && (
           <>
-            {/* ── Resumen PnL ── */}
-            {summary.short_count === 0 ? (
-              /* Solo posiciones LONG → KPIs clásicos */
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-gray-800 rounded-xl p-4">
-                  <p className="text-xs text-gray-400 mb-1">Capital invertido</p>
-                  <p className="text-lg font-bold">{fmtUSD(summary.total_invested_usd)}</p>
-                </div>
-                <div className="bg-gray-800 rounded-xl p-4">
-                  <p className="text-xs text-gray-400 mb-1">Valor actual</p>
-                  <p className="text-lg font-bold">{fmtUSD(summary.total_current_value_usd)}</p>
-                </div>
-                <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                  <p className="text-xs text-gray-400 mb-1">PnL (USD)</p>
-                  <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                    {summary.is_profit ? '+' : ''}{fmtUSD(summary.total_pnl_usd)}
-                  </p>
-                </div>
-                <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                  <p className="text-xs text-gray-400 mb-1">PnL (%)</p>
-                  <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                    {summary.is_profit ? '+' : ''}{fmt(summary.total_pnl_pct)}%
-                  </p>
-                </div>
+            {/* KPIs */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-gray-800 rounded-xl p-4">
+                <p className="text-xs text-gray-400 mb-1">Posiciones abiertas</p>
+                <p className="text-xl font-bold">{openPositions.length}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {positionSummary.open_long_count} LONG · {positionSummary.open_short_count} SHORT
+                </p>
               </div>
-            ) : (
-              /* Mix LONG + SHORT → KPIs diferenciados */
-              <div className="space-y-3 mb-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {/* LONG */}
-                  <div className="bg-gray-800 rounded-xl p-4 border-l-2 border-green-500/60">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-700/50">LONG</span>
-                      <p className="text-xs text-gray-400">Capital invertido</p>
-                    </div>
-                    <p className="text-lg font-bold">{fmtUSD(summary.total_long_invested_usd)}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{summary.long_count} posición{summary.long_count !== 1 ? 'es' : ''}</p>
-                  </div>
-                  {/* SHORT */}
-                  <div className="bg-gray-800 rounded-xl p-4 border-l-2 border-orange-500/60">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-orange-900/50 text-orange-400 border border-orange-700/50">SHORT</span>
-                      <p className="text-xs text-gray-400">Exposición actual</p>
-                    </div>
-                    <p className="text-lg font-bold text-orange-300">{fmtUSD(summary.total_short_exposure_usd)}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{summary.short_count} posición{summary.short_count !== 1 ? 'es' : ''} · coste recompra</p>
-                  </div>
-                  {/* PnL USD */}
-                  <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                    <p className="text-xs text-gray-400 mb-1">PnL total (USD)</p>
-                    <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                      {summary.is_profit ? '+' : ''}{fmtUSD(summary.total_pnl_usd)}
-                    </p>
-                  </div>
-                  {/* PnL % */}
-                  <div className={`rounded-xl p-4 ${summary.is_profit ? 'bg-green-900/30' : 'bg-red-900/30'}`}>
-                    <p className="text-xs text-gray-400 mb-1">PnL total (%)</p>
-                    <p className={`text-lg font-bold ${summary.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                      {summary.is_profit ? '+' : ''}{fmt(summary.total_pnl_pct)}%
-                    </p>
-                  </div>
-                </div>
+              <div className="bg-gray-800 rounded-xl p-4">
+                <p className="text-xs text-gray-400 mb-1">Posiciones cerradas</p>
+                <p className="text-xl font-bold">{closedPositions.length}</p>
               </div>
-            )}
+              <div className={`rounded-xl p-4 ${pnlBg(totalUnrealized >= 0)}`}>
+                <p className="text-xs text-gray-400 mb-1">PnL no realizado</p>
+                <p className={`text-xl font-bold ${pnlColor(totalUnrealized >= 0)}`}>
+                  {totalUnrealized >= 0 ? '+' : ''}{fmtUSD(totalUnrealized)}
+                </p>
+              </div>
+              <div className={`rounded-xl p-4 ${pnlBg(totalRealized >= 0)}`}>
+                <p className="text-xs text-gray-400 mb-1">PnL realizado total</p>
+                <p className={`text-xl font-bold ${pnlColor(totalRealized >= 0)}`}>
+                  {totalRealized >= 0 ? '+' : ''}{fmtUSD(totalRealized)}
+                </p>
+              </div>
+            </div>
 
             {/* Tabs */}
             <div className="flex gap-2 mb-4">
-              <button
-                onClick={() => setTab('portfolio')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'portfolio' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-              >
-                Posiciones abiertas
-              </button>
-              <button
-                onClick={() => setTab('history')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'history' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-              >
-                Historial ({trades.length})
-              </button>
+              {(
+                [
+                  ['open', `Posiciones Abiertas (${openPositions.length})`],
+                  ['closed', `Posiciones Cerradas (${closedPositions.length})`],
+                  ['history', `Historial (${trades.length})`],
+                ] as [Tab, string][]
+              ).map(([t, label]) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    tab === t
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
-            {/* Posiciones */}
-            {tab === 'portfolio' && (
-              summary.positions.length === 0 ? (
-                <div className="bg-gray-800 rounded-xl p-8 text-center text-gray-400">
-                  <p className="text-lg mb-2">Sin posiciones abiertas</p>
-                  <p className="text-sm">Registra tu primera operación para ver tu portfolio aquí.</p>
-                </div>
-              ) : (
-                <div className="bg-gray-800 rounded-xl overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-gray-400 text-xs border-b border-gray-700">
-                        <th className="text-left px-4 py-3">Activo</th>
-                        <th className="text-right px-4 py-3">Cantidad</th>
-                        <th className="text-right px-4 py-3">Precio medio</th>
-                        <th className="text-right px-4 py-3">Precio actual</th>
-                        <th className="text-right px-4 py-3">Valor posición</th>
-                        <th className="text-right px-4 py-3">PnL</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summary.positions.map(pos => (
-                        <tr key={pos.asset_symbol} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              {pos.logo_url && (
-                                <img src={pos.logo_url} alt={pos.asset_symbol} className="w-6 h-6 rounded-full" />
-                              )}
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <p className="font-medium">{pos.asset_symbol}</p>
-                                  {pos.position_type === 'SHORT' ? (
-                                    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-orange-900/50 text-orange-400 border border-orange-700/50">SHORT</span>
-                                  ) : (
-                                    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-700/50">LONG</span>
-                                  )}
-                                </div>
-                                <p className="text-xs text-gray-400">{pos.asset_name}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="text-right px-4 py-3 font-mono">
-                            {fmt(pos.quantity, 6)}
-                            {pos.position_type === 'SHORT' && (
-                              <span className="text-xs text-orange-400/70 block">en descubierto</span>
-                            )}
-                          </td>
-                          <td className="text-right px-4 py-3 font-mono">
-                            <span className="text-xs text-gray-500 block">{pos.position_type === 'SHORT' ? 'Venta media' : 'Compra media'}</span>
-                            {fmtUSD(pos.avg_buy_price)}
-                          </td>
-                          <td className="text-right px-4 py-3 font-mono">{fmtUSD(pos.current_price)}</td>
-                          <td className="text-right px-4 py-3 font-mono">
-                            {pos.position_type === 'SHORT' ? (
-                              <>
-                                <span className="text-orange-300">{fmtUSD(pos.current_value)}</span>
-                                <span className="text-xs text-orange-400/70 block">coste recompra</span>
-                              </>
-                            ) : (
-                              <>
-                                {fmtUSD(pos.current_value)}
-                                <span className="text-xs text-gray-500 block">valor actual</span>
-                              </>
-                            )}
-                          </td>
-                          <td className={`text-right px-4 py-3 font-mono ${pos.is_profit ? 'text-green-400' : 'text-red-400'}`}>
-                            {pos.is_profit ? '+' : ''}{fmtUSD(pos.pnl_usd)}<br />
-                            <span className="text-xs">{pos.is_profit ? '+' : ''}{fmt(pos.pnl_pct)}%</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
+            {tab === 'open' && (
+              <OpenPositionsTable
+                positions={openPositions}
+                onAdd={p => setAddTarget(p)}
+                onClose={p => setCloseTarget(p)}
+                onDelete={handleDeletePosition}
+              />
             )}
-
-            {/* Historial */}
-            {tab === 'history' && (
-              trades.length === 0 ? (
-                <div className="bg-gray-800 rounded-xl p-8 text-center text-gray-400">
-                  <p>No hay operaciones registradas.</p>
-                </div>
-              ) : (
-                <div className="bg-gray-800 rounded-xl overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-gray-400 text-xs border-b border-gray-700">
-                        <th className="text-left px-4 py-3">Fecha</th>
-                        <th className="text-left px-4 py-3">Activo</th>
-                        <th className="text-left px-4 py-3">Tipo</th>
-                        <th className="text-right px-4 py-3">Cantidad</th>
-                        <th className="text-right px-4 py-3">Precio</th>
-                        <th className="text-right px-4 py-3">Total</th>
-                        <th className="text-right px-4 py-3"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trades.map(t => (
-                        <tr key={t.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                          <td className="px-4 py-3 text-gray-400">
-                            {new Date(t.executed_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
-                          </td>
-                          <td className="px-4 py-3 font-medium">{t.asset_symbol}</td>
-                          <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${t.trade_type === 'BUY' ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
-                              {t.trade_type === 'BUY' ? 'Compra' : 'Venta'}
-                            </span>
-                          </td>
-                          <td className="text-right px-4 py-3 font-mono">{fmt(t.quantity, 6)}</td>
-                          <td className="text-right px-4 py-3 font-mono">{fmtUSD(t.price_usd)}</td>
-                          <td className="text-right px-4 py-3 font-mono">{fmtUSD(t.total_usd)}</td>
-                          <td className="text-right px-4 py-3">
-                            <button
-                              onClick={() => handleDeleteTrade(t.id)}
-                              className="text-gray-500 hover:text-red-400 text-xs"
-                            >
-                              Eliminar
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            )}
+            {tab === 'closed' && <ClosedPositionsTable positions={closedPositions} />}
+            {tab === 'history' && <TradeHistoryTable trades={trades} onDelete={handleDeleteTrade} />}
           </>
         )}
       </div>
 
-      {showModal && (
-        <AddTradeModal
-          onClose={() => setShowModal(false)}
-          onAdded={fetchData}
-        />
+      {showOpenModal && (
+        <OpenPositionModal onClose={() => setShowOpenModal(false)} onCreated={fetchData} />
+      )}
+      {addTarget && (
+        <AddToPositionModal position={addTarget} onClose={() => setAddTarget(null)} onDone={fetchData} />
+      )}
+      {closeTarget && (
+        <ClosePositionModal position={closeTarget} onClose={() => setCloseTarget(null)} onDone={fetchData} />
       )}
     </div>
   )
