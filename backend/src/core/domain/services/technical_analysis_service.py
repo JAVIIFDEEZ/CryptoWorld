@@ -613,7 +613,18 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     adx_obj = ta_lib.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
     feat["adx"] = adx_obj.adx()
 
-    feat["vol_change"] = df["volume"].pct_change()
+    # vol_change: si el volumen es todo cero (datos CoinGecko sin volumen real)
+    # pct_change() produciría NaN en cada fila y dropna() eliminaría todo el DataFrame.
+    # En ese caso se sustituye por 0.0 (neutro) para no perder los demás features.
+    volume_series = df["volume"]
+    if volume_series.sum() == 0:
+        feat["vol_change"] = 0.0
+    else:
+        feat["vol_change"] = (
+            volume_series.pct_change()
+            .fillna(0)
+            .replace([np.inf, -np.inf], 0)
+        )
     feat["price_change_1"] = df["close"].pct_change(1)
     feat["price_change_5"] = df["close"].pct_change(5)
     feat["high_low_ratio"] = (df["high"] - df["low"]) / df["close"]

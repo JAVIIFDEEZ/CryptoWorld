@@ -1,9 +1,10 @@
 """
 ohlcv_fetcher.py — Servicio compartido para obtener DataFrames OHLCV.
 
-Implementa la misma cadena de fuentes que GetAssetOhlcvUseCase:
-  1. Binance (OHLCV completo con volumen)
-  2. CoinGecko OHLC (sin volumen → volume=0)
+Implementa la cadena de fuentes:
+  1. Binance  — OHLCV completo con volumen real
+  2. KuCoin   — OHLCV completo con volumen real (tokens no listados en Binance)
+  3. CoinGecko OHLC — sin volumen (volume=0); último recurso
 
 Usado por los 5 use cases de análisis técnico para evitar duplicación.
 """
@@ -16,6 +17,10 @@ import pandas as pd
 from core.infrastructure.external_apis.binance_client import (
     BinancePublicClient,
     BinanceClientError,
+)
+from core.infrastructure.external_apis.kucoin_client import (
+    KuCoinPublicClient,
+    KuCoinClientError,
 )
 from core.infrastructure.external_apis.coingecko_client import (
     CoinGeckoClient,
@@ -42,7 +47,7 @@ class OhlcvFetchResult:
 
     def __init__(self, df: pd.DataFrame, source: str) -> None:
         self.df = df
-        self.source = source  # "binance" | "coingecko"
+        self.source = source  # "binance" | "kucoin" | "coingecko"
 
 
 def fetch_ohlcv_dataframe(
@@ -50,17 +55,19 @@ def fetch_ohlcv_dataframe(
     interval: str = "1h",
     limit: int = 300,
     binance_client: Optional[BinancePublicClient] = None,
+    kucoin_client: Optional[KuCoinPublicClient] = None,
     coingecko_client: Optional[CoinGeckoClient] = None,
     asset_repo: Optional[DjangoCryptoAssetRepository] = None,
 ) -> Optional[OhlcvFetchResult]:
     """
     Obtiene un DataFrame OHLCV con columnas [open, high, low, close, volume].
 
-    Cadena: Binance → CoinGecko → None.
+    Cadena: Binance → KuCoin → CoinGecko → None.
     Devuelve None si ninguna fuente sirve datos.
     """
     symbol = symbol.upper()
     binance = binance_client or BinancePublicClient()
+    kucoin = kucoin_client or KuCoinPublicClient()
     coingecko = coingecko_client or CoinGeckoClient()
     repo = asset_repo or DjangoCryptoAssetRepository()
 
@@ -73,9 +80,22 @@ def fetch_ohlcv_dataframe(
             return OhlcvFetchResult(df=df, source="binance")
         logger.warning("Binance devolvió 0 velas para %s.", binance_symbol)
     except BinanceClientError as exc:
-        logger.info("Binance no tiene %s (%s). Probando CoinGecko...", binance_symbol, exc)
+        logger.info("Binance no tiene %s (%s). Probando KuCoin...", binance_symbol, exc)
 
-    # ── 2. CoinGecko OHLC ──────────────────────────────────────
+    # ── 2. KuCoin ───────────────────────────────────────────────
+    try:
+        raw = kucoin.get_klines(symbol=binance_symbol, interval=interval, limit=limit)
+        df = _binance_klines_to_df(raw)  # mismo formato tras normalización
+        if not df.empty:
+            logger.info(
+                "KuCoin sirvió %d velas para %s.",
+                len(df), binance_symbol,
+            )
+            return OhlcvFetchResult(df=df, source="kucoin")
+    except KuCoinClientError as exc:
+        logger.info("KuCoin no tiene %s (%s). Probando CoinGecko...", binance_symbol, exc)
+
+    # ── 3. CoinGecko OHLC ──────────────────────────────────────
     asset = repo.get_by_symbol(symbol)
     if asset and asset.coingecko_id:
         days = _interval_limit_to_days(interval, limit)
