@@ -53,7 +53,7 @@ function CreateAlertModal({
       <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-lg font-bold text-white">Nueva alerta de precio</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">×</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -153,7 +153,7 @@ function AlertCard({
             </span>
             {alert.is_triggered && (
               <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400">
-                ⚡ Disparada
+                Disparada
               </span>
             )}
           </div>
@@ -180,14 +180,14 @@ function AlertCard({
             title={alert.is_active ? 'Desactivar' : 'Activar'}
             className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${alert.is_active ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/70' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}
           >
-            {alert.is_active ? '🔔' : '🔕'}
+            {alert.is_active ? 'Act.' : 'Desact.'}
           </button>
           <button
             onClick={() => onDelete(alert.id)}
             title="Eliminar alerta"
             className="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-gray-700 text-gray-400 hover:bg-red-900/40 hover:text-red-400"
           >
-            🗑
+            ×
           </button>
         </div>
       </div>

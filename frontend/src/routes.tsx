@@ -12,6 +12,7 @@
  */
 
 import { Routes, Route, Navigate } from 'react-router-dom'
+import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import VerifyEmailPage from '@/pages/VerifyEmailPage'
@@ -67,11 +68,11 @@ function AppRoutes() {
         </Route>
       </Route>
 
-      {/* Ruta raíz: redirige a dashboard */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Ruta raíz: landing page pública (redirige a /dashboard si autenticado) */}
+      <Route path="/" element={<LandingPage />} />
 
       {/* 404 catch-all */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

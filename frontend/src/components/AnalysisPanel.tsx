@@ -26,12 +26,12 @@ import {
 
 type Tab = 'signals' | 'indicator' | 'predict' | 'patterns' | 'backtest'
 
-const TABS: { key: Tab; label: string; icon: string }[] = [
-  { key: 'signals',   label: 'Señales',      icon: '📊' },
-  { key: 'indicator', label: 'Indicadores',   icon: '📈' },
-  { key: 'predict',   label: 'Predicción ML', icon: '🤖' },
-  { key: 'patterns',  label: 'Patrones',      icon: '🕯' },
-  { key: 'backtest',  label: 'Backtesting',   icon: '⏪' },
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'signals',   label: 'Señales' },
+  { key: 'indicator', label: 'Indicadores' },
+  { key: 'predict',   label: 'Predicción ML' },
+  { key: 'patterns',  label: 'Patrones' },
+  { key: 'backtest',  label: 'Backtesting' },
 ]
 
 const INTERVALS: { label: string; value: IntervalType }[] = [
@@ -75,11 +75,11 @@ function signalBg(signal: string): string {
 
 function signalLabel(signal: string): string {
   const map: Record<string, string> = {
-    'COMPRA': '🟢 Compra',
-    'COMPRA_FUERTE': '🟢🟢 Compra Fuerte',
-    'VENTA': '🔴 Venta',
-    'VENTA_FUERTE': '🔴🔴 Venta Fuerte',
-    'NEUTRAL': '🟡 Neutral',
+    'COMPRA': 'Compra',
+    'COMPRA_FUERTE': 'Compra Fuerte',
+    'VENTA': 'Venta',
+    'VENTA_FUERTE': 'Venta Fuerte',
+    'NEUTRAL': 'Neutral',
   }
   return map[signal] ?? signal
 }
@@ -218,7 +218,7 @@ export default function AnalysisPanel({ symbol }: Props) {
                 : 'text-slate-400 hover:text-white hover:bg-slate-700'
             }`}
           >
-            <span>{t.icon}</span> {t.label}
+            {t.label}
           </button>
         ))}
       </div>
@@ -451,7 +451,7 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
       <div className={`rounded-xl border p-5 text-center ${isBullish ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
         <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Predicción ({data.horizon} velas)</p>
         <p className={`text-3xl font-bold ${isBullish ? 'text-green-400' : 'text-red-400'}`}>
-          {isBullish ? '📈 ALCISTA' : '📉 BAJISTA'}
+          {isBullish ? 'ALCISTA' : 'BAJISTA'}
         </p>
         <div className="mt-3 flex items-center justify-center gap-3">
           <div>
@@ -609,7 +609,7 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
         <MetricCard label="Cap. final" value={`$${data.final_capital.toLocaleString()}`} color={isPositive ? 'text-green-400' : 'text-red-400'} />
         <MetricCard
           label="vs Buy&Hold"
-          value={beatsBuyHold ? '✅ Supera' : '❌ No supera'}
+          value={beatsBuyHold ? 'Supera' : 'No supera'}
           color={beatsBuyHold ? 'text-green-400' : 'text-red-400'}
         />
       </div>

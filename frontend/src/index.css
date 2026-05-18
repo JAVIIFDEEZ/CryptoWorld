@@ -21,3 +21,17 @@
     @apply border-slate-700;
   }
 }
+
+/* ── Landing Page: animación del ticker de precios ── */
+@keyframes cw-ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-33.333%); }
+}
+
+.cw-ticker-track {
+  animation: cw-ticker-scroll 40s linear infinite;
+}
+
+.cw-ticker-track:hover {
+  animation-play-state: paused;
+}

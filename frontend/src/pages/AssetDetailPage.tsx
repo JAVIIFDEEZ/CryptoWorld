@@ -87,7 +87,7 @@ function AssetDetailPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-slate-700">
           <Metric label="Cap. de mercado" value={asset.market_cap ? `$${(parseFloat(asset.market_cap) / 1e9).toFixed(2)}B` : '—'} />
           <Metric label="Volumen 24h" value={asset.volume_24h ? `$${(parseFloat(asset.volume_24h) / 1e9).toFixed(2)}B` : '—'} />
-          <Metric label="Tendencia" value={asset.is_bullish_24h ? '📈 Alcista' : '📉 Bajista'} />
+          <Metric label="Tendencia" value={asset.is_bullish_24h ? 'Alcista' : 'Bajista'} />
         </div>
       </div>
 

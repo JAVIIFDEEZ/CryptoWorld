@@ -86,7 +86,7 @@ function FeaturedCard({ item }: { item: NewsItem }) {
           />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-blue-900/40 to-slate-800 flex items-center justify-center">
-            <span className="text-5xl opacity-20">📰</span>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="opacity-20 text-slate-400"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6z"/></svg>
           </div>
         )}
         <span className="absolute top-3 left-3 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-600/90 text-white backdrop-blur-sm shadow">
@@ -144,7 +144,7 @@ function NewsCard({ item }: { item: NewsItem }) {
           />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-blue-900/20 via-slate-700/80 to-slate-800 flex items-center justify-center">
-            <span className="text-3xl opacity-20">📰</span>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="opacity-20 text-slate-400"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6z"/></svg>
           </div>
         )}
         <div className="absolute top-2 right-2">
@@ -260,7 +260,9 @@ export default function NewsPage() {
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none select-none">🔍</span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none select-none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </span>
           <input
             type="text"
             placeholder="Buscar: Bitcoin, DeFi, Ethereum…"
@@ -273,7 +275,7 @@ export default function NewsPage() {
               onClick={() => setSearch('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors text-xs"
             >
-              ✕
+              ×
             </button>
           )}
         </div>
@@ -339,14 +341,13 @@ export default function NewsPage() {
 
       {error && !loading && (
         <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-4 text-red-300 text-sm flex items-center gap-3">
-          <span className="text-xl shrink-0">⚠️</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           <span>{error}</span>
         </div>
       )}
 
       {!loading && !error && allItems.length === 0 && (
         <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-12 text-center">
-          <p className="text-4xl mb-3">🔍</p>
           <p className="text-slate-300 font-medium">Sin resultados</p>
           <p className="text-slate-500 text-sm mt-1">No hay noticias para los filtros seleccionados.</p>
         </div>

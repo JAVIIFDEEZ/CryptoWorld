@@ -18,6 +18,9 @@ function MarketPage() {
   const [search, setSearch] = useState('')
   const [sortField, setSortField] = useState<SortField>('marketCap')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [showAll, setShowAll] = useState(false)
+
+  const INITIAL_LIMIT = 10
 
   useEffect(() => {
     async function loadAssets() {
@@ -78,6 +81,7 @@ function MarketPage() {
 
   const bullishCount = assets.filter((a) => a.is_bullish_24h).length
   const bearishCount = assets.length - bullishCount
+  const displayedAssets = (search.trim() || showAll) ? filteredAndSorted : filteredAndSorted.slice(0, INITIAL_LIMIT)
 
   return (
     <section className="space-y-6">
@@ -110,7 +114,8 @@ function MarketPage() {
         {error && <p className="p-6 text-sm text-red-400">{error}</p>}
 
         {!isLoading && !error && (
-          <div className="overflow-x-auto">
+          <>
+            <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-400 border-b border-slate-700 uppercase text-xs">
@@ -123,7 +128,7 @@ function MarketPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/60">
-                {filteredAndSorted.map((asset) => {
+                {displayedAssets.map((asset) => {
                   const change = parseNumeric(asset.price_change_24h)
                   const isPositive = change >= 0
                   const marketCap = parseNumeric(asset.market_cap)
@@ -172,7 +177,18 @@ function MarketPage() {
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+            {!showAll && !search.trim() && filteredAndSorted.length > INITIAL_LIMIT && (
+              <div className="p-4 text-center border-t border-slate-700">
+                <button
+                  onClick={() => setShowAll(true)}
+                  className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Mostrar más ({filteredAndSorted.length - INITIAL_LIMIT} activos más)
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>
