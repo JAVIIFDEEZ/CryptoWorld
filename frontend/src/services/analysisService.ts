@@ -128,6 +128,9 @@ export interface BacktestResult {
   final_capital: number
   total_return_pct: number
   buy_hold_return_pct: number
+  start_date?: string
+  end_date?: string
+  candles_count?: number
   total_trades: number
   win_rate_pct: number
   avg_win_pct: number
@@ -190,7 +193,7 @@ export const analysisService = {
     assetSymbol: string,
     strategy: string,
     interval: IntervalType = '1h',
-    limit = 500,
+    limit = 1000,
     initialCapital = 10000,
   ): Promise<BacktestResult> {
     const { data } = await apiClient.post<BacktestResult>('/analysis/backtest/', {

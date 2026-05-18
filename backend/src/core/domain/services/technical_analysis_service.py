@@ -11,6 +11,7 @@ No accede a BD ni a HTTP — recibe DataFrames y devuelve resultados puros.
 
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -871,6 +872,21 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
     avg_win = np.mean([t["pnl_pct"] for t in wins]) if wins else 0
     avg_loss = np.mean([abs(t["pnl_pct"]) for t in losses]) if losses else 0
 
+    # ── Rango de fechas del periodo analizado ─────────────────────
+    start_date: str | None = None
+    end_date: str | None = None
+    if "timestamp" in df.columns:
+        ts_vals = df["timestamp"].dropna()
+        if len(ts_vals) >= 2:
+            start_ts = int(ts_vals.iloc[0])
+            end_ts = int(ts_vals.iloc[-1])
+            # Binance y CoinGecko devuelven timestamps en milisegundos
+            if start_ts > 1_000_000_000_000:
+                start_ts //= 1000
+                end_ts //= 1000
+            start_date = datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+            end_date = datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+
     strategy_info = STRATEGIES[strategy]
 
     return {
@@ -881,6 +897,9 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
         "final_capital": round(float(final_capital), 2),
         "total_return_pct": round(float(total_return), 2),
         "buy_hold_return_pct": round(float(buy_hold_return), 2),
+        "start_date": start_date,
+        "end_date": end_date,
+        "candles_count": n,
         "total_trades": len(trades),
         "win_rate_pct": round(float(win_rate), 2),
         "avg_win_pct": round(float(avg_win), 2),
