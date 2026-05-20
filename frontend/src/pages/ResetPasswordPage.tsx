@@ -197,7 +197,7 @@ function ResetPasswordPage() {
 
         {/* Footer */}
         <p className="text-center text-slate-600 text-xs mt-6">
-          TFG · Análisis de Criptomonedas · UCLM
+          © 2026 CryptoWorld · Tu copiloto cuantitativo cripto
         </p>
       </div>
     </div>
