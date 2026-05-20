@@ -47,6 +47,72 @@ const ANALYSIS_TYPES: AnalysisType[] = ['RSI', 'MACD', 'SMA', 'EMA', 'BOLLINGER'
 
 // ── Helpers de señal ─────────────────────────────────────────────
 
+// Descripciones educativas de cada indicador técnico
+const INDICATOR_INFO: Record<string, { short: string; thresholds: string }> = {
+  'RSI (14)': {
+    short: 'Relative Strength Index (RSI). Mide la velocidad y magnitud de los cambios de precio.',
+    thresholds: 'Sobrecompra: > 70 · Sobreventa: < 30',
+  },
+  'MACD (12,26,9)': {
+    short: 'Moving Average Convergence Divergence. Mide la diferencia entre dos EMAs para detectar cambios de tendencia.',
+    thresholds: 'Señal de compra: MACD cruza Signal hacia arriba. Venta: cruza hacia abajo.',
+  },
+  'SMA (20)': {
+    short: 'Simple Moving Average de 20 periodos. Media aritmética de los últimos 20 cierres.',
+    thresholds: 'Precio > SMA → alcista. Precio < SMA → bajista.',
+  },
+  'SMA (50)': {
+    short: 'Simple Moving Average de 50 periodos. Tendencia de medio plazo.',
+    thresholds: 'Precio > SMA 50 → tendencia positiva de medio plazo.',
+  },
+  'EMA (12)': {
+    short: 'Exponential Moving Average de 12 periodos. Más sensible a movimientos recientes que la SMA.',
+    thresholds: 'Precio > EMA 12 → impulso alcista a corto plazo.',
+  },
+  'EMA (26)': {
+    short: 'Exponential Moving Average de 26 periodos. Usada junto a EMA 12 para formar el MACD.',
+    thresholds: 'EMA 12 > EMA 26 → señal alcista (Golden Cross).',
+  },
+  'Bollinger (20,2)': {
+    short: 'Bandas de Bollinger: canal de 2 desviaciones estándar alrededor de la SMA 20.',
+    thresholds: 'Precio toca banda superior → sobrecompra. Banda inferior → sobreventa.',
+  },
+  'Stoch RSI': {
+    short: 'Stochastics RSI. Aplica la fórmula estocástica sobre el RSI, más sensible.',
+    thresholds: 'Sobrecompra: > 80 · Sobreventa: < 20',
+  },
+  'ADX (14)': {
+    short: 'Average Directional Index. Mide la fuerza de la tendencia (no su dirección).',
+    thresholds: '> 25 → tendencia fuerte. < 20 → tendencia débil o lateral.',
+  },
+  'CCI (20)': {
+    short: 'Commodity Channel Index. Detecta ciclos de mercado comparando precio con su media.',
+    thresholds: '> +100 → sobrecompra. < -100 → sobreventa.',
+  },
+  'Williams %R': {
+    short: 'Williams %R. Oscilador que mide el nivel de cierre relativo al rango máx-mín reciente.',
+    thresholds: '0 a -20 → sobrecompra. -80 a -100 → sobreventa.',
+  },
+}
+
+function IndicatorTooltip({ name }: { name: string }) {
+  const info = INDICATOR_INFO[name]
+  if (!info) return null
+  return (
+    <span className="relative group inline-flex items-center ml-1">
+      <span className="text-slate-500 hover:text-blue-400 cursor-help text-[10px] border border-slate-600 hover:border-blue-500 rounded-full w-3.5 h-3.5 flex items-center justify-center transition-colors">
+        i
+      </span>
+      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 z-50 hidden group-hover:block">
+        <span className="block bg-slate-900 border border-slate-600 rounded-lg p-2.5 text-left shadow-xl">
+          <span className="block text-slate-200 text-[10px] leading-relaxed">{info.short}</span>
+          <span className="block text-slate-500 text-[10px] mt-1 leading-relaxed">{info.thresholds}</span>
+        </span>
+      </span>
+    </span>
+  )
+}
+
 function signalColor(signal: string): string {
   switch (signal) {
     case 'COMPRA':
@@ -367,7 +433,12 @@ function SignalsTab({ data }: { data: SignalsResult | null }) {
           <tbody>
             {indicators.map((ind, i) => (
               <tr key={i} className="border-b border-slate-700/40 hover:bg-slate-700/30">
-                <td className="py-2 px-2 text-slate-200">{ind.name}</td>
+                <td className="py-2 px-2 text-slate-200">
+                  <span className="inline-flex items-center gap-0.5">
+                    {ind.name}
+                    <IndicatorTooltip name={ind.name} />
+                  </span>
+                </td>
                 <td className="py-2 px-2 text-right font-mono text-slate-300">
                   {typeof ind.value === 'number' ? ind.value.toFixed(4) : ind.value}
                 </td>
