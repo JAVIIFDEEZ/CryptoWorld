@@ -454,3 +454,21 @@ class PositionsQuerySerializer(serializers.Serializer):
         allow_blank=True,
     )
 
+
+# ── Watchlist ──────────────────────────────────────────────────────
+
+class WatchlistItemSerializer(serializers.Serializer):
+    """Serializa un activo de la watchlist del usuario."""
+    symbol = serializers.CharField()
+    name = serializers.CharField()
+    logo_url = serializers.CharField(allow_null=True)
+    current_price = serializers.CharField()
+    price_change_24h = serializers.CharField()
+    is_bullish_24h = serializers.BooleanField()
+    added_at = serializers.CharField()
+
+
+class WatchlistAddSerializer(serializers.Serializer):
+    """Valida el body de POST /api/watchlist/ — añadir activo."""
+    symbol = serializers.CharField(max_length=20)
+

@@ -382,3 +382,36 @@ class PriceAlert(models.Model):
             f"{self.condition} {self.threshold_price} "
             f"({'activa' if self.is_active else 'inactiva'})"
         )
+
+
+class UserWatchlist(models.Model):
+    """
+    Activo marcado como favorito (watchlist) por un usuario.
+
+    Relación N:M entre User y CryptoAsset implementada de forma explícita
+    para tener control sobre la tabla pivot y sus metadatos.
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="watchlist_entries",
+    )
+    asset = models.ForeignKey(
+        CryptoAsset,
+        on_delete=models.CASCADE,
+        related_name="watchlist_entries",
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_watchlist"
+        verbose_name = "Watchlist"
+        verbose_name_plural = "Watchlists"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "asset"], name="uq_watchlist_user_asset"),
+        ]
+        ordering = ["-added_at"]
+
+    def __str__(self) -> str:
+        return f"{self.user.email} ★ {self.asset.symbol}"
