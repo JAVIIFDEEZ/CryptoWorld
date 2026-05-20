@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
+import { marketService } from '@/services/marketService'
+import * as watchlistService from '@/services/watchlistService'
+import Sparkline from '@/components/Sparkline'
 
 type SortField = 'symbol' | 'price' | 'change' | 'volume' | 'marketCap'
 type SortDirection = 'asc' | 'desc'
@@ -19,6 +22,7 @@ function MarketPage() {
   const [sortField, setSortField] = useState<SortField>('marketCap')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [showAll, setShowAll] = useState(false)
+  const [watchlistSymbols, setWatchlistSymbols] = useState<Set<string>>(new Set())
 
   const INITIAL_LIMIT = 10
 
@@ -33,9 +37,44 @@ function MarketPage() {
         setIsLoading(false)
       }
     }
+    async function loadWatchlist() {
+      try {
+        const items = await watchlistService.getWatchlist()
+        setWatchlistSymbols(new Set(items.map((i) => i.symbol)))
+      } catch {
+        // Si no autenticado o falla, simplemente no mostramos estrellas activas
+      }
+    }
 
     loadAssets()
+    loadWatchlist()
   }, [])
+
+  const toggleWatchlist = useCallback(async (symbol: string) => {
+    const isInWatchlist = watchlistSymbols.has(symbol)
+    // Actualización optimista
+    setWatchlistSymbols((prev) => {
+      const next = new Set(prev)
+      if (isInWatchlist) next.delete(symbol)
+      else next.add(symbol)
+      return next
+    })
+    try {
+      if (isInWatchlist) {
+        await watchlistService.removeFromWatchlist(symbol)
+      } else {
+        await watchlistService.addToWatchlist(symbol)
+      }
+    } catch {
+      // Revertir si la API falla
+      setWatchlistSymbols((prev) => {
+        const next = new Set(prev)
+        if (isInWatchlist) next.add(symbol)
+        else next.delete(symbol)
+        return next
+      })
+    }
+  }, [watchlistSymbols])
 
   const filteredAndSorted = useMemo(() => {
     const filtered = assets.filter((asset) => {
@@ -119,9 +158,11 @@ function MarketPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-400 border-b border-slate-700 uppercase text-xs">
+                  <th className="px-3 py-3 w-10" />
                   <HeaderCell label="Activo" onClick={() => handleSort('symbol')} />
                   <HeaderCell label="Precio" align="right" onClick={() => handleSort('price')} />
                   <HeaderCell label="24h" align="right" onClick={() => handleSort('change')} />
+                  <HeaderCell label="7d" align="right" onClick={() => {}} />
                   <HeaderCell label="Volumen 24h" align="right" onClick={() => handleSort('volume')} />
                   <HeaderCell label="Cap. mercado" align="right" onClick={() => handleSort('marketCap')} />
                   <th className="px-4 py-3 text-center">Detalle</th>
@@ -134,45 +175,15 @@ function MarketPage() {
                   const marketCap = parseNumeric(asset.market_cap)
 
                   return (
-                    <tr key={asset.id} className="hover:bg-slate-700/25 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          {asset.logo_url ? (
-                            <img src={asset.logo_url} alt={asset.symbol} className="w-8 h-8 rounded-full" />
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-slate-700 text-blue-400 text-xs font-bold flex items-center justify-center">
-                              {asset.symbol.slice(0, 2)}
-                            </div>
-                          )}
-                          <div>
-                            <p className="font-medium text-white">{asset.symbol}</p>
-                            <p className="text-xs text-slate-500">{asset.name}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right text-white font-mono">
-                        ${parseNumeric(asset.current_price).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {isPositive ? '+' : ''}{change.toFixed(2)}%
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">
-                        {asset.volume_24h && parseFloat(asset.volume_24h) > 0
-                          ? `$${(parseFloat(asset.volume_24h) / 1e9).toFixed(2)}B`
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-300 font-mono">
-                        {marketCap > 0 ? `$${(marketCap / 1e9).toFixed(2)}B` : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <Link
-                          to={`/assets/${asset.symbol}`}
-                          className="text-blue-400 hover:text-blue-300 text-xs"
-                        >
-                          Ver
-                        </Link>
-                      </td>
-                    </tr>
+                    <AssetRow
+                      key={asset.id}
+                      asset={asset}
+                      change={change}
+                      isPositive={isPositive}
+                      marketCap={marketCap}
+                      isWatched={watchlistSymbols.has(asset.symbol)}
+                      onToggleWatchlist={toggleWatchlist}
+                    />
                   )
                 })}
               </tbody>
@@ -192,6 +203,98 @@ function MarketPage() {
         )}
       </div>
     </section>
+  )
+}
+
+// ── AssetRow con sparkline lazy ───────────────────────────────────
+
+function AssetRow({
+  asset,
+  change,
+  isPositive,
+  marketCap,
+  isWatched,
+  onToggleWatchlist,
+}: {
+  asset: CryptoAsset
+  change: number
+  isPositive: boolean
+  marketCap: number
+  isWatched: boolean
+  onToggleWatchlist: (symbol: string) => void
+}) {
+  const [sparkData, setSparkData] = useState<number[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    marketService.getOhlcv(asset.symbol, '1d', 8)
+      .then((res) => {
+        if (!cancelled) {
+          setSparkData(res.candles.map((c) => parseFloat(c.close)))
+        }
+      })
+      .catch(() => { /* silencioso */ })
+    return () => { cancelled = true }
+  }, [asset.symbol])
+
+  return (
+    <tr className="hover:bg-slate-700/25 transition-colors">
+      <td className="px-3 py-3 w-10 text-center">
+        <button
+          onClick={() => onToggleWatchlist(asset.symbol)}
+          title={isWatched ? 'Quitar de favoritos' : 'Añadir a favoritos'}
+          className={`text-lg leading-none transition-colors ${
+            isWatched ? 'text-yellow-400 hover:text-yellow-300' : 'text-slate-600 hover:text-yellow-400'
+          }`}
+        >
+          {isWatched ? '★' : '☆'}
+        </button>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-3">
+          {asset.logo_url ? (
+            <img src={asset.logo_url} alt={asset.symbol} className="w-8 h-8 rounded-full" />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-slate-700 text-blue-400 text-xs font-bold flex items-center justify-center">
+              {asset.symbol.slice(0, 2)}
+            </div>
+          )}
+          <div>
+            <p className="font-medium text-white">{asset.symbol}</p>
+            <p className="text-xs text-slate-500">{asset.name}</p>
+          </div>
+        </div>
+      </td>
+      <td className="px-4 py-3 text-right text-white font-mono">
+        ${parseNumeric(asset.current_price).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+      </td>
+      <td className={`px-4 py-3 text-right font-mono ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+        {isPositive ? '+' : ''}{change.toFixed(2)}%
+      </td>
+      <td className="px-4 py-3 text-right">
+        {sparkData ? (
+          <Sparkline data={sparkData} positive={isPositive} width={80} height={26} />
+        ) : (
+          <div className="inline-block w-20 h-6 bg-slate-700/50 rounded animate-pulse" />
+        )}
+      </td>
+      <td className="px-4 py-3 text-right text-slate-400 font-mono text-xs">
+        {asset.volume_24h && parseFloat(asset.volume_24h) > 0
+          ? `$${(parseFloat(asset.volume_24h) / 1e9).toFixed(2)}B`
+          : '—'}
+      </td>
+      <td className="px-4 py-3 text-right text-slate-300 font-mono">
+        {marketCap > 0 ? `$${(marketCap / 1e9).toFixed(2)}B` : '—'}
+      </td>
+      <td className="px-4 py-3 text-center">
+        <Link
+          to={`/assets/${asset.symbol}`}
+          className="text-blue-400 hover:text-blue-300 text-xs"
+        >
+          Ver
+        </Link>
+      </td>
+    </tr>
   )
 }
 
