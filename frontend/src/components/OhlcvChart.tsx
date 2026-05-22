@@ -341,7 +341,7 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
     const chart = chartRef.current
     if (!chart) return
 
-    // Bloquear indicadores de volumen si la fuente es CoinGecko
+    // Bloquear indicadores de volumen si la fuente es CoinGecko (no tiene volumen real)
     if (dataSource === 'coingecko' && (def.name === 'VOL' || def.name === 'OBV' || def.name === 'PVT' || def.name === 'VR' || def.name === 'EMV')) {
       return
     }
@@ -425,22 +425,27 @@ export default function OhlcvChart({ symbol, initialInterval = '1h' }: Props) {
         <span className="text-sm font-bold text-white mr-1">{symbol}/USDT</span>
 
         {/* Data source badge */}
-        {dataSource && (
-          <span
-            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-              dataSource === 'binance'
-                ? 'bg-green-900/40 text-green-400 border border-green-700/50'
-                : 'bg-amber-900/40 text-amber-400 border border-amber-700/50'
-            }`}
-            title={
-              dataSource === 'binance'
-                ? 'Datos OHLCV completos de Binance (incluye volumen)'
-                : 'Datos OHLC de CoinGecko (sin volumen real)'
-            }
-          >
-            {dataSource === 'binance' ? '● Binance' : '● CoinGecko'}
-          </span>
-        )}
+        {dataSource && (() => {
+          const badgeClass =
+            dataSource === 'binance' ? 'bg-green-900/40 text-green-400 border border-green-700/50' :
+            dataSource === 'kucoin'  ? 'bg-blue-900/40 text-blue-400 border border-blue-700/50' :
+                                       'bg-amber-900/40 text-amber-400 border border-amber-700/50'
+          const badgeTitle =
+            dataSource === 'binance' ? 'Datos OHLCV completos de Binance (incluye volumen)' :
+            dataSource === 'kucoin'  ? 'Datos OHLCV completos de KuCoin (incluye volumen)' :
+                                       'Datos OHLC de CoinGecko (sin volumen real)'
+          const badgeLabel =
+            dataSource === 'binance' ? '● Binance' :
+            dataSource === 'kucoin'  ? '● KuCoin' : '● CoinGecko'
+          return (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${badgeClass}`}
+              title={badgeTitle}
+            >
+              {badgeLabel}
+            </span>
+          )
+        })()}
 
         <div className="flex gap-0.5 bg-slate-800 rounded-md p-0.5">
           {INTERVALS.map((o) => (
