@@ -12,21 +12,27 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService, type MarketOverview } from '@/services/marketService'
+import * as watchlistService from '@/services/watchlistService'
+import type { WatchlistItem } from '@/services/watchlistService'
+import FearGreedGauge from '@/components/FearGreedGauge'
 
 function DashboardPage() {
   const { user } = useAuth()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [overview, setOverview] = useState<MarketOverview | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([])
 
   useEffect(() => {
     async function load() {
-      const [assetsData, overviewData] = await Promise.allSettled([
+      const [assetsData, overviewData, watchlistData] = await Promise.allSettled([
         analysisService.getAssets(),
         marketService.getMarketOverview(),
+        watchlistService.getWatchlist(),
       ])
       if (assetsData.status === 'fulfilled') setAssets(assetsData.value)
       if (overviewData.status === 'fulfilled') setOverview(overviewData.value)
+      if (watchlistData.status === 'fulfilled') setWatchlist(watchlistData.value)
       setIsLoading(false)
     }
     load()
@@ -76,28 +82,10 @@ function DashboardPage() {
               label="Dominancia BTC"
               value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`}
             />
-            <GlobalCard
-              label="Fear & Greed"
-              value={String(overview.fear_greed_index)}
-              sub={
-                overview.fear_greed_index >= 75
-                  ? 'Codicia extrema'
-                  : overview.fear_greed_index >= 55
-                    ? 'Codicia'
-                    : overview.fear_greed_index >= 45
-                      ? 'Neutral'
-                      : overview.fear_greed_index >= 25
-                        ? 'Miedo'
-                        : 'Miedo extremo'
-              }
-              highlight={
-                overview.fear_greed_index >= 75
-                  ? 'green'
-                  : overview.fear_greed_index <= 25
-                    ? 'red'
-                    : 'neutral'
-              }
-            />
+            <div className="bg-slate-800/60 rounded-xl border border-slate-700 px-5 py-4 flex flex-col items-center justify-center">
+              <p className="text-slate-500 text-xs mb-2 self-start">Fear & Greed</p>
+              <FearGreedGauge value={overview.fear_greed_index} size={110} />
+            </div>
           </div>
         </section>
       )}
@@ -156,6 +144,65 @@ function DashboardPage() {
           )}
         </div>
       </section>
+
+      {/* Watchlist personal */}
+      {watchlist.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              ★ Mis favoritos
+            </h2>
+            <Link
+              to="/market"
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              Gestionar →
+            </Link>
+          </div>
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+            <div className="divide-y divide-slate-700/50">
+              {watchlist.map((item) => {
+                const change = Number.parseFloat(item.price_change_24h)
+                const isPositive = item.is_bullish_24h
+                return (
+                  <div
+                    key={item.symbol}
+                    className="flex items-center justify-between px-5 py-3 hover:bg-slate-700/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      {item.logo_url ? (
+                        <img src={item.logo_url} alt={item.symbol} className="w-7 h-7 rounded-full" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-yellow-400">
+                          {item.symbol.slice(0, 2)}
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm font-medium text-white">{item.symbol}</p>
+                        <p className="text-xs text-slate-500 truncate max-w-[120px]">{item.name}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-5">
+                      <p className="text-sm font-mono text-white tabular-nums hidden sm:block">
+                        ${Number.parseFloat(item.current_price).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+                      </p>
+                      <p className={`text-sm font-mono font-semibold tabular-nums w-20 text-right ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {isPositive ? '+' : ''}{change.toFixed(2)}%
+                      </p>
+                      <Link
+                        to={`/assets/${item.symbol}`}
+                        className="text-blue-400 hover:text-blue-300 text-xs transition-colors"
+                      >
+                        Ver →
+                      </Link>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

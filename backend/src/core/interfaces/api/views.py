@@ -64,6 +64,8 @@ from core.interfaces.api.serializers import (
     PositionOutputSerializer,
     PositionSummaryOutputSerializer,
     PositionsQuerySerializer,
+    WatchlistItemSerializer,
+    WatchlistAddSerializer,
 )
 from core.application.use_cases.register_user import RegisterUserUseCase
 from core.application.use_cases.get_assets import GetAssetsUseCase
@@ -97,6 +99,8 @@ from core.application.use_cases.close_position import ClosePositionUseCase
 from core.application.use_cases.scale_position import ScalePositionUseCase
 from core.application.use_cases.get_positions import GetPositionsUseCase
 from core.infrastructure.persistence.models import Position as PositionModel
+from core.infrastructure.persistence.models import UserWatchlist as UserWatchlistModel
+from core.infrastructure.persistence.models import CryptoAsset as CryptoAssetModel
 from core.application.use_cases.manage_alerts import (
     CreateAlertUseCase,
     ListAlertsUseCase,
@@ -641,19 +645,19 @@ class RunAnalysisView(APIView):
 
 class MarketOverviewView(APIView):
     """
-    GET /api/market/overview/ â€” Resumen global del mercado.
-    Requiere autenticaciÃ³n JWT.
+    GET /api/market/overview/ — Resumen global del mercado.
+    Público: usado también desde la landing page (sin autenticación).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def get(self, request):
         output_dto = GetMarketOverviewUseCase().execute()
         serializer = MarketOverviewSerializer(vars(output_dto))
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-
 class AssetOhlcvView(APIView):
+
     """
     GET /api/assets/<symbol>/ohlcv/ — Serie de velas para gráficos interactivos.
 
@@ -1272,3 +1276,72 @@ class PositionCloseView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
+# ── Watchlist ─────────────────────────────────────────────────────────────────
+
+class WatchlistView(APIView):
+    """
+    GET  /api/watchlist/  — Listar los activos en la watchlist del usuario.
+    POST /api/watchlist/  — Añadir un activo a la watchlist del usuario.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        entries = (
+            UserWatchlistModel.objects
+            .filter(user=request.user)
+            .select_related("asset")
+            .order_by("-added_at")
+        )
+        data = [
+            {
+                "symbol": e.asset.symbol,
+                "name": e.asset.name,
+                "logo_url": e.asset.logo_url,
+                "current_price": str(e.asset.current_price) if e.asset.current_price is not None else "0",
+                "price_change_24h": str(e.asset.price_change_24h) if e.asset.price_change_24h is not None else "0",
+                "is_bullish_24h": float(e.asset.price_change_24h or 0) >= 0,
+                "added_at": e.added_at.isoformat(),
+            }
+            for e in entries
+        ]
+        return Response(
+            WatchlistItemSerializer(data, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = WatchlistAddSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        symbol = serializer.validated_data["symbol"].upper()
+        try:
+            asset = CryptoAssetModel.objects.get(symbol=symbol)
+        except CryptoAssetModel.DoesNotExist:
+            return Response({"error": f"Activo '{symbol}' no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        _, created = UserWatchlistModel.objects.get_or_create(
+            user=request.user,
+            asset=asset,
+        )
+        if not created:
+            return Response({"detail": "El activo ya está en la watchlist."}, status=status.HTTP_200_OK)
+
+        return Response({"detail": f"{symbol} añadido a la watchlist."}, status=status.HTTP_201_CREATED)
+
+
+class WatchlistItemView(APIView):
+    """
+    DELETE /api/watchlist/<symbol>/  — Eliminar un activo de la watchlist del usuario.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, symbol: str):
+        deleted, _ = UserWatchlistModel.objects.filter(
+            user=request.user,
+            asset__symbol=symbol.upper(),
+        ).delete()
+        if not deleted:
+            return Response({"error": "El activo no está en la watchlist."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)

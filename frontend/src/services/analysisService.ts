@@ -25,6 +25,7 @@ export interface CryptoAsset {
   price_change_24h: string | null
   is_bullish_24h: boolean
   logo_url: string | null
+  coingecko_id: string | null
 }
 
 export type AnalysisType = 'RSI' | 'MACD' | 'SMA' | 'EMA' | 'BOLLINGER'

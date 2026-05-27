@@ -2,9 +2,10 @@
 get_asset_ohlcv.py — Caso de uso: Obtener velas OHLCV reales.
 
 Cadena de fuentes (Strategy Pattern):
-  1. Binance (OHLCV + volumen, sin auth, 600 req/min)
-  2. CoinGecko OHLC (OHLC sin volumen, 30 req/min)
-  3. Si ambos fallan → error explícito (NO datos sintéticos)
+  1. Binance  (OHLCV + volumen, sin auth, 600 req/min)
+  2. KuCoin   (OHLCV + volumen, sin auth — tokens no listados en Binance)
+  3. CoinGecko OHLC (OHLC sin volumen, 30 req/min)
+  4. Si todos fallan → error explícito (NO datos sintéticos)
 
 El campo `source` en cada vela indica el proveedor de datos real.
 
@@ -22,6 +23,10 @@ from core.application.dto.market_intelligence_dto import OhlcvCandleOutputDTO
 from core.infrastructure.external_apis.binance_client import (
     BinancePublicClient,
     BinanceClientError,
+)
+from core.infrastructure.external_apis.kucoin_client import (
+    KuCoinPublicClient,
+    KuCoinClientError,
 )
 from core.infrastructure.external_apis.coingecko_client import (
     CoinGeckoClient,
@@ -62,17 +67,19 @@ class GetAssetOhlcvUseCase:
     """
     Devuelve velas OHLCV para un activo criptográfico.
 
-    Estrategia: Binance → CoinGecko OHLC → error.
+    Estrategia: Binance → KuCoin → CoinGecko OHLC → error.
     Elimina completamente los datos sintéticos/falsos.
     """
 
     def __init__(
         self,
         binance_client: Optional[BinancePublicClient] = None,
+        kucoin_client: Optional[KuCoinPublicClient] = None,
         coingecko_client: Optional[CoinGeckoClient] = None,
         asset_repo: Optional[DjangoCryptoAssetRepository] = None,
     ) -> None:
         self._binance = binance_client or BinancePublicClient()
+        self._kucoin = kucoin_client or KuCoinPublicClient()
         self._coingecko = coingecko_client or CoinGeckoClient()
         self._asset_repo = asset_repo or DjangoCryptoAssetRepository()
 
@@ -80,7 +87,7 @@ class GetAssetOhlcvUseCase:
         self, symbol: str, interval: str, limit: int
     ) -> tuple[list[OhlcvCandleOutputDTO], str]:
         """
-        Devuelve (candles, source) donde source es "binance" o "coingecko".
+        Devuelve (candles, source) donde source es "binance", "kucoin" o "coingecko".
         Lanza OhlcvNotAvailableError si ninguna fuente tiene datos.
         """
         symbol = symbol.upper()
@@ -91,15 +98,20 @@ class GetAssetOhlcvUseCase:
         if candles:
             return candles, "binance"
 
-        # ── 2. Fallback CoinGecko OHLC ─────────────────────────
+        # ── 2. Fallback KuCoin (tokens no listados en Binance) ──
+        candles = self._try_kucoin(symbol, binance_interval, limit)
+        if candles:
+            return candles, "kucoin"
+
+        # ── 3. Fallback CoinGecko OHLC ─────────────────────────
         candles = self._try_coingecko(symbol, interval, limit)
         if candles:
             return candles, "coingecko"
 
-        # ── 3. Ninguna fuente disponible ────────────────────────
+        # ── 4. Ninguna fuente disponible ────────────────────────
         raise OhlcvNotAvailableError(
             f"No hay datos OHLCV disponibles para {symbol}. "
-            f"El activo no se encuentra en Binance y no tiene coingecko_id configurado."
+            f"El activo no se encuentra en Binance ni en KuCoin y no tiene coingecko_id configurado."
         )
 
     # ── Binance ────────────────────────────────────────────────────
@@ -118,8 +130,32 @@ class GetAssetOhlcvUseCase:
             logger.warning("Binance devolvió 0 velas para %s.", binance_symbol)
         except BinanceClientError as exc:
             logger.info(
-                "Binance no tiene el par %s (%s). Probando CoinGecko...",
+                "Binance no tiene el par %s (%s). Probando KuCoin...",
                 binance_symbol, exc,
+            )
+        return []
+
+    # ── KuCoin ─────────────────────────────────────────────────────
+
+    def _try_kucoin(
+        self, symbol: str, interval: str, limit: int
+    ) -> list[OhlcvCandleOutputDTO]:
+        try:
+            raw = self._kucoin.get_klines(
+                symbol=f"{symbol}USDT", interval=interval, limit=limit,
+            )
+            # get_klines de KuCoin ya normaliza al formato Binance
+            candles = self._parse_binance_klines(raw)
+            if candles:
+                logger.info(
+                    "KuCoin sirvió %d velas para %s.", len(candles), symbol
+                )
+                return candles
+            logger.warning("KuCoin devolvió 0 velas para %s.", symbol)
+        except KuCoinClientError as exc:
+            logger.info(
+                "KuCoin no tiene el par %sUSDT (%s). Probando CoinGecko...",
+                symbol, exc,
             )
         return []
 

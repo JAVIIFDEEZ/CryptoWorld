@@ -105,4 +105,8 @@ urlpatterns = [
     path("alerts/", views.AlertListView.as_view(), name="alert-list"),
     path("alerts/<int:alert_id>/", views.AlertDetailView.as_view(), name="alert-detail"),
     path("alerts/<int:alert_id>/toggle/", views.AlertToggleView.as_view(), name="alert-toggle"),
+
+    # ── Watchlist ────────────────────────────────────────────────────
+    path("watchlist/", views.WatchlistView.as_view(), name="watchlist-list"),
+    path("watchlist/<str:symbol>/", views.WatchlistItemView.as_view(), name="watchlist-detail"),
 ]
