@@ -35,8 +35,8 @@ const fmtUSD = (n: string | number) =>
     typeof n === 'string' ? Number.parseFloat(n) : n,
   )
 
-const pnlColor = (is_profit: boolean) => (is_profit ? 'text-green-400' : 'text-red-400')
-const pnlBg = (is_profit: boolean) => (is_profit ? 'bg-green-900/30' : 'bg-red-900/30')
+const pnlColor = (is_profit: boolean) => (is_profit ? 'text-positive' : 'text-negative')
+const pnlBg = (is_profit: boolean) => (is_profit ? 'bg-positive-soft' : 'bg-negative-soft')
 const sign = (isProfit: boolean) => (isProfit ? '+' : '')
 const NOW_ISO = () => new Date().toISOString().slice(0, 16)
 
@@ -44,11 +44,11 @@ const NOW_ISO = () => new Date().toISOString().slice(0, 16)
 
 function DirectionBadge({ direction }: { direction: 'LONG' | 'SHORT' }) {
   return direction === 'LONG' ? (
-    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-900/50 text-green-400 border border-green-700/50">
+    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-positive-soft text-positive border border-positive-ring">
       LONG
     </span>
   ) : (
-    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-orange-900/50 text-orange-400 border border-orange-700/50">
+    <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-caution-soft text-caution border border-caution-ring">
       SHORT
     </span>
   )
@@ -134,17 +134,17 @@ function OpenPositionModal({
   }
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700 max-h-[90vh] overflow-y-auto">
+      <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-lg font-bold text-white">Abrir posición</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Símbolo</label>
+            <label className="block text-xs text-slate-400 mb-1">Símbolo</label>
             <div className="flex gap-2">
               <input
-                className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm uppercase placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="flex-1 bg-slate-700 text-white rounded-lg px-3 py-2 text-sm uppercase placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="BTC, ETH, SOL..."
                 value={form.asset_symbol}
                 onChange={e => { setForm(f => ({ ...f, asset_symbol: e.target.value.toUpperCase() })); setPriceNote('') }}
@@ -160,13 +160,13 @@ function OpenPositionModal({
               </button>
             </div>
             {priceNote && (
-              <p className={`text-xs mt-1 ${priceNote.includes('no está') ? 'text-red-400' : 'text-emerald-400'}`}>
+              <p className={`text-xs mt-1 ${priceNote.includes('no está') ? 'text-negative' : 'text-positive'}`}>
                 {priceNote}
               </p>
             )}
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Dirección</label>
+            <label className="block text-xs text-slate-400 mb-1">Dirección</label>
             <div className="flex gap-2">
               {(['LONG', 'SHORT'] as const).map(d => (
                 <button key={d} type="button"
@@ -174,9 +174,9 @@ function OpenPositionModal({
                   className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
                     form.direction === d
                       ? d === 'LONG'
-                        ? 'bg-green-600 text-white'
-                        : 'bg-orange-600 text-white'
-                      : 'bg-gray-700 text-gray-400 hover:text-white'
+                        ? 'bg-positive text-white'
+                        : 'bg-caution text-white'
+                      : 'bg-slate-700 text-slate-400 hover:text-white'
                   }`}
                 >
                   {d === 'LONG' ? '↑ LONG' : '↓ SHORT'}
@@ -185,57 +185,57 @@ function OpenPositionModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Total (USD)</label>
+            <label className="block text-xs text-slate-400 mb-1">Total (USD)</label>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
               <input type="number" step="any" min="0" placeholder="500"
-                className="w-full bg-gray-700 text-white rounded-lg pl-7 pr-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg pl-7 pr-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={totalUsd} onChange={e => handleTotalChange(e.target.value)} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Cantidad (tokens)</label>
+              <label className="block text-xs text-slate-400 mb-1">Cantidad (tokens)</label>
               <input type="number" step="any" min="0" placeholder="0.005"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.quantity || ''} onChange={e => handleQtyChange(e.target.value)} required />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Precio entrada (USD)</label>
+              <label className="block text-xs text-slate-400 mb-1">Precio entrada (USD)</label>
               <input type="number" step="any" min="0" placeholder="94000"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.entry_price || ''} onChange={e => handlePriceChange(e.target.value)} required />
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Fecha y hora de entrada</label>
+            <label className="block text-xs text-slate-400 mb-1">Fecha y hora de entrada</label>
             <input type="datetime-local"
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={form.opened_at} onChange={e => setForm(f => ({ ...f, opened_at: e.target.value }))} required />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Etiqueta (opcional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Etiqueta (opcional)</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               placeholder="Estrategia largo plazo, DCA..."
               value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Notas (opcional)</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               placeholder="Exchange, contexto..."
               value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-negative text-sm">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm">
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm">
               Cancelar
             </button>
             <button type="submit" disabled={loading}
               className={`flex-1 py-2 rounded-lg text-sm font-medium disabled:opacity-50 text-white ${
-                form.direction === 'LONG' ? 'bg-green-600 hover:bg-green-500' : 'bg-orange-600 hover:bg-orange-500'
+                form.direction === 'LONG' ? 'bg-positive hover:bg-green-500' : 'bg-caution hover:bg-yellow-500'
               }`}>
               {loading ? 'Abriendo...' : `Abrir ${form.direction}`}
             </button>
@@ -290,58 +290,58 @@ function AddToPositionModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
+      <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
         <div className="flex justify-between items-center mb-4">
           <div>
             <h2 className="text-lg font-bold text-white">Ampliar posición</h2>
             <div className="flex items-center gap-2 mt-1">
               <DirectionBadge direction={position.direction} />
-              <span className="text-sm text-gray-300">
+              <span className="text-sm text-slate-300">
                 {position.asset_symbol} · entrada media: {fmtUSD(position.avg_entry_price)}
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Cantidad a añadir</label>
+              <label className="block text-xs text-slate-400 mb-1">Cantidad a añadir</label>
               <input type="number" step="any" min="0" placeholder="0.01"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.quantity || ''}
                 onChange={e => setForm(f => ({ ...f, quantity: Number.parseFloat(e.target.value) || 0 }))}
                 required />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Precio entrada (USD)</label>
+              <label className="block text-xs text-slate-400 mb-1">Precio entrada (USD)</label>
               <input type="number" step="any" min="0"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.entry_price || ''}
                 onChange={e => setForm(f => ({ ...f, entry_price: Number.parseFloat(e.target.value) || 0 }))}
                 required />
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Fecha y hora</label>
+            <label className="block text-xs text-slate-400 mb-1">Fecha y hora</label>
             <input type="datetime-local"
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={form.executed_at}
               onChange={e => setForm(f => ({ ...f, executed_at: e.target.value }))}
               required />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Notas (opcional)</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               placeholder="Exchange, contexto..."
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-negative text-sm">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm">
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm">
               Cancelar
             </button>
             <button type="submit" disabled={loading}
@@ -410,18 +410,18 @@ function ClosePositionModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
+      <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
         <div className="flex justify-between items-center mb-4">
           <div>
             <h2 className="text-lg font-bold text-white">Cerrar posición</h2>
             <div className="flex items-center gap-2 mt-1">
               <DirectionBadge direction={position.direction} />
-              <span className="text-sm text-gray-300">
+              <span className="text-sm text-slate-300">
                 {position.asset_symbol} · {fmt(position.open_quantity, 6)} tokens disponibles
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-2">
@@ -431,61 +431,61 @@ function ClosePositionModal({
                   ...f,
                   close_quantity: Number.parseFloat((openQty * pct / 100).toFixed(10)),
                 }))}
-                className="flex-1 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300">
+                className="flex-1 py-1 rounded bg-slate-700 hover:bg-slate-600 text-xs text-slate-300">
                 {pct}%
               </button>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">
+              <label className="block text-xs text-slate-400 mb-1">
                 Cantidad{' '}
-                {isFullClose && <span className="text-orange-400">(cierre total)</span>}
+                {isFullClose && <span className="text-caution">(cierre total)</span>}
               </label>
               <input type="number" step="any" min="0" max={openQty}
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.close_quantity || ''}
                 onChange={e => setForm(f => ({ ...f, close_quantity: Number.parseFloat(e.target.value) || 0 }))}
                 required />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Precio de cierre (USD)</label>
+              <label className="block text-xs text-slate-400 mb-1">Precio de cierre (USD)</label>
               <input type="number" step="any" min="0"
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={form.close_price || ''}
                 onChange={e => setForm(f => ({ ...f, close_price: Number.parseFloat(e.target.value) || 0 }))}
                 required />
             </div>
           </div>
           {estimatedPnl !== null && (
-            <div className={`rounded-lg p-3 text-sm ${estimatedPnl >= 0 ? 'bg-green-900/30 text-green-300' : 'bg-red-900/30 text-red-300'}`}>
+            <div className={`rounded-lg p-3 text-sm ${estimatedPnl >= 0 ? 'bg-positive-soft text-positive' : 'bg-negative-soft text-negative'}`}>
               PnL estimado: <strong>{estimatedPnl >= 0 ? '+' : ''}{fmtUSD(estimatedPnl)}</strong>
             </div>
           )}
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Fecha y hora</label>
+            <label className="block text-xs text-slate-400 mb-1">Fecha y hora</label>
             <input type="datetime-local"
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={form.executed_at}
               onChange={e => setForm(f => ({ ...f, executed_at: e.target.value }))}
               required />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Notas (opcional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Notas (opcional)</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               placeholder="Motivo del cierre..."
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-negative text-sm">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm">
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm">
               Cancelar
             </button>
             <button type="submit" disabled={loading}
-              className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
+              className="flex-1 bg-negative hover:bg-red-600 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
               {loading ? 'Cerrando...' : isFullClose ? 'Cerrar posición' : 'Cierre parcial'}
             </button>
           </div>
@@ -510,17 +510,17 @@ function OpenPositionsTable({
 }) {
   if (positions.length === 0) {
     return (
-      <div className="bg-gray-800 rounded-xl p-10 text-center text-gray-400">
+      <div className="bg-slate-800 rounded-xl p-10 text-center text-slate-400">
         <p className="text-base font-medium mb-1">Sin posiciones abiertas</p>
         <p className="text-sm">Pulsa "Nueva posición" para abrir tu primera posición LONG o SHORT.</p>
       </div>
     )
   }
   return (
-    <div className="bg-gray-800 rounded-xl overflow-x-auto">
+    <div className="bg-slate-800 rounded-xl overflow-x-auto">
       <table className="w-full text-sm min-w-[760px]">
         <thead>
-          <tr className="text-gray-400 text-xs border-b border-gray-700">
+          <tr className="text-slate-400 text-xs border-b border-slate-700">
             <th className="text-left px-4 py-3">Activo</th>
             <th className="text-right px-4 py-3">Cantidad abierta</th>
             <th className="text-right px-4 py-3">Precio medio</th>
@@ -534,7 +534,7 @@ function OpenPositionsTable({
           {positions.map(pos => {
             const realizedNum = Number.parseFloat(pos.realized_pnl_usd)
             return (
-              <tr key={pos.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
+              <tr key={pos.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     {pos.logo_url && (
@@ -545,7 +545,7 @@ function OpenPositionsTable({
                         <span className="font-medium">{pos.asset_symbol}</span>
                         <DirectionBadge direction={pos.direction} />
                       </div>
-                      <p className="text-xs text-gray-400">{pos.asset_name}</p>
+                      <p className="text-xs text-slate-400">{pos.asset_name}</p>
                       {pos.label && <p className="text-xs text-blue-400/70 mt-0.5">{pos.label}</p>}
                     </div>
                   </div>
@@ -557,7 +557,7 @@ function OpenPositionsTable({
                   {sign(pos.is_profit)}{fmtUSD(pos.unrealized_pnl_usd)}<br />
                   <span className="text-xs">{sign(pos.is_profit)}{fmt(pos.unrealized_pnl_pct)}%</span>
                 </td>
-                <td className={`text-right px-4 py-3 font-mono ${realizedNum >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <td className={`text-right px-4 py-3 font-mono ${realizedNum >= 0 ? 'text-positive' : 'text-negative'}`}>
                   {realizedNum >= 0 ? '+' : ''}{fmtUSD(pos.realized_pnl_usd)}
                 </td>
                 <td className="text-right px-4 py-3">
@@ -567,12 +567,12 @@ function OpenPositionsTable({
                       + Ampliar
                     </button>
                     <button onClick={() => onClose(pos)}
-                      className="px-2 py-1 rounded bg-red-900/40 hover:bg-red-700/50 text-red-300 text-xs">
+                      className="px-2 py-1 rounded bg-negative-soft hover:bg-red-700/50 text-negative text-xs">
                       Cerrar
                     </button>
                     {pos.trades_count === 0 && (
                       <button onClick={() => onDelete(pos)}
-                        className="px-2 py-1 rounded bg-gray-700/50 hover:bg-gray-600/60 text-gray-400 text-xs"
+                        className="px-2 py-1 rounded bg-slate-700/50 hover:bg-slate-600/60 text-slate-400 text-xs"
                         title="Eliminar (sin trades)">
                         Borrar
                       </button>
@@ -593,16 +593,16 @@ function OpenPositionsTable({
 function ClosedPositionsTable({ positions }: { positions: Position[] }) {
   if (positions.length === 0) {
     return (
-      <div className="bg-gray-800 rounded-xl p-10 text-center text-gray-400">
+      <div className="bg-slate-800 rounded-xl p-10 text-center text-slate-400">
         <p>No hay posiciones cerradas aún.</p>
       </div>
     )
   }
   return (
-    <div className="bg-gray-800 rounded-xl overflow-x-auto">
+    <div className="bg-slate-800 rounded-xl overflow-x-auto">
       <table className="w-full text-sm min-w-[640px]">
         <thead>
-          <tr className="text-gray-400 text-xs border-b border-gray-700">
+          <tr className="text-slate-400 text-xs border-b border-slate-700">
             <th className="text-left px-4 py-3">Activo</th>
             <th className="text-right px-4 py-3">Cantidad inicial</th>
             <th className="text-right px-4 py-3">Precio entrada</th>
@@ -616,7 +616,7 @@ function ClosedPositionsTable({ positions }: { positions: Position[] }) {
             const realized = Number.parseFloat(pos.realized_pnl_usd)
             const isProfit = realized >= 0
             return (
-              <tr key={pos.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
+              <tr key={pos.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     {pos.logo_url && (
@@ -636,10 +636,10 @@ function ClosedPositionsTable({ positions }: { positions: Position[] }) {
                 <td className={`text-right px-4 py-3 font-mono font-semibold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
                   {isProfit ? '+' : ''}{fmtUSD(realized)}
                 </td>
-                <td className="text-right px-4 py-3 text-gray-400 text-xs">
+                <td className="text-right px-4 py-3 text-slate-400 text-xs">
                   {new Date(pos.opened_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
                 </td>
-                <td className="text-right px-4 py-3 text-gray-400 text-xs">
+                <td className="text-right px-4 py-3 text-slate-400 text-xs">
                   {pos.closed_at
                     ? new Date(pos.closed_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })
                     : '—'}
@@ -664,16 +664,16 @@ function TradeHistoryTable({
 }) {
   if (trades.length === 0) {
     return (
-      <div className="bg-gray-800 rounded-xl p-10 text-center text-gray-400">
+      <div className="bg-slate-800 rounded-xl p-10 text-center text-slate-400">
         <p>No hay operaciones registradas.</p>
       </div>
     )
   }
   return (
-    <div className="bg-gray-800 rounded-xl overflow-x-auto">
+    <div className="bg-slate-800 rounded-xl overflow-x-auto">
       <table className="w-full text-sm min-w-[620px]">
         <thead>
-          <tr className="text-gray-400 text-xs border-b border-gray-700">
+          <tr className="text-slate-400 text-xs border-b border-slate-700">
             <th className="text-left px-4 py-3">Fecha</th>
             <th className="text-left px-4 py-3">Activo</th>
             <th className="text-left px-4 py-3">Tipo</th>
@@ -685,8 +685,8 @@ function TradeHistoryTable({
         </thead>
         <tbody>
           {trades.map(t => (
-            <tr key={t.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
-              <td className="px-4 py-3 text-gray-400 text-xs">
+            <tr key={t.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+              <td className="px-4 py-3 text-slate-400 text-xs">
                 {new Date(t.executed_at).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
               </td>
               <td className="px-4 py-3 font-medium">{t.asset_symbol}</td>
@@ -704,7 +704,7 @@ function TradeHistoryTable({
               <td className="text-right px-4 py-3 font-mono">{fmtUSD(t.total_usd)}</td>
               <td className="text-right px-4 py-3">
                 <button onClick={() => onDelete(t.id)}
-                  className="text-gray-500 hover:text-red-400 text-xs transition-colors">
+                  className="text-slate-500 hover:text-red-400 text-xs transition-colors">
                   Eliminar
                 </button>
               </td>
@@ -768,13 +768,12 @@ export default function PortfolioPage() {
   const totalRealized = Number.parseFloat(positionSummary?.total_realized_pnl_usd ?? '0')
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-7xl mx-auto">
+    <div>
         {/* Cabecera */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Portfolio</h1>
-            <p className="text-gray-400 text-sm mt-1">
+            <p className="text-slate-400 text-sm mt-1">
               Posiciones LONG/SHORT independientes con PnL en tiempo real
             </p>
           </div>
@@ -801,25 +800,25 @@ export default function PortfolioPage() {
           <>
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-400 mb-1">Posiciones abiertas</p>
+              <div className="bg-slate-800 rounded-xl p-4">
+                <p className="text-xs text-slate-400 mb-1">Posiciones abiertas</p>
                 <p className="text-xl font-bold">{openPositions.length}</p>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   {positionSummary.open_long_count} LONG · {positionSummary.open_short_count} SHORT
                 </p>
               </div>
-              <div className="bg-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-400 mb-1">Posiciones cerradas</p>
+              <div className="bg-slate-800 rounded-xl p-4">
+                <p className="text-xs text-slate-400 mb-1">Posiciones cerradas</p>
                 <p className="text-xl font-bold">{closedPositions.length}</p>
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalUnrealized >= 0)}`}>
-                <p className="text-xs text-gray-400 mb-1">PnL no realizado</p>
+                <p className="text-xs text-slate-400 mb-1">PnL no realizado</p>
                 <p className={`text-xl font-bold ${pnlColor(totalUnrealized >= 0)}`}>
                   {totalUnrealized >= 0 ? '+' : ''}{fmtUSD(totalUnrealized)}
                 </p>
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalRealized >= 0)}`}>
-                <p className="text-xs text-gray-400 mb-1">PnL realizado total</p>
+                <p className="text-xs text-slate-400 mb-1">PnL realizado total</p>
                 <p className={`text-xl font-bold ${pnlColor(totalRealized >= 0)}`}>
                   {totalRealized >= 0 ? '+' : ''}{fmtUSD(totalRealized)}
                 </p>
@@ -841,7 +840,7 @@ export default function PortfolioPage() {
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                     tab === t
                       ? 'bg-blue-600 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:text-white'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
                 >
                   {label}
@@ -861,7 +860,6 @@ export default function PortfolioPage() {
             {tab === 'history' && <TradeHistoryTable trades={trades} onDelete={handleDeleteTrade} />}
           </>
         )}
-      </div>
 
       {showOpenModal && (
         <OpenPositionModal onClose={() => setShowOpenModal(false)} onCreated={fetchData} />

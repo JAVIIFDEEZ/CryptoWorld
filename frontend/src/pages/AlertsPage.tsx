@@ -50,17 +50,17 @@ function CreateAlertModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-md border border-gray-700">
+      <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-lg font-bold text-white">Nueva alerta de precio</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">×</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Símbolo del activo</label>
+            <label className="block text-xs text-slate-400 mb-1">Símbolo del activo</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm uppercase"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm uppercase"
               placeholder="BTC, ETH, SOL…"
               value={form.asset_symbol}
               onChange={e => setForm(f => ({ ...f, asset_symbol: e.target.value.toUpperCase() }))}
@@ -69,9 +69,9 @@ function CreateAlertModal({
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Condición</label>
+            <label className="block text-xs text-slate-400 mb-1">Condición</label>
             <select
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm"
               value={form.condition}
               onChange={e => setForm(f => ({ ...f, condition: e.target.value as 'ABOVE' | 'BELOW' }))}
             >
@@ -81,12 +81,12 @@ function CreateAlertModal({
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Precio objetivo (USD)</label>
+            <label className="block text-xs text-slate-400 mb-1">Precio objetivo (USD)</label>
             <input
               type="number"
               step="any"
               min="0"
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm"
               placeholder="ej: 100000"
               value={form.threshold_price || ''}
               onChange={e => setForm(f => ({ ...f, threshold_price: parseFloat(e.target.value) || 0 }))}
@@ -95,9 +95,9 @@ function CreateAlertModal({
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Nota (opcional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Nota (opcional)</label>
             <input
-              className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+              className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm"
               placeholder="Motivo de la alerta…"
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -110,7 +110,7 @@ function CreateAlertModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm"
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm"
             >
               Cancelar
             </button>
@@ -143,7 +143,7 @@ function AlertCard({
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
 
   return (
-    <div className={`bg-gray-800 rounded-xl p-4 border ${alert.is_triggered ? 'border-yellow-500/50' : alert.is_active ? 'border-gray-700' : 'border-gray-700/30 opacity-60'}`}>
+    <div className={`bg-slate-800 rounded-xl p-4 border ${alert.is_triggered ? 'border-yellow-500/50' : alert.is_active ? 'border-slate-700' : 'border-slate-700/30 opacity-60'}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
@@ -157,16 +157,16 @@ function AlertCard({
               </span>
             )}
           </div>
-          <p className="text-sm text-gray-300">
+          <p className="text-sm text-slate-300">
             {alert.condition === 'ABOVE' ? 'Alerta cuando supere' : 'Alerta cuando caiga a'}{' '}
             <span className="font-mono font-bold text-white">{fmtUSD(alert.threshold_price)}</span>
           </p>
           {alert.current_price != null && (
-            <p className="text-xs text-gray-400 mt-0.5">
+            <p className="text-xs text-slate-400 mt-0.5">
               Precio actual: <span className="font-mono">{fmtUSD(alert.current_price)}</span>
             </p>
           )}
-          {alert.notes && <p className="text-xs text-gray-500 mt-1">{alert.notes}</p>}
+          {alert.notes && <p className="text-xs text-slate-500 mt-1">{alert.notes}</p>}
           {alert.triggered_at && (
             <p className="text-xs text-yellow-400 mt-1">
               Disparada: {new Date(alert.triggered_at).toLocaleString('es-ES')}
@@ -178,14 +178,14 @@ function AlertCard({
           <button
             onClick={() => onToggle(alert.id)}
             title={alert.is_active ? 'Desactivar' : 'Activar'}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${alert.is_active ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/70' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${alert.is_active ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/70' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
           >
             {alert.is_active ? 'Act.' : 'Desact.'}
           </button>
           <button
             onClick={() => onDelete(alert.id)}
             title="Eliminar alerta"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-gray-700 text-gray-400 hover:bg-red-900/40 hover:text-red-400"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-slate-700 text-slate-400 hover:bg-red-900/40 hover:text-red-400"
           >
             ×
           </button>
@@ -250,13 +250,12 @@ export default function AlertsPage() {
   const activeCount = alerts.filter(a => a.is_active && !a.is_triggered).length
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto">
         {/* Cabecera */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Alertas de precio</h1>
-            <p className="text-gray-400 text-sm mt-1">
+            <p className="text-slate-400 text-sm mt-1">
               Evaluadas automáticamente cada 2 minutos
             </p>
           </div>
@@ -270,17 +269,17 @@ export default function AlertsPage() {
 
         {/* Estadísticas rápidas */}
         <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-gray-800 rounded-xl p-4 text-center">
+          <div className="bg-slate-800 rounded-xl p-4 text-center">
             <p className="text-2xl font-bold">{alerts.length}</p>
-            <p className="text-xs text-gray-400 mt-1">Total</p>
+            <p className="text-xs text-slate-400 mt-1">Total</p>
           </div>
-          <div className="bg-gray-800 rounded-xl p-4 text-center">
+          <div className="bg-slate-800 rounded-xl p-4 text-center">
             <p className="text-2xl font-bold text-blue-400">{activeCount}</p>
-            <p className="text-xs text-gray-400 mt-1">Activas</p>
+            <p className="text-xs text-slate-400 mt-1">Activas</p>
           </div>
-          <div className="bg-gray-800 rounded-xl p-4 text-center">
+          <div className="bg-slate-800 rounded-xl p-4 text-center">
             <p className="text-2xl font-bold text-yellow-400">{triggeredCount}</p>
-            <p className="text-xs text-gray-400 mt-1">Disparadas</p>
+            <p className="text-xs text-slate-400 mt-1">Disparadas</p>
           </div>
         </div>
 
@@ -290,7 +289,7 @@ export default function AlertsPage() {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium ${filter === f ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium ${filter === f ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
             >
               {f === 'all' ? 'Todas' : f === 'active' ? 'Activas' : 'Disparadas'}
             </button>
@@ -310,7 +309,7 @@ export default function AlertsPage() {
         )}
 
         {!loading && !error && filtered.length === 0 && (
-          <div className="bg-gray-800 rounded-xl p-8 text-center text-gray-400">
+          <div className="bg-slate-800 rounded-xl p-8 text-center text-slate-400">
             <p className="text-lg mb-2">
               {filter === 'all' ? 'No hay alertas configuradas' : 'No hay alertas en esta categoría'}
             </p>
@@ -332,7 +331,6 @@ export default function AlertsPage() {
             ))}
           </div>
         )}
-      </div>
 
       {showModal && (
         <CreateAlertModal
