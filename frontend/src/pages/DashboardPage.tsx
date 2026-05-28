@@ -13,6 +13,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService, type MarketOverview } from '@/services/marketService'
+import { getWatchlist, type WatchlistItem } from '@/services/watchlistService'
 import { formatCompact, formatPrice } from '@/utils/format'
 import StatCard from '@/components/ui/StatCard'
 import Gauge from '@/components/ui/Gauge'
@@ -42,6 +43,7 @@ function DashboardPage() {
   const [overview, setOverview] = useState<MarketOverview | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [sparks, setSparks] = useState<Record<string, number[]>>({})
+  const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
 
   useEffect(() => {
     async function load() {
@@ -54,6 +56,13 @@ function DashboardPage() {
       setIsLoading(false)
     }
     load()
+  }, [])
+
+  // Cargar watchlist del usuario
+  useEffect(() => {
+    getWatchlist()
+      .then(setWatchlistItems)
+      .catch(() => { /* silencioso */ })
   }, [])
 
   // Mayores subidas y mayores bajadas en 24h
@@ -75,7 +84,11 @@ function DashboardPage() {
   // Carga en segundo plano de los minigráficos (7 velas diarias) de los
   // activos mostrados. No bloquea el render principal y degrada con gracia.
   useEffect(() => {
-    const symbols = Array.from(new Set([...gainers, ...losers].map((a) => a.symbol)))
+    const symbols = Array.from(new Set([
+      ...gainers.map((a) => a.symbol),
+      ...losers.map((a) => a.symbol),
+      ...watchlistItems.map((w) => w.symbol),
+    ]))
     if (symbols.length === 0) return
     let cancelled = false
     ;(async () => {
@@ -86,7 +99,7 @@ function DashboardPage() {
     return () => {
       cancelled = true
     }
-  }, [gainers, losers])
+  }, [gainers, losers, watchlistItems])
 
   const bullishCount = assets.filter((a) => a.is_bullish_24h).length
   const bearishCount = assets.length - bullishCount
@@ -137,7 +150,7 @@ function DashboardPage() {
         </div>
       </section>
 
-      {/* Resumen del catálogo */}
+      {/* Catálogo */}
       <section>
         <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
           Catálogo
@@ -158,6 +171,27 @@ function DashboardPage() {
           />
         </div>
       </section>
+
+      {/* Mi seguimiento */}
+      {watchlistItems.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+              <span className="text-yellow-400">★</span> Mi seguimiento
+            </h2>
+            <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              Ver en mercado →
+            </Link>
+          </div>
+          <div className="bg-slate-800 rounded-xl border border-yellow-500/20 overflow-hidden">
+            <div className="divide-y divide-slate-700/50">
+              {watchlistItems.map((item) => (
+                <WatchlistRow key={item.symbol} item={item} spark={sparks[item.symbol]} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Mayores subidas / bajadas */}
       <section>
@@ -221,6 +255,36 @@ function MoversCard({
         </div>
       )}
     </div>
+  )
+}
+
+function WatchlistRow({ item, spark }: Readonly<{ item: WatchlistItem; spark?: number[] }>) {
+  return (
+    <Link
+      to={`/assets/${item.symbol}`}
+      className="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/30 transition-colors"
+    >
+      {item.logo_url ? (
+        <img src={item.logo_url} alt={item.symbol} className="w-8 h-8 rounded-full shrink-0" />
+      ) : (
+        <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-yellow-400 shrink-0">
+          {item.symbol.slice(0, 2)}
+        </div>
+      )}
+
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-white truncate">{item.symbol}</p>
+        <p className="text-xs text-slate-500 truncate">{item.name}</p>
+      </div>
+
+      <div className="ml-auto flex items-center gap-4">
+        <Sparkline data={spark ?? []} className="hidden sm:block" />
+        <div className="text-right">
+          <p className="text-sm font-mono text-white tabular-nums">{formatPrice(item.current_price)}</p>
+          <DeltaChip value={item.price_change_24h == null ? null : String(item.price_change_24h)} size="sm" className="mt-0.5" />
+        </div>
+      </div>
+    </Link>
   )
 }
 

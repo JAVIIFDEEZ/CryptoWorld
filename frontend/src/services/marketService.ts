@@ -43,6 +43,8 @@ export interface AssetInfo {
   whitepaper: string | null
   twitter: string | null
   reddit: string | null
+  telegram: string | null
+  github: string | null
   ath: number | null
   ath_date: string | null
   circulating_supply: number | null

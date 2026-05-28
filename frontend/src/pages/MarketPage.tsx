@@ -28,6 +28,7 @@ function MarketPage() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [showAll, setShowAll] = useState(false)
   const [sparks, setSparks] = useState<Record<string, number[]>>({})
+  const [sparksLoaded, setSparksLoaded] = useState(false)
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set())
   const [watchlistLoading, setWatchlistLoading] = useState<Set<string>>(new Set())
 
@@ -63,6 +64,7 @@ function MarketPage() {
       const map = await marketService.getSparklines(symbols)
       if (cancelled) return
       setSparks(map)
+      setSparksLoaded(true)
     })()
     return () => { cancelled = true }
   }, [assets])
@@ -132,8 +134,21 @@ function MarketPage() {
         <StatCard label="Bajistas (24h)" value={String(bearishCount)} tone="negative" />
       </div>
 
+      {/* Sección: Mi seguimiento */}
+      {!isLoading && !error && !search.trim() && assets.some((a) => watchlist.has(a.symbol)) && (
+        <WatchlistSection
+          assets={assets.filter((a) => watchlist.has(a.symbol))}
+          sparks={sparks}
+          sparksLoaded={sparksLoaded}
+          watchlist={watchlist}
+          watchlistLoading={watchlistLoading}
+          onToggle={toggleWatchlist}
+          onNavigate={(sym) => navigate(`/assets/${sym}`)}
+        />
+      )}
+
       <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-        {/* Cabecera de la tabla */}
+        {/* Cabecera de la tabla */
         <div className="px-4 py-3 border-b border-slate-700 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-slate-300">
             {filteredAndSorted.length} activos
@@ -249,6 +264,8 @@ function MarketPage() {
                         <td className="px-4 py-3.5 text-center hidden lg:table-cell">
                           {sparkData && sparkData.length >= 2 ? (
                             <Sparkline data={sparkData} width={80} height={32} />
+                          ) : sparksLoaded ? (
+                            <span className="text-slate-600 text-xs">—</span>
                           ) : (
                             <div className="w-20 h-8 mx-auto cw-shimmer rounded" />
                           )}
@@ -274,6 +291,110 @@ function MarketPage() {
         )}
       </div>
     </section>
+  )
+}
+
+function WatchlistSection({
+  assets,
+  sparks,
+  sparksLoaded,
+  watchlist,
+  watchlistLoading,
+  onToggle,
+  onNavigate,
+}: {
+  assets: CryptoAsset[]
+  sparks: Record<string, number[]>
+  sparksLoaded: boolean
+  watchlist: Set<string>
+  watchlistLoading: Set<string>
+  onToggle: (symbol: string, e: React.MouseEvent) => void
+  onNavigate: (symbol: string) => void
+}) {
+  return (
+    <div className="bg-slate-800 border border-yellow-500/20 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">
+        <span className="text-yellow-400 text-sm">★</span>
+        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Mi seguimiento</h3>
+        <span className="text-slate-600 text-xs ml-1">({assets.length})</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <tbody className="divide-y divide-slate-700/40">
+            {assets.map((asset, idx) => {
+              const marketCap = parseNumeric(asset.market_cap)
+              const volume = parseNumeric(asset.volume_24h)
+              const inWatchlist = watchlist.has(asset.symbol)
+              const wlPending = watchlistLoading.has(asset.symbol)
+              const sparkData = sparks[asset.symbol]
+
+              return (
+                <tr
+                  key={asset.id}
+                  onClick={() => onNavigate(asset.symbol)}
+                  className="hover:bg-slate-700/30 transition-colors cursor-pointer group"
+                >
+                  <td className="pl-4 pr-2 py-3.5 text-center text-slate-500 text-xs tabular-nums">
+                    {idx + 1}
+                  </td>
+                  <td className="px-2 py-3.5 text-center">
+                    <button
+                      onClick={(e) => onToggle(asset.symbol, e)}
+                      disabled={wlPending}
+                      className={`transition-colors text-base leading-none ${
+                        inWatchlist
+                          ? 'text-yellow-400 hover:text-yellow-300'
+                          : 'text-slate-600 hover:text-slate-400 opacity-0 group-hover:opacity-100'
+                      }`}
+                      title={inWatchlist ? 'Quitar de watchlist' : 'Añadir a watchlist'}
+                      aria-label={inWatchlist ? 'Quitar de watchlist' : 'Añadir a watchlist'}
+                    >
+                      {inWatchlist ? '★' : '☆'}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center gap-3">
+                      {asset.logo_url ? (
+                        <img src={asset.logo_url} alt={asset.symbol} className="w-8 h-8 rounded-full shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-slate-700 text-blue-400 text-xs font-bold flex items-center justify-center shrink-0">
+                          {asset.symbol.slice(0, 2)}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-semibold text-white text-sm">{asset.symbol}</p>
+                        <p className="text-xs text-slate-500 truncate max-w-[120px]">{asset.name}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-white font-mono tabular-nums font-medium">
+                    {formatPrice(asset.current_price)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right">
+                    <DeltaChip value={asset.price_change_24h} size="sm" />
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-slate-400 font-mono tabular-nums text-xs">
+                    {volume > 0 ? formatCompact(volume) : '—'}
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-slate-300 font-mono tabular-nums text-xs">
+                    {marketCap > 0 ? formatCompact(marketCap) : '—'}
+                  </td>
+                  <td className="px-4 py-3.5 text-center hidden lg:table-cell">
+                    {sparkData && sparkData.length >= 2 ? (
+                      <Sparkline data={sparkData} width={80} height={32} />
+                    ) : sparksLoaded ? (
+                      <span className="text-slate-600 text-xs">—</span>
+                    ) : (
+                      <div className="w-20 h-8 mx-auto cw-shimmer rounded" />
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 

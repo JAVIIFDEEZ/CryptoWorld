@@ -653,14 +653,31 @@ class AssetSparklinesView(APIView):
         result = {}
 
         for symbol in symbols:
+            prices: list[float] = []
+
+            # Intento 1: CoinGecko market_chart (precios de cierre diarios precisos)
             coingecko_id = id_map.get(symbol)
-            if not coingecko_id:
-                result[symbol] = []
-                continue
-            try:
-                result[symbol] = client.get_sparkline_prices(coingecko_id, days=7)
-            except CoinGeckoClientError:
-                result[symbol] = []
+            if coingecko_id:
+                try:
+                    prices = client.get_sparkline_prices(coingecko_id, days=7)
+                except CoinGeckoClientError:
+                    prices = []
+
+            # Intento 2: fallback a velas diarias de Binance / KuCoin
+            if not prices:
+                try:
+                    from core.application.use_cases.get_asset_ohlcv import (
+                        GetAssetOhlcvUseCase,
+                        OhlcvNotAvailableError,
+                    )
+                    candles, _ = GetAssetOhlcvUseCase().execute(
+                        symbol=symbol, interval="1d", limit=14
+                    )
+                    prices = [float(c.close) for c in candles]
+                except Exception:
+                    prices = []
+
+            result[symbol] = prices
 
         return Response(result, status=status.HTTP_200_OK)
 
@@ -1037,6 +1054,10 @@ class AssetDetailInfoView(APIView):
         twitter_handle = links.get("twitter_screen_name") or None
         twitter = f"https://twitter.com/{twitter_handle}" if twitter_handle else None
         reddit = links.get("subreddit_url") or None
+        telegram_id = links.get("telegram_channel_identifier") or None
+        telegram = f"https://t.me/{telegram_id}" if telegram_id else None
+        github_repos = (links.get("repos_url") or {}).get("github") or []
+        github = next((u for u in github_repos if u), None)
 
         ath = (market.get("ath") or {}).get("usd")
         ath_date_raw = (market.get("ath_date") or {}).get("usd")
@@ -1052,6 +1073,8 @@ class AssetDetailInfoView(APIView):
             "whitepaper": whitepaper,
             "twitter": twitter,
             "reddit": reddit,
+            "telegram": telegram,
+            "github": github,
             "ath": ath,
             "ath_date": ath_date,
             "circulating_supply": circulating_supply,
