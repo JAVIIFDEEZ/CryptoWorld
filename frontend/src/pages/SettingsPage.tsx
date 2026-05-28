@@ -36,8 +36,9 @@ export default function SettingsPage() {
       await authService.deleteAccount(deletePassword)
       logout()
       navigate('/login', { replace: true })
-    } catch (err: any) {
-      setDeleteError(err.response?.data?.error || 'Error al eliminar la cuenta. Verifica tu contraseña.')
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } }
+      setDeleteError(axiosErr.response?.data?.error || 'Error al eliminar la cuenta. Verifica tu contraseña.')
     } finally {
       setIsDeleting(false)
     }
@@ -64,8 +65,9 @@ export default function SettingsPage() {
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
-    } catch (err: any) {
-      setPasswordError(err.response?.data?.error || 'Error al cambiar la contraseña. Revisa tus datos.')
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } }
+      setPasswordError(axiosErr.response?.data?.error || 'Error al cambiar la contraseña. Revisa tus datos.')
     } finally {
       setIsChangingPassword(false)
     }

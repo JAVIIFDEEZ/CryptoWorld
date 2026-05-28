@@ -143,7 +143,7 @@ function AppShell() {
                           'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                           isActive
                             ? 'bg-blue-600 text-white'
-                            : 'text-slate-400 hover:bg-white/8 hover:text-slate-100',
+                            : 'text-slate-400 hover:bg-white/[0.08] hover:text-slate-100',
                         ].join(' ')
                       }
                     >
