@@ -239,10 +239,15 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.check_price_alerts",
         "schedule": 120.0,  # segundos
     },
-    # Sincronizar precios de mercado cada 10 minutos
+    # Sync rápido de precios vía Binance (1 llamada, weight=40, sin cuota CoinGecko)
+    "sync-prices-quick": {
+        "task": "core.tasks.sync_prices_quick",
+        "schedule": 60.0,   # segundos — cada 1 min
+    },
+    # Sync completo vía CoinGecko (market_cap, logos, MarketDataSnapshot para sparklines)
     "sync-market-prices": {
         "task": "core.tasks.sync_market_prices",
-        "schedule": 600.0,  # segundos
+        "schedule": 300.0,  # segundos — cada 5 min (8 640 calls/mes < 10 000 límite Demo)
     },
 }
 
