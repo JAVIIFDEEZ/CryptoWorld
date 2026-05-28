@@ -191,15 +191,100 @@ docker compose -f docker-compose.prod.yml down
 
 ## Alternativa sin servidor propio: Railway
 
-Si no quieres gestionar un VPS, Railway es la opción más sencilla:
+Railway permite desplegar backend + Celery como **3 servicios separados** en el mismo proyecto, compartiendo la misma BD PostgreSQL y Redis.
+
+### Arquitectura en Railway
+
+```
+Proyecto Railway "CryptoWorld"
+├── cryptoworld-web     ← Django + Gunicorn  (este repo/backend/)
+├── cryptoworld-worker  ← Celery Worker      (este repo/backend/)
+├── cryptoworld-beat    ← Celery Beat        (este repo/backend/)
+├── PostgreSQL          ← Plugin de Railway
+└── Redis               ← Plugin de Railway
+```
+
+### Paso 1 — Crear el proyecto base
 
 1. Crea cuenta en [railway.app](https://railway.app)
-2. "New Project" → "Deploy from GitHub repo"
-3. Railway detecta el `docker-compose.yml` automáticamente
-4. Configura las variables de entorno en el panel web
-5. Railway asigna una URL HTTPS automática (`*.up.railway.app`)
+2. "New Project" → "Empty Project"
+3. Añade PostgreSQL: "Add Service" → "Database" → "PostgreSQL"
+4. Añade Redis: "Add Service" → "Database" → "Redis"
 
-**Limitación:** El plan gratuito tiene 500 horas/mes (~20 días). Para uso continuo ~$5/mes.
+### Paso 2 — Servicio Web (Django)
+
+1. "Add Service" → "GitHub Repo" → selecciona el repo `CryptoWorld`
+2. En el servicio creado → "Settings":
+   - **Root Directory:** `backend`
+   - **Start Command:** *(dejar vacío — usa `railway.json` automáticamente)*
+3. Railway detecta `backend/railway.json` y ejecuta migrate + gunicorn
+
+### Paso 3 — Servicio Celery Worker
+
+1. "Add Service" → "GitHub Repo" → mismo repo `CryptoWorld`
+2. En el servicio → "Settings":
+   - **Root Directory:** `backend`
+   - **Start Command:**
+     ```
+     cd src && celery -A config worker --loglevel=info --pool=solo
+     ```
+   - Rename el servicio a `cryptoworld-worker`
+3. En "Variables" → copia **todas** las variables del servicio web (ver Paso 5)
+
+### Paso 4 — Servicio Celery Beat
+
+1. "Add Service" → "GitHub Repo" → mismo repo `CryptoWorld`
+2. En el servicio → "Settings":
+   - **Root Directory:** `backend`
+   - **Start Command:**
+     ```
+     cd src && celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+     ```
+   - Rename el servicio a `cryptoworld-beat`
+3. En "Variables" → copia **todas** las variables del servicio web (ver Paso 5)
+
+### Paso 5 — Variables de entorno (los 3 servicios)
+
+Configura estas variables en **cada uno de los 3 servicios**. Railway inyecta `DATABASE_URL` y `REDIS_URL` automáticamente al vincularlos con los plugins.
+
+| Variable | Valor |
+|---|---|
+| `DATABASE_URL` | *Auto — vincular al plugin PostgreSQL* |
+| `REDIS_URL` | *Auto — vincular al plugin Redis* |
+| `DJANGO_SECRET_KEY` | Clave secreta larga y aleatoria |
+| `DJANGO_DEBUG` | `False` |
+| `DJANGO_ALLOWED_HOSTS` | `*.up.railway.app,tudominio.com` |
+| `CORS_ALLOWED_ORIGINS` | URL del frontend (Vercel, etc.) |
+| `FRONTEND_URL` | URL del frontend |
+| `EMAIL_HOST` | Servidor SMTP (ej. smtp.gmail.com) |
+| `EMAIL_HOST_USER` | Email de envío |
+| `EMAIL_HOST_PASSWORD` | Contraseña SMTP |
+| `EMAIL_PORT` | `587` |
+| `COINGECKO_API_KEY` | API key de CoinGecko (opcional) |
+
+Para vincular `DATABASE_URL` al plugin PostgreSQL:
+- En el servicio → "Variables" → "Add Reference" → selecciona el plugin PostgreSQL → variable `DATABASE_URL`
+- Repite para `REDIS_URL` con el plugin Redis
+
+### Paso 6 — Desplegar y verificar
+
+1. En el servicio web, haz click en "Deploy"
+2. Luego en worker → "Deploy"
+3. Luego en beat → "Deploy"
+4. Verifica los logs de cada servicio:
+   - **Web:** debe mostrar `Listening at: http://0.0.0.0:PORT`
+   - **Worker:** debe mostrar `celery@... ready.`
+   - **Beat:** debe mostrar `beat: Starting...`
+
+### Paso 7 — Dominio personalizado (opcional)
+
+En el servicio web → "Settings" → "Custom Domain" → añade tu dominio.
+
+### Actualizaciones posteriores
+
+Railway hace **redeploy automático** en cada push a `main`. Los 3 servicios se actualizan solos.
+
+**Precio:** ~$5-10/mes con el plan Hobby (3 servicios + BD + Redis).
 
 ---
 
