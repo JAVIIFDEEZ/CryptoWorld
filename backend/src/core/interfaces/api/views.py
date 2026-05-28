@@ -614,6 +614,57 @@ class AssetListView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+
+class AssetSparklinesView(APIView):
+    """
+    GET /api/assets/sparklines/?symbols=BTC,ETH,SOL
+
+    Devuelve precios de cierre diarios (ultimos 7 dias) por simbolo,
+    listos para renderizar mini-sparklines en tablas y tarjetas.
+
+    Respuesta: { "BTC": [p1, p2, ...], "ETH": [...], ... }
+    Maximo 10 simbolos por peticion para no exceder el rate-limit de CoinGecko.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.external_apis.coingecko_client import (
+            CoinGeckoClient,
+            CoinGeckoClientError,
+        )
+
+        raw = request.query_params.get("symbols", "")
+        if not raw:
+            return Response(
+                {"error": "Parametro symbols requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        symbols = [s.strip().upper() for s in raw.split(",") if s.strip()][:10]
+
+        assets = (
+            CryptoAssetModel.objects
+            .filter(symbol__in=symbols)
+            .values("symbol", "coingecko_id")
+        )
+        id_map = {a["symbol"]: a["coingecko_id"] for a in assets if a["coingecko_id"]}
+
+        client = CoinGeckoClient()
+        result = {}
+
+        for symbol in symbols:
+            coingecko_id = id_map.get(symbol)
+            if not coingecko_id:
+                result[symbol] = []
+                continue
+            try:
+                result[symbol] = client.get_sparkline_prices(coingecko_id, days=7)
+            except CoinGeckoClientError:
+                result[symbol] = []
+
+        return Response(result, status=status.HTTP_200_OK)
+
+
 # â”€â”€ Analysis Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class RunAnalysisView(APIView):

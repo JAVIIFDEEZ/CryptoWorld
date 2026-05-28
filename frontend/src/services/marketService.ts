@@ -67,4 +67,21 @@ export const marketService = {
     const { data } = await apiClient.get<MarketOverview>('/market/overview/')
     return data
   },
+
+  /**
+   * Obtener precios de cierre diarios (últimos 7 días) para varios activos.
+   * GET /api/assets/sparklines/?symbols=BTC,ETH,SOL
+   * Útil para renderizar mini-sparklines en tablas y tarjetas.
+   *
+   * @param symbols - Array de símbolos en mayúsculas (máx. 10)
+   * @returns Mapa símbolo → array de precios ordenados cronológicamente
+   */
+  async getSparklines(symbols: string[]): Promise<Record<string, number[]>> {
+    if (symbols.length === 0) return {}
+    const { data } = await apiClient.get<Record<string, number[]>>(
+      '/assets/sparklines/',
+      { params: { symbols: symbols.join(',') } },
+    )
+    return data
+  },
 }

@@ -114,6 +114,29 @@ class CoinGeckoClient:
             "days": days,
         })
 
+    def get_sparkline_prices(
+        self,
+        coin_id: str,
+        vs_currency: str = "usd",
+        days: int = 7,
+    ) -> list[float]:
+        """
+        GET /coins/{id}/market_chart — Precios de cierre diarios para sparklines.
+
+        Devuelve una lista plana de precios (float) ordenados cronológicamente,
+        uno por día durante los últimos `days` días.
+
+        Docs: https://docs.coingecko.com/reference/coins-id-market-chart
+        """
+        data = self._get(f"/coins/{coin_id}/market_chart", params={
+            "vs_currency": vs_currency,
+            "days": days,
+            "interval": "daily",
+        })
+        # data["prices"] = [[timestamp_ms, price], ...]
+        prices: list[list] = data.get("prices", [])
+        return [float(point[1]) for point in prices]
+
     def ping(self) -> bool:
         """Comprueba que la API responde."""
         try:
