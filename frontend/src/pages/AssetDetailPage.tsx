@@ -8,29 +8,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
+import { marketService } from '@/services/marketService'
+import { formatPrice, formatCompact } from '@/utils/format'
+import DeltaChip from '@/components/ui/DeltaChip'
 import OhlcvChart from '@/components/OhlcvChart'
 import AnalysisPanel from '@/components/AnalysisPanel'
-
-// ── Tipos ficha CoinGecko ──────────────────────────────────────────
-
-interface CoinDetail {
-  links?: {
-    homepage?: string[]
-    whitepaper?: string
-    twitter_screen_name?: string
-    subreddit_url?: string
-  }
-  market_data?: {
-    ath?: { usd: number }
-    ath_date?: { usd: string }
-    atl?: { usd: number }
-    circulating_supply?: number
-    max_supply?: number | null
-    total_supply?: number | null
-  }
-  categories?: string[]
-  description?: { en?: string }
-}
 
 function AssetDetailPage() {
   const { symbol } = useParams<{ symbol: string }>()
@@ -38,7 +20,7 @@ function AssetDetailPage() {
 
   const [asset, setAsset] = useState<CryptoAsset | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [coinDetail, setCoinDetail] = useState<CoinDetail | null>(null)
+  const [dayRange, setDayRange] = useState<{ low: number; high: number } | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -50,22 +32,25 @@ function AssetDetailPage() {
           return
         }
         setAsset(found)
-
-        // Fetch ficha CoinGecko si hay coingecko_id
-        if (found.coingecko_id) {
-          fetch(
-            `https://api.coingecko.com/api/v3/coins/${found.coingecko_id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`,
-          )
-            .then((r) => r.json())
-            .then((data: CoinDetail) => setCoinDetail(data))
-            .catch(() => { /* silencioso */ })
-        }
       } finally {
         setIsLoading(false)
       }
     }
     load()
   }, [symbol, navigate])
+
+  // Calcular rango del día desde velas 1h (últimas 24)
+  useEffect(() => {
+    if (!symbol) return
+    marketService.getOhlcv(symbol.toUpperCase(), '1h', 24)
+      .then((res) => {
+        if (res.candles.length === 0) return
+        const highs = res.candles.map((c) => Number.parseFloat(c.high))
+        const lows = res.candles.map((c) => Number.parseFloat(c.low))
+        setDayRange({ low: Math.min(...lows), high: Math.max(...highs) })
+      })
+      .catch(() => { /* silencioso */ })
+  }, [symbol])
 
   if (isLoading) {
     return (
@@ -76,9 +61,6 @@ function AssetDetailPage() {
   }
 
   if (!asset) return null
-
-  const change = parseFloat(asset.price_change_24h ?? '0')
-  const isPositive = change >= 0
 
   return (
     <div>
@@ -107,20 +89,26 @@ function AssetDetailPage() {
             </div>
           </div>
           <div className="text-right">
-            <p className="text-3xl font-bold font-mono text-white">
-              ${parseFloat(asset.current_price).toLocaleString('es-ES', { minimumFractionDigits: 2 })}
+            <p className="text-3xl font-bold font-mono tabular-nums text-white">
+              {formatPrice(asset.current_price)}
             </p>
-            <p className={`text-sm font-mono mt-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-              {isPositive ? '▲' : '▼'} {Math.abs(change).toFixed(2)}% (24h)
-            </p>
+            <div className="flex items-center justify-end gap-2 mt-1">
+              <DeltaChip value={asset.price_change_24h} arrow />
+              <span className="text-xs text-slate-500">24h</span>
+            </div>
           </div>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-slate-700">
-          <Metric label="Cap. de mercado" value={asset.market_cap ? `$${(parseFloat(asset.market_cap) / 1e9).toFixed(2)}B` : '—'} />
-          <Metric label="Volumen 24h" value={asset.volume_24h ? `$${(parseFloat(asset.volume_24h) / 1e9).toFixed(2)}B` : '—'} />
-          <Metric label="Tendencia" value={asset.is_bullish_24h ? 'Alcista' : 'Bajista'} />
+          <Metric label="Cap. de mercado" value={asset.market_cap ? formatCompact(asset.market_cap) : '—'} />
+          <Metric label="Volumen 24h" value={asset.volume_24h ? formatCompact(asset.volume_24h) : '—'} />
+          <Metric label="Tendencia" value={asset.is_bullish_24h ? 'Alcista ↑' : 'Bajista ↓'} color={asset.is_bullish_24h ? 'text-positive' : 'text-negative'} />
         </div>
+
+        {/* Barra de rango 24h */}
+        {dayRange && (
+          <RangeBar current={asset.current_price} low={String(dayRange.low)} high={String(dayRange.high)} />
+        )}
       </div>
 
       {/* Gráfico de velas OHLCV */}
@@ -128,139 +116,63 @@ function AssetDetailPage() {
         <OhlcvChart symbol={asset.symbol} initialInterval="1h" />
       </div>
 
-      {/* Ficha del proyecto (CoinGecko) */}
-      {coinDetail && <ProjectCard coin={coinDetail} assetName={asset.name} />}
-
       {/* Panel de análisis técnico avanzado */}
       <AnalysisPanel symbol={asset.symbol} />
     </div>
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, color }: Readonly<{ label: string; value: string; color?: string }>) {
   return (
     <div>
       <p className="text-slate-500 text-xs mb-0.5">{label}</p>
-      <p className="text-white text-sm font-medium">{value}</p>
+      <p className={`text-sm font-medium ${color ?? 'text-white'}`}>{value}</p>
     </div>
   )
 }
 
-// ── Ficha del proyecto ─────────────────────────────────────────────
+function RangeBar({
+  current,
+  low,
+  high,
+}: Readonly<{
+  current: string | null | undefined
+  low: string | null | undefined
+  high: string | null | undefined
+}>) {
+  const c = Number.parseFloat(String(current ?? '0'))
+  const l = Number.parseFloat(String(low ?? '0'))
+  const h = Number.parseFloat(String(high ?? '0'))
+  if (!l || !h || h <= l) return null
 
-function ProjectCard({ coin, assetName }: { coin: CoinDetail; assetName: string }) {
-  const homepage = coin.links?.homepage?.find(Boolean) ?? null
-  const whitepaper = coin.links?.whitepaper ?? null
-  const twitter = coin.links?.twitter_screen_name
-    ? `https://twitter.com/${coin.links.twitter_screen_name}`
-    : null
-  const reddit = coin.links?.subreddit_url ?? null
-
-  const ath = coin.market_data?.ath?.usd
-  const athDate = coin.market_data?.ath_date?.usd
-    ? new Date(coin.market_data.ath_date.usd).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' })
-    : null
-  const circulatingSupply = coin.market_data?.circulating_supply
-  const maxSupply = coin.market_data?.max_supply
-  const categories = coin.categories?.slice(0, 4) ?? []
-
-  const hasLinks = homepage || whitepaper || twitter || reddit
-  const hasStats = ath || circulatingSupply
-
-  if (!hasLinks && !hasStats && !categories.length) return null
+  const pct = Math.min(100, Math.max(0, ((c - l) / (h - l)) * 100))
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 mb-6">
-      <h3 className="text-sm font-semibold text-slate-300 mb-4">Ficha del proyecto</h3>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Links oficiales */}
-        {hasLinks && (
-          <div>
-            <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Links</p>
-            <div className="flex flex-wrap gap-2">
-              {homepage && (
-                <a href={homepage} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md px-2.5 py-1 transition-colors">
-                  🌐 Web oficial
-                </a>
-              )}
-              {whitepaper && (
-                <a href={whitepaper} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md px-2.5 py-1 transition-colors">
-                  📄 Whitepaper
-                </a>
-              )}
-              {twitter && (
-                <a href={twitter} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md px-2.5 py-1 transition-colors">
-                  𝕏 Twitter
-                </a>
-              )}
-              {reddit && (
-                <a href={reddit} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md px-2.5 py-1 transition-colors">
-                  Reddit
-                </a>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Stats clave */}
-        {hasStats && (
-          <div>
-            <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Estadísticas</p>
-            <div className="space-y-1.5">
-              {ath && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">ATH</span>
-                  <span className="text-white font-mono">
-                    ${ath.toLocaleString('es-ES', { minimumFractionDigits: 2 })}
-                    {athDate && <span className="text-slate-500 text-xs ml-1">({athDate})</span>}
-                  </span>
-                </div>
-              )}
-              {circulatingSupply && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Supply circulante</span>
-                  <span className="text-white font-mono">
-                    {(circulatingSupply / 1e6).toFixed(2)}M {assetName.split(' ')[0]}
-                  </span>
-                </div>
-              )}
-              {maxSupply && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Supply máximo</span>
-                  <span className="text-white font-mono">
-                    {(maxSupply / 1e6).toFixed(2)}M
-                  </span>
-                </div>
-              )}
-              {!maxSupply && circulatingSupply && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Supply máximo</span>
-                  <span className="text-slate-500">Sin límite</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+    <div className="mt-5 pt-4 border-t border-slate-700/60">
+      <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
+        <span>Mín 24h</span>
+        <span className="text-slate-400 font-medium">Rango del día</span>
+        <span>Máx 24h</span>
       </div>
-
-      {/* Categorías */}
-      {categories.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-slate-700/60">
-          <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Categorías</p>
-          <div className="flex flex-wrap gap-1.5">
-            {categories.map((cat) => (
-              <span key={cat} className="text-xs bg-blue-500/15 text-blue-300 border border-blue-500/20 rounded-full px-2.5 py-0.5">
-                {cat}
-              </span>
-            ))}
-          </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-mono tabular-nums text-negative shrink-0">
+          {formatPrice(low)}
+        </span>
+        <div className="flex-1 relative h-1.5 bg-slate-700 rounded-full overflow-visible">
+          <div
+            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-negative via-caution to-positive"
+            style={{ width: '100%' }}
+          />
+          {/* Indicador de posición actual */}
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white border-2 border-slate-900 shadow-lg"
+            style={{ left: `calc(${pct}% - 6px)` }}
+          />
         </div>
-      )}
+        <span className="text-xs font-mono tabular-nums text-positive shrink-0">
+          {formatPrice(high)}
+        </span>
+      </div>
     </div>
   )
 }
