@@ -148,7 +148,7 @@ function MarketPage() {
       )}
 
       <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-        {/* Cabecera de la tabla */
+        {/* Cabecera de la tabla */}
         <div className="px-4 py-3 border-b border-slate-700 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-slate-300">
             {filteredAndSorted.length} activos
@@ -302,7 +302,7 @@ function WatchlistSection({
   watchlistLoading,
   onToggle,
   onNavigate,
-}: {
+}: Readonly<{
   assets: CryptoAsset[]
   sparks: Record<string, number[]>
   sparksLoaded: boolean
@@ -310,7 +310,7 @@ function WatchlistSection({
   watchlistLoading: Set<string>
   onToggle: (symbol: string, e: React.MouseEvent) => void
   onNavigate: (symbol: string) => void
-}) {
+}>) {
   return (
     <div className="bg-slate-800 border border-yellow-500/20 rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">
