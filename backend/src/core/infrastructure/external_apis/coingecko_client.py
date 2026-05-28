@@ -114,6 +114,25 @@ class CoinGeckoClient:
             "days": days,
         })
 
+    def get_coin_detail(self, coin_id: str) -> dict[str, Any]:
+        """
+        GET /coins/{id} — Información detallada de una moneda: enlaces,
+        datos de mercado (ATH, suministro) y categorías.
+
+        Se solicita únicamente lo imprescindible para reducir el payload:
+        tickers, community_data y developer_data se deshabilitan.
+
+        Docs: https://docs.coingecko.com/reference/coins-id
+        """
+        return self._get(f"/coins/{coin_id}", params={
+            "localization": "false",
+            "tickers": "false",
+            "market_data": "true",
+            "community_data": "false",
+            "developer_data": "false",
+            "sparkline": "false",
+        })
+
     def get_sparkline_prices(
         self,
         coin_id: str,

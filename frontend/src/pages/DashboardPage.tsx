@@ -79,16 +79,8 @@ function DashboardPage() {
     if (symbols.length === 0) return
     let cancelled = false
     ;(async () => {
-      const results = await Promise.allSettled(
-        symbols.map((s) => marketService.getOhlcv(s, '1d', 8)),
-      )
+      const map = await marketService.getSparklines(symbols)
       if (cancelled) return
-      const map: Record<string, number[]> = {}
-      results.forEach((res, i) => {
-        if (res.status === 'fulfilled') {
-          map[symbols[i]] = res.value.candles.map((c) => parseFloat(c.close))
-        }
-      })
       setSparks(map)
     })()
     return () => {

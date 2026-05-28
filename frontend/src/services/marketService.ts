@@ -38,6 +38,19 @@ export type OhlcvInterval =
   | '1h' | '2h' | '4h' | '6h' | '12h'
   | '1d' | '1w'
 
+export interface AssetInfo {
+  homepage: string | null
+  whitepaper: string | null
+  twitter: string | null
+  reddit: string | null
+  ath: number | null
+  ath_date: string | null
+  circulating_supply: number | null
+  max_supply: number | null
+  categories: string[]
+  description: string | null
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const marketService = {
@@ -73,15 +86,38 @@ export const marketService = {
    * GET /api/assets/sparklines/?symbols=BTC,ETH,SOL
    * Útil para renderizar mini-sparklines en tablas y tarjetas.
    *
-   * @param symbols - Array de símbolos en mayúsculas (máx. 10)
+   * El backend acepta un máximo de 10 símbolos por petición; este método
+   * divide el array en chunks y consolida los resultados automáticamente.
+   *
+   * @param symbols - Array de símbolos en mayúsculas (sin límite de tamaño)
    * @returns Mapa símbolo → array de precios ordenados cronológicamente
    */
   async getSparklines(symbols: string[]): Promise<Record<string, number[]>> {
     if (symbols.length === 0) return {}
-    const { data } = await apiClient.get<Record<string, number[]>>(
-      '/assets/sparklines/',
-      { params: { symbols: symbols.join(',') } },
+    const CHUNK_SIZE = 10
+    const chunks: string[][] = []
+    for (let i = 0; i < symbols.length; i += CHUNK_SIZE) {
+      chunks.push(symbols.slice(i, i + CHUNK_SIZE))
+    }
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        apiClient
+          .get<Record<string, number[]>>('/assets/sparklines/', {
+            params: { symbols: chunk.join(',') },
+          })
+          .then((r) => r.data)
+          .catch((): Record<string, number[]> => ({})),
+      ),
     )
+    return Object.assign({}, ...results)
+  },
+
+  /**
+   * Información de proyecto de un activo (enlaces, ATH, suministro, categorías).
+   * GET /api/assets/<symbol>/info/
+   */
+  async getAssetInfo(symbol: string): Promise<AssetInfo> {
+    const { data } = await apiClient.get<AssetInfo>(`/assets/${symbol}/info/`)
     return data
   },
 }

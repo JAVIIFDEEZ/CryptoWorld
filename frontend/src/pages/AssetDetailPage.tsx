@@ -5,11 +5,11 @@
  * (datos de Binance vía backend) y análisis técnico.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
-import { marketService } from '@/services/marketService'
-import { formatPrice, formatCompact } from '@/utils/format'
+import { marketService, type AssetInfo } from '@/services/marketService'
+import { formatPrice, formatCompact, formatNumber } from '@/utils/format'
 import DeltaChip from '@/components/ui/DeltaChip'
 import OhlcvChart from '@/components/OhlcvChart'
 import AnalysisPanel from '@/components/AnalysisPanel'
@@ -21,6 +21,7 @@ function AssetDetailPage() {
   const [asset, setAsset] = useState<CryptoAsset | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [dayRange, setDayRange] = useState<{ low: number; high: number } | null>(null)
+  const [assetInfo, setAssetInfo] = useState<AssetInfo | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -50,6 +51,14 @@ function AssetDetailPage() {
         setDayRange({ low: Math.min(...lows), high: Math.max(...highs) })
       })
       .catch(() => { /* silencioso */ })
+  }, [symbol])
+
+  // Cargar info de proyecto desde el backend (CoinGecko proxied)
+  useEffect(() => {
+    if (!symbol) return
+    marketService.getAssetInfo(symbol.toUpperCase())
+      .then(setAssetInfo)
+      .catch(() => { /* silencioso si CoinGecko no responde */ })
   }, [symbol])
 
   if (isLoading) {
@@ -116,6 +125,9 @@ function AssetDetailPage() {
         <OhlcvChart symbol={asset.symbol} initialInterval="1h" />
       </div>
 
+      {/* Información de proyecto (backend → CoinGecko) */}
+      {assetInfo && <ProjectCard info={assetInfo} symbol={asset.symbol} />}
+
       {/* Panel de análisis técnico avanzado */}
       <AnalysisPanel symbol={asset.symbol} />
     </div>
@@ -178,3 +190,95 @@ function RangeBar({
 }
 
 export default AssetDetailPage
+
+// ── Subcomponentes ─────────────────────────────────────────────────
+
+function ProjectCard({ info, symbol }: Readonly<{ info: AssetInfo; symbol: string }>) {
+  const links: { label: string; href: string | null }[] = [
+    { label: 'Web oficial', href: info.homepage },
+    { label: 'Whitepaper', href: info.whitepaper },
+    { label: 'Twitter / X', href: info.twitter },
+    { label: 'Reddit', href: info.reddit },
+  ].filter((l) => l.href)
+
+  return (
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 mb-6">
+      <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-4">
+        Información del proyecto · {symbol}
+      </h2>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {/* Datos de mercado */}
+        <div className="space-y-3">
+          {info.ath != null && (
+            <InfoRow label="ATH">
+              <span className="font-mono tabular-nums text-white">{formatPrice(String(info.ath))}</span>
+              {info.ath_date && (
+                <span className="text-slate-500 text-xs ml-2">
+                  {new Date(info.ath_date).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' })}
+                </span>
+              )}
+            </InfoRow>
+          )}
+          {info.circulating_supply != null && (
+            <InfoRow label="Suministro circulante">
+              <span className="font-mono tabular-nums text-white">
+                {formatNumber(info.circulating_supply)} {symbol}
+              </span>
+            </InfoRow>
+          )}
+          {info.max_supply != null && (
+            <InfoRow label="Suministro máximo">
+              <span className="font-mono tabular-nums text-white">
+                {formatNumber(info.max_supply)} {symbol}
+              </span>
+            </InfoRow>
+          )}
+          {info.categories.length > 0 && (
+            <InfoRow label="Categorías">
+              <div className="flex flex-wrap gap-1.5 mt-0.5">
+                {info.categories.map((cat) => (
+                  <span
+                    key={cat}
+                    className="px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-300 border border-slate-600"
+                  >
+                    {cat}
+                  </span>
+                ))}
+              </div>
+            </InfoRow>
+          )}
+        </div>
+
+        {/* Enlaces */}
+        {links.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">Enlaces</p>
+            {links.map(({ label, href }) => (
+              <a
+                key={label}
+                href={href!}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <span className="text-slate-500">↗</span>
+                {label}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function InfoRow({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-slate-500">{label}</span>
+      <div className="text-sm">{children}</div>
+    </div>
+  )
+}
+

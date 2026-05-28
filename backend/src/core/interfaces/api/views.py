@@ -995,6 +995,73 @@ class RunBacktestView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class AssetDetailInfoView(APIView):
+    """
+    GET /api/assets/<symbol>/info/ — Información de proyecto de un activo.
+
+    Consolida desde CoinGecko: enlaces (web, whitepaper, twitter, reddit),
+    datos de mercado (ATH, suministro) y categorías.
+    Requiere autenticación JWT.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, symbol: str):
+        from core.infrastructure.external_apis.coingecko_client import (
+            CoinGeckoClient,
+            CoinGeckoClientError,
+        )
+
+        symbol = symbol.upper()
+        asset = CryptoAssetModel.objects.filter(symbol=symbol).values("coingecko_id").first()
+        if not asset or not asset["coingecko_id"]:
+            return Response(
+                {"error": f"Activo {symbol} no encontrado o sin coingecko_id."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            data = CoinGeckoClient().get_coin_detail(asset["coingecko_id"])
+        except CoinGeckoClientError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        links = data.get("links", {})
+        market = data.get("market_data", {})
+
+        homepage = next(
+            (u for u in links.get("homepage", []) if u), None
+        )
+        whitepaper = links.get("whitepaper") or None
+        twitter_handle = links.get("twitter_screen_name") or None
+        twitter = f"https://twitter.com/{twitter_handle}" if twitter_handle else None
+        reddit = links.get("subreddit_url") or None
+
+        ath = (market.get("ath") or {}).get("usd")
+        ath_date_raw = (market.get("ath_date") or {}).get("usd")
+        ath_date = ath_date_raw[:10] if ath_date_raw else None
+        circulating_supply = market.get("circulating_supply")
+        max_supply = market.get("max_supply")
+
+        categories = [c for c in data.get("categories", []) if c][:5]
+        description = (data.get("description") or {}).get("en") or None
+
+        return Response({
+            "homepage": homepage,
+            "whitepaper": whitepaper,
+            "twitter": twitter,
+            "reddit": reddit,
+            "ath": ath,
+            "ath_date": ath_date,
+            "circulating_supply": circulating_supply,
+            "max_supply": max_supply,
+            "categories": categories,
+            "description": description,
+        }, status=status.HTTP_200_OK)
+
+
+
 class AvailableStrategiesView(APIView):
     """
     GET /api/analysis/strategies/ — Lista estrategias disponibles para backtesting.

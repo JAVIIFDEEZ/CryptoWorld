@@ -54,22 +54,14 @@ function MarketPage() {
       .catch(() => { /* silencioso si no está autenticado */ })
   }, [])
 
-  // Cargar sparklines 7d para los activos visibles
+  // Cargar sparklines 7d para los activos visibles (batch vía endpoint dedicado)
   useEffect(() => {
     if (assets.length === 0) return
     const symbols = assets.slice(0, 25).map((a) => a.symbol)
     let cancelled = false
     ;(async () => {
-      const results = await Promise.allSettled(
-        symbols.map((s) => marketService.getOhlcv(s, '1d', 8)),
-      )
+      const map = await marketService.getSparklines(symbols)
       if (cancelled) return
-      const map: Record<string, number[]> = {}
-      results.forEach((res, i) => {
-        if (res.status === 'fulfilled') {
-          map[symbols[i]] = res.value.candles.map((c) => parseFloat(c.close))
-        }
-      })
       setSparks(map)
     })()
     return () => { cancelled = true }
