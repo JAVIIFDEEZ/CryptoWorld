@@ -101,6 +101,7 @@ from core.application.use_cases.get_positions import GetPositionsUseCase
 from core.infrastructure.persistence.models import Position as PositionModel
 from core.infrastructure.persistence.models import UserWatchlist as UserWatchlistModel
 from core.infrastructure.persistence.models import CryptoAsset as CryptoAssetModel
+from core.infrastructure.persistence.models import MarketDataSnapshot as MarketDataSnapshotModel
 from core.application.use_cases.manage_alerts import (
     CreateAlertUseCase,
     ListAlertsUseCase,
@@ -619,19 +620,24 @@ class AssetSparklinesView(APIView):
     """
     GET /api/assets/sparklines/?symbols=BTC,ETH,SOL
 
-    Devuelve precios de cierre diarios (ultimos 7 dias) por simbolo,
-    listos para renderizar mini-sparklines en tablas y tarjetas.
+    Devuelve el precio medio diario de los ultimos 7 dias por simbolo,
+    construido desde MarketDataSnapshot (BD local, sin llamadas externas).
+
+    Fuente primaria: MarketDataSnapshot — creado cada 10 min por Celery.
+    Fuente de fallback: OHLCV de Binance/KuCoin, solo para activos con
+    menos de 2 dias de historial local.
 
     Respuesta: { "BTC": [p1, p2, ...], "ETH": [...], ... }
-    Maximo 10 simbolos por peticion para no exceder el rate-limit de CoinGecko.
+    Maximo 10 simbolos por peticion.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from core.infrastructure.external_apis.coingecko_client import (
-            CoinGeckoClient,
-            CoinGeckoClientError,
-        )
+        from datetime import timedelta
+        from django.utils import timezone
+        from django.db.models import Avg
+        from django.db.models.functions import TruncDate
+        from collections import defaultdict
 
         raw = request.query_params.get("symbols", "")
         if not raw:
@@ -642,42 +648,44 @@ class AssetSparklinesView(APIView):
 
         symbols = [s.strip().upper() for s in raw.split(",") if s.strip()][:10]
 
-        assets = (
-            CryptoAssetModel.objects
-            .filter(symbol__in=symbols)
-            .values("symbol", "coingecko_id")
-        )
-        id_map = {a["symbol"]: a["coingecko_id"] for a in assets if a["coingecko_id"]}
+        # ── 1. Precio medio diario desde MarketDataSnapshot (BD local) ────────
+        # Cada asset synced por Celery acumula ~144 snapshots/dia (cada 10 min).
+        # Agrupar por dia y promediar elimina ruido y da una curva limpia.
+        cutoff = timezone.now() - timedelta(days=8)
 
-        client = CoinGeckoClient()
-        result = {}
+        rows = (
+            MarketDataSnapshotModel.objects
+            .filter(asset__symbol__in=symbols, timestamp__gte=cutoff)
+            .annotate(day=TruncDate("timestamp"))
+            .values("asset__symbol", "day")
+            .annotate(avg_price=Avg("price"))
+            .order_by("asset__symbol", "day")
+        )
+
+        snap_map: dict[str, list[float]] = defaultdict(list)
+        for row in rows:
+            snap_map[row["asset__symbol"]].append(float(row["avg_price"]))
+
+        result: dict[str, list[float]] = {}
+        needs_fallback: list[str] = []
 
         for symbol in symbols:
-            prices: list[float] = []
+            prices = snap_map.get(symbol, [])
+            if len(prices) >= 2:
+                result[symbol] = prices
+            else:
+                needs_fallback.append(symbol)
 
-            # Intento 1: CoinGecko market_chart (precios de cierre diarios precisos)
-            coingecko_id = id_map.get(symbol)
-            if coingecko_id:
-                try:
-                    prices = client.get_sparkline_prices(coingecko_id, days=7)
-                except CoinGeckoClientError:
-                    prices = []
-
-            # Intento 2: fallback a velas diarias de Binance / KuCoin
-            if not prices:
-                try:
-                    from core.application.use_cases.get_asset_ohlcv import (
-                        GetAssetOhlcvUseCase,
-                        OhlcvNotAvailableError,
-                    )
-                    candles, _ = GetAssetOhlcvUseCase().execute(
-                        symbol=symbol, interval="1d", limit=14
-                    )
-                    prices = [float(c.close) for c in candles]
-                except Exception:
-                    prices = []
-
-            result[symbol] = prices
+        # ── 2. Fallback OHLCV para activos sin historial local suficiente ─────
+        # Solo actua para assets muy nuevos (< 2 dias en el sistema).
+        for symbol in needs_fallback:
+            try:
+                candles, _ = GetAssetOhlcvUseCase().execute(
+                    symbol=symbol, interval="1d", limit=14
+                )
+                result[symbol] = [float(c.close) for c in candles]
+            except Exception:
+                result[symbol] = []
 
         return Response(result, status=status.HTTP_200_OK)
 
