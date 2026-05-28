@@ -2281,10 +2281,190 @@ Para cada símbolo del usuario:
 | 16 | Portfolio | Columna "Valor recompra" confusa para posiciones LONG | El mismo header describía conceptos distintos según el tipo de posición | Renombrar a "Valor posición" con sublabels contextuales por celda: "valor actual" (LONG) / "coste recompra" (SHORT) |
 | 17 | SELL sin BUY | `AddTradeUseCase` rechazaba SELL si no había BUY previo | Validación demasiado estricta que impedía crear posiciones SHORT | Eliminar la validación; un SELL sin compra previa crea una posición en descubierto (SHORT) |
 | 18 | Password reset | Email de recuperación no llegaba en dev y sin traza en logs | `RequestPasswordResetUseCase` no tenía logging; era difícil saber si el email se enviaba | Añadir `logger.debug()` para email no encontrado y `logger.info()` tras `send_mail()` |
+| 19 | TypeScript | `TS1005: '}' expected` — build Docker fallido | Al reemplazar bloque JSX en `MarketPage.tsx`, se omitió el `}` de cierre de comentario JSX | Añadir el `}` faltante para cerrar la expresión `{/* ... */}` |
+| 20 | Sparklines | Sparklines ausentes en los 20 primeros activos del mercado | `assets.slice(0, 25)` usaba el orden de la API (alfabético por `symbol`) en lugar del orden visible (market_cap desc) | Ordenar `[...assets]` por `market_cap` desc antes del `slice(0, 25)` en el `useEffect` de sparklines |
+| 21 | Sparklines | Stablecoins (USDT, USDC) muestran `—` en lugar de gráfica | `{symbol}USDT` forma el par inválido `USDTUSDT` en Binance; no hay datos OHLCV disponibles | Comportamiento correcto: `AssetSparklinesView` devuelve `[]` para ellos y el frontend muestra `—` |
+| 22 | Sync periódico | Intervalo de 10 min excesivo para la demo; precios visualmente desactualizados | El intervalo conservador fue diseñado para respetar el límite mensual de CoinGecko (10 000 calls/mes) antes de que sparklines usaran la BD | Arquitectura dual: `sync_prices_quick` (Binance, cada 60 s, sin cuota) + `sync_market_prices` (CoinGecko, cada 300 s) |
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v1.47.0 — Mayo 2026*  
-*Última actualización: mayo de 2026*
+## 13. CAMBIOS DESDE v1.47 HASTA v1.88 (Mayo 2026)
+
+### 13.1 KuCoin como tercer nivel en la estrategia OHLCV
+
+Se añadió `KuCoinPublicClient` como tercer fallback en la cadena `GetAssetOhlcvUseCase`:
+
+```
+Binance (BTCUSDT) → KuCoin (BTC-USDT) → CoinGecko OHLC → OhlcvNotAvailableError
+```
+
+KuCoin permite ~2 000 req/30 s sin autenticación, devuelve velas en orden descendente
+(requiere inversión) y usa el formato `BTC-USDT` en lugar de `BTCUSDT`.
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `infrastructure/external_apis/kucoin_client.py` | Nuevo | Cliente KuCoin Public API. `get_klines(symbol, interval, limit)`. Normaliza símbolo automáticamente (`BTCUSDT` → `BTC-USDT`). Invierte orden descendente. |
+| `application/use_cases/get_asset_ohlcv.py` | Modificado | Cadena ampliada: Binance → KuCoin → CoinGecko OHLC |
+
+### 13.2 Sistema de Watchlist
+
+Implementación completa del sistema de seguimiento personal de activos:
+
+**Backend:**
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `infrastructure/persistence/models.py` | Modificado | Modelo `WatchlistItem` con FK a `User` y `CryptoAsset` |
+| `interfaces/api/views.py` | Modificado | `WatchlistView` (GET/POST/DELETE `/api/watchlist/`) |
+| `interfaces/api/serializers.py` | Modificado | `WatchlistItemSerializer` |
+| `interfaces/api/urls.py` | Modificado | Rutas `/api/watchlist/` y `/api/watchlist/{symbol}/` |
+
+**Frontend:**
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `services/watchlistService.ts` | Nuevo | `getWatchlist()`, `addToWatchlist(symbol)`, `removeFromWatchlist(symbol)` |
+| `pages/DashboardPage.tsx` | Modificado | Sección "★ Mi seguimiento" entre Catálogo y Movimiento del mercado; sparklines para activos del watchlist |
+| `pages/MarketPage.tsx` | Modificado | Sección "★ Mi seguimiento" con borde amarillo sobre la tabla principal |
+
+### 13.3 AssetDetailPage — Implementación completa
+
+Página de detalle de activo con múltiples secciones integradas:
+
+| Componente | Descripción |
+|---|---|
+| `ProjectCard` | Rediseñado con iconos SVG propios (`GlobeIcon`, `DocumentIcon`, `XIcon`, `RedditIcon`, `TelegramIcon`, `GitHubIcon`), barra de supply (`SupplyBar`), descripción colapsable con strip HTML, categorías con badges, enlaces como tarjetas |
+| `OhlcvChart` | Gráfico KLineChart v9 integrado; badge dinámico de fuente (Binance/KuCoin/CoinGecko); 20+ indicadores técnicos; herramientas de dibujo |
+| `AnalysisPanel` | Panel de análisis técnico (señales RSI/MACD/Bollinger, predicción ML, backtesting de 5 estrategias) |
+
+**Datos nuevos en `AssetInfo` (frontend `marketService.ts`):**
+
+```typescript
+interface AssetInfo {
+  // ...campos existentes...
+  telegram: string | null;   // ← nuevo en 1.87.0
+  github: string | null;     // ← nuevo en 1.87.0
+}
+```
+
+**Backend `AssetDetailInfoView`** devuelve los campos `telegram` y `github` del objeto
+`links` de CoinGecko extraídos mediante `get_coin_detail(coingecko_id)`.
+
+### 13.4 Dashboard — Mejoras visuales
+
+| Componente | Descripción |
+|---|---|
+| `FearGreedGauge` | Indicador semicircular animado para el índice Fear & Greed (Alternative.me) |
+| `TickerBar` | Barra desplazante con precios en tiempo real (datos del endpoint `/api/assets/`) |
+| `Sparkline` | Gráfico de línea minimalista SVG para la columna de variación de 7 días |
+
+### 13.5 MarketPage — Sparklines profesionales
+
+`AssetSparklinesView` fue completamente reescrita para eliminar las llamadas directas
+a CoinGecko y servir datos desde la BD local:
+
+**Antes (v1.47):**
+```
+GET /api/assets/sparklines/?symbols=BTC,ETH,...
+→ Por cada símbolo: CoinGecko /coins/{id}/market_chart  (1 req/activo)
+→ 10 símbolos = 10 req CoinGecko simultáneas → rate limit frecuente
+```
+
+**Ahora (v1.87+):**
+```
+GET /api/assets/sparklines/?symbols=BTC,ETH,...
+→ MarketDataSnapshot.objects.filter(...).annotate(avg_price=Avg(...))  (0 req externas)
+→ Fallback OHLCV (Binance/KuCoin) solo si < 2 días de historial local
+```
+
+La fuente de datos para sparklines es `MarketDataSnapshot` (serie temporal creada
+por `sync_market_prices` cada 5 min), agrupada por día y promediada (`TruncDate` +
+`Avg`). Esto proporciona curvas más limpias y sin variabilidad por el momento exacto
+de consulta.
+
+### 13.6 Arquitectura dual de sincronización (v1.88.0)
+
+Antes del v1.88, el único sync periódico era `sync_market_prices` vía CoinGecko cada
+10 minutos. A partir de v1.88 se implementa una arquitectura de dos niveles:
+
+**Nivel 1 — Sync rápido de precios (Binance, cada 60 s):**
+
+```python
+# core/tasks.py
+@shared_task(name="core.tasks.sync_prices_quick")
+def sync_prices_quick(self): ...
+
+# core/application/use_cases/sync_prices_quick.py
+class SyncPricesQuickUseCase:
+    def execute(self) -> QuickSyncResultDTO:
+        tickers = BinancePublicClient().get_ticker_24hr()  # 1 HTTP call, weight=40
+        # bulk_update de current_price, volume_24h, price_change_24h
+```
+
+**Nivel 2 — Sync completo CoinGecko (cada 5 min):**
+
+```python
+# config/settings.py  — reducido de 600 s a 300 s
+"sync-market-prices": {"task": "core.tasks.sync_market_prices", "schedule": 300.0}
+```
+
+**Comparativa de presupuesto mensual CoinGecko:**
+
+| Intervalo | calls/día | calls/mes | Límite Demo | Estado |
+|---|---|---|---|---|
+| 10 min (v1.47) | 144 | 4 320 | 10 000 | ✅ Amplio margen |
+| 5 min (v1.88) | 288 | 8 640 | 10 000 | ✅ Dentro del límite |
+| 3 min | 480 | 14 400 | 10 000 | ❌ Excede |
+| 1 min | 1 440 | 43 200 | 10 000 | ❌ Excede |
+
+**Por qué usar Binance para el sync rápido:**
+- `GET /api/v3/ticker/24hr` (sin símbolo) devuelve ~2 000 pares en 1 llamada (weight=40)
+- No requiere autenticación ni API key
+- Limit: 1 200 weight/min → 40 weight cada 60 s = 3,3 % del presupuesto
+- Sin cuota mensual → puede ejecutarse cada segundo si fuera necesario
+
+**Archivos nuevos/modificados:**
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `application/use_cases/sync_prices_quick.py` | Nuevo | `SyncPricesQuickUseCase` + `QuickSyncResultDTO` |
+| `core/tasks.py` | Modificado | Nueva tarea `sync_prices_quick` (max_retries=1) |
+| `config/settings.py` | Modificado | `sync-prices-quick` cada 60 s; `sync-market-prices` de 600 s → 300 s |
+
+### 13.7 Actualización del estado actual — v1.88.0
+
+**Tareas periódicas Celery:**
+
+| Tarea | Intervalo | API | Acción |
+|---|---|---|---|
+| `check_price_alerts` | 120 s | DB | Evalúa alertas activas |
+| `sync_prices_quick` | 60 s | Binance (sin cuota) | Actualiza precio, volumen, variación |
+| `sync_market_prices` | 300 s | CoinGecko (8 640 calls/mes) | Actualiza market_cap, logos + crea MarketDataSnapshot |
+
+**Endpoints actualizados:**
+
+| Método | Ruta | Cambio |
+|---|---|---|
+| GET | `/api/assets/sparklines/` | Reescrito: sirve desde `MarketDataSnapshot` (0 calls CoinGecko); fallback OHLCV Binance/KuCoin solo para activos nuevos |
+| GET | `/api/assets/{symbol}/` | `AssetDetailInfoView` devuelve `telegram` y `github` |
+| GET | `/api/watchlist/` | Nuevo: lista el watchlist del usuario |
+| POST | `/api/watchlist/{symbol}/` | Nuevo: añade activo al watchlist |
+| DELETE | `/api/watchlist/{symbol}/` | Nuevo: elimina activo del watchlist |
+
+**Capas actualizadas:**
+
+| Capa | Cambio |
+|---|---|
+| Infrastructure — External APIs | KuCoin client añadido (3er nivel OHLCV) |
+| Application — Use Cases | `SyncPricesQuickUseCase` (Binance bulk price update) |
+| Infrastructure — Celery | 3 tareas periódicas (alertas, quick sync, full sync) |
+| Frontend — Components | `FearGreedGauge`, `TickerBar`, `Sparkline`, `OhlcvChart` (KLineChart v9) |
+| Frontend — Pages | `AssetDetailPage` (completo), `MarketPage` (sparklines + watchlist), `DashboardPage` (watchlist + movers) |
+| Frontend — Services | `watchlistService.ts` |
+
+---
+
+*Documento técnico completo del proyecto CryptoWorld — Estado v1.88.0 — Mayo 2026*  
+*Última actualización: 28 mayo 2026*
 
 <!-- FIN DEL DOCUMENTO -->
