@@ -55,13 +55,18 @@ function MarketPage() {
       .catch(() => { /* silencioso si no está autenticado */ })
   }, [])
 
-  // Cargar sparklines 7d para los activos visibles (batch vía endpoint dedicado)
+  // Cargar sparklines 7d para los 25 activos de mayor capitalización (batch vía endpoint dedicado).
+  // Se ordena por market_cap aquí para garantizar que los activos visibles por defecto
+  // (top-20 por cap.) siempre tengan sparkline, independientemente del orden que devuelva la API.
   useEffect(() => {
     if (assets.length === 0) return
-    const symbols = assets.slice(0, 25).map((a) => a.symbol)
+    const top25 = [...assets]
+      .sort((a, b) => parseNumeric(b.market_cap) - parseNumeric(a.market_cap))
+      .slice(0, 25)
+      .map((a) => a.symbol)
     let cancelled = false
     ;(async () => {
-      const map = await marketService.getSparklines(symbols)
+      const map = await marketService.getSparklines(top25)
       if (cancelled) return
       setSparks(map)
       setSparksLoaded(true)
