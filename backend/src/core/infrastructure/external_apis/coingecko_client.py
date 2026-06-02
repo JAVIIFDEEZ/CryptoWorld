@@ -19,12 +19,23 @@ import logging
 from typing import Any, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3"
 REQUEST_TIMEOUT = 15  # segundos
+
+# Reintentos ante fallos SSL/red transitorios
+_RETRY_STRATEGY = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+    raise_on_status=False,
+)
 
 
 class CoinGeckoClientError(Exception):
@@ -44,6 +55,9 @@ class CoinGeckoClient:
     def __init__(self) -> None:
         self._session = requests.Session()
         self._session.headers.update({"Accept": "application/json"})
+        adapter = HTTPAdapter(max_retries=_RETRY_STRATEGY)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
         api_key = getattr(settings, "COINGECKO_API_KEY", None)
         if api_key:
             self._session.headers["x-cg-demo-api-key"] = api_key

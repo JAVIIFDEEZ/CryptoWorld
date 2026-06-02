@@ -14,6 +14,8 @@ from datetime import datetime, UTC
 from typing import Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from core.application.dto.market_intelligence_dto import MarketOverviewOutputDTO
 from core.infrastructure.external_apis.coingecko_client import (
@@ -24,7 +26,13 @@ from core.infrastructure.external_apis.coingecko_client import (
 logger = logging.getLogger(__name__)
 
 _FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1"
-_TIMEOUT = 8  # segundos
+_TIMEOUT = 12  # segundos
+
+_retry = Retry(total=2, backoff_factor=1, allowed_methods=["GET"], raise_on_status=False)
+_adapter = HTTPAdapter(max_retries=_retry)
+_session = requests.Session()
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
 
 
 def _fetch_fear_greed() -> Optional[int]:
@@ -33,7 +41,7 @@ def _fetch_fear_greed() -> Optional[int]:
     Devuelve entero 0-100 o None si falla.
     """
     try:
-        resp = requests.get(_FEAR_GREED_URL, timeout=_TIMEOUT)
+        resp = _session.get(_FEAR_GREED_URL, timeout=_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
         value = data["data"][0]["value"]
