@@ -174,13 +174,13 @@ function AlertCard({
           )}
         </div>
 
-        <div className="flex gap-2 shrink-0">
+        <div className="flex gap-2 shrink-0 items-center">
           <button
             onClick={() => onToggle(alert.id)}
             title={alert.is_active ? 'Desactivar' : 'Activar'}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${alert.is_active ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/70' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+            className={`h-8 px-3 rounded-lg flex items-center justify-center text-xs font-medium whitespace-nowrap ${alert.is_active ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/70' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
           >
-            {alert.is_active ? 'Act.' : 'Desact.'}
+            {alert.is_active ? 'Activada' : 'Desactivar'}
           </button>
           <button
             onClick={() => onDelete(alert.id)}

@@ -90,7 +90,7 @@ export default function TickerBar() {
           return (
             <Link
               key={`${a.symbol}-${idx}`}
-              to={`/asset/${a.symbol}`}
+              to={`/assets/${a.symbol}`}
               className="flex items-center gap-1.5 text-xs hover:bg-slate-800/60 px-2 py-1 rounded transition-colors shrink-0"
             >
               {a.logo_url && (

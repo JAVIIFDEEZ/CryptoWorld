@@ -259,6 +259,7 @@ function MoversCard({
 }
 
 function WatchlistRow({ item, spark }: Readonly<{ item: WatchlistItem; spark?: number[] }>) {
+  const isPositive = parseFloat(item.price_change_24h ?? '0') >= 0
   return (
     <Link
       to={`/assets/${item.symbol}`}
@@ -278,7 +279,7 @@ function WatchlistRow({ item, spark }: Readonly<{ item: WatchlistItem; spark?: n
       </div>
 
       <div className="ml-auto flex items-center gap-4">
-        <Sparkline data={spark ?? []} className="hidden sm:block" />
+        <Sparkline data={spark ?? []} color={isPositive ? '#22c55e' : '#ef4444'} className="hidden sm:block" />
         <div className="text-right">
           <p className="text-sm font-mono text-white tabular-nums">{formatPrice(item.current_price)}</p>
           <DeltaChip value={item.price_change_24h == null ? null : String(item.price_change_24h)} size="sm" className="mt-0.5" />
@@ -289,6 +290,7 @@ function WatchlistRow({ item, spark }: Readonly<{ item: WatchlistItem; spark?: n
 }
 
 function MoverRow({ asset, spark }: { asset: CryptoAsset; spark?: number[] }) {
+  const isPositive = parseFloat(asset.price_change_24h ?? '0') >= 0
   return (
     <div className="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/30 transition-colors">
       {asset.logo_url ? (
@@ -305,7 +307,7 @@ function MoverRow({ asset, spark }: { asset: CryptoAsset; spark?: number[] }) {
       </div>
 
       <div className="ml-auto flex items-center gap-4">
-        <Sparkline data={spark ?? []} className="hidden sm:block" />
+        <Sparkline data={spark ?? []} color={isPositive ? '#22c55e' : '#ef4444'} className="hidden sm:block" />
         <div className="text-right">
           <p className="text-sm font-mono text-white tabular-nums">{formatPrice(asset.current_price)}</p>
           <DeltaChip value={asset.price_change_24h} size="sm" className="mt-0.5" />
