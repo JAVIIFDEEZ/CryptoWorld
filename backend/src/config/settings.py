@@ -11,6 +11,7 @@ No contiene lógica de negocio. Solo configuración del framework.
 from pathlib import Path
 from datetime import timedelta
 import os
+import re
 import dj_database_url
 from dotenv import load_dotenv
 
@@ -33,7 +34,7 @@ SECRET_KEY = os.environ.get(
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost 127.0.0.1").split(" ")
+ALLOWED_HOSTS = re.split(r'[,\s]+', os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost 127.0.0.1").strip())
 
 # ------------------------------------------------------------------
 # Aplicaciones instaladas
@@ -181,10 +182,10 @@ SIMPLE_JWT = {
 # ------------------------------------------------------------------
 # CORS — Permitir peticiones desde el frontend React
 # ------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = os.environ.get(
+CORS_ALLOWED_ORIGINS = re.split(r'[,\s]+', os.environ.get(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173 http://127.0.0.1:5173"
-).split(" ")
+).strip())
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -220,6 +221,22 @@ CRYPTOCOMPARE_API_KEY = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
 # Broker y backend: Redis (servicio 'redis' en docker-compose)
 # ------------------------------------------------------------------
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+# ------------------------------------------------------------------
+# Caché — Redis (comparte instancia con Celery, usa DB 1 separada)
+# Django 4.0+ incluye backend Redis nativo; no requiere django-redis.
+# ------------------------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL.rstrip("/0") + "/1",  # DB 1 → no colisiona con Celery (DB 0)
+        "TIMEOUT": 300,  # TTL por defecto: 5 minutos
+        "OPTIONS": {
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        },
+    }
+}
 
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL

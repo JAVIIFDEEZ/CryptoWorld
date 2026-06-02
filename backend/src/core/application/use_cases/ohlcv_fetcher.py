@@ -85,7 +85,7 @@ def fetch_ohlcv_dataframe(
     # ── 2. KuCoin ───────────────────────────────────────────────
     try:
         raw = kucoin.get_klines(symbol=binance_symbol, interval=interval, limit=limit)
-        df = _binance_klines_to_df(raw)  # mismo formato tras normalización
+        df = _normalized_klines_to_df(raw)  # formato normalizado 6 columnas
         if not df.empty:
             logger.info(
                 "KuCoin sirvió %d velas para %s.",
@@ -143,6 +143,22 @@ def _coingecko_ohlc_to_df(raw: list) -> pd.DataFrame:
     df["volume"] = 0.0
     df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["open", "high", "low", "close"])
+    return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
+
+
+def _normalized_klines_to_df(raw: list) -> pd.DataFrame:
+    """
+    Formato normalizado devuelto por KuCoinPublicClient.get_klines():
+    [[ts_ms, open, high, low, close, volume], ...] — 6 columnas.
+    Distinto del formato Binance de 12 columnas.
+    """
+    if not raw:
+        return pd.DataFrame()
+    df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    for col in ("open", "high", "low", "close", "volume"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["open", "high", "low", "close", "volume"])
+    df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
     return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
 
 
