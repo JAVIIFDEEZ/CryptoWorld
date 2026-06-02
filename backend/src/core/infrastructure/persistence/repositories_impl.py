@@ -125,7 +125,7 @@ class DjangoCryptoAssetRepository(ICryptoAssetRepository):
     """
 
     def get_all(self) -> List[CryptoAssetEntity]:
-        models = CryptoAssetModel.objects.all()
+        models = CryptoAssetModel.objects.all().order_by("symbol")
         return [self._to_entity(m) for m in models]
 
     def get_by_symbol(self, symbol: str) -> Optional[CryptoAssetEntity]:

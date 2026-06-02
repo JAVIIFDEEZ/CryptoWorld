@@ -147,11 +147,25 @@ export interface StrategyInfo {
   description: string
 }
 
+// ── Caché en memoria con TTL ───────────────────────────────────────
+const _cache = new Map<string, { data: unknown; expires: number }>()
+function _cGet<T>(key: string): T | null {
+  const entry = _cache.get(key)
+  if (!entry || Date.now() > entry.expires) { _cache.delete(key); return null }
+  return entry.data as T
+}
+function _cSet(key: string, data: unknown, ttlMs: number): void {
+  _cache.set(key, { data, expires: Date.now() + ttlMs })
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const analysisService = {
   async getAssets(): Promise<CryptoAsset[]> {
+    const cached = _cGet<CryptoAsset[]>('assets')
+    if (cached) return cached
     const { data } = await apiClient.get<CryptoAsset[]>('/assets/')
+    _cSet('assets', data, 60_000)  // 60 segundos
     return data
   },
 

@@ -55,6 +55,18 @@ export interface AssetInfo {
 
 // ── Servicio ───────────────────────────────────────────────────────
 
+// ── Caché en memoria con TTL ───────────────────────────────────────
+// Evita re-fetches innecesarios durante la misma sesión de navegación.
+const _cache = new Map<string, { data: unknown; expires: number }>()
+function _cGet<T>(key: string): T | null {
+  const entry = _cache.get(key)
+  if (!entry || Date.now() > entry.expires) { _cache.delete(key); return null }
+  return entry.data as T
+}
+function _cSet(key: string, data: unknown, ttlMs: number): void {
+  _cache.set(key, { data, expires: Date.now() + ttlMs })
+}
+
 export const marketService = {
   /**
    * Obtener velas OHLCV para un activo.
@@ -77,9 +89,13 @@ export const marketService = {
    * Obtener resumen global del mercado.
    * GET /api/market/overview/
    * Fuente: CoinGecko /global + Alternative.me Fear & Greed
+   * Caché en memoria 5 min (el backend también cachea en Redis).
    */
   async getMarketOverview(): Promise<MarketOverview> {
+    const cached = _cGet<MarketOverview>('market_overview')
+    if (cached) return cached
     const { data } = await apiClient.get<MarketOverview>('/market/overview/')
+    _cSet('market_overview', data, 5 * 60_000)
     return data
   },
 
@@ -96,6 +112,9 @@ export const marketService = {
    */
   async getSparklines(symbols: string[]): Promise<Record<string, number[]>> {
     if (symbols.length === 0) return {}
+    const sortedKey = 'sparklines:' + [...symbols].sort((a, b) => a.localeCompare(b)).join(',')
+    const cached = _cGet<Record<string, number[]>>(sortedKey)
+    if (cached) return cached
     const CHUNK_SIZE = 10
     const chunks: string[][] = []
     for (let i = 0; i < symbols.length; i += CHUNK_SIZE) {
@@ -111,7 +130,9 @@ export const marketService = {
           .catch((): Record<string, number[]> => ({})),
       ),
     )
-    return Object.assign({}, ...results)
+    const merged = Object.assign({}, ...results)
+    _cSet(sortedKey, merged, 60 * 60_000)  // 1 hora
+    return merged
   },
 
   /**

@@ -22,6 +22,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.core.cache import cache
 
 from core.interfaces.api.serializers import (
     RegisterSerializer,
@@ -596,10 +597,17 @@ class AssetListView(APIView):
     """
     GET /api/assets â€” Listar todos los activos criptogrÃ¡ficos.
     Requiere autenticaciÃ³n JWT (Authorization: Bearer <token>).
+    CachÃ© Redis 60 s: los activos los actualiza Celery; no necesitamos recargar la BD en cada request.
     """
     permission_classes = [IsAuthenticated]
+    _CACHE_KEY = "asset_list"
+    _CACHE_TTL = 60  # 60 segundos
 
     def get(self, request):
+        cached = cache.get(self._CACHE_KEY)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
         asset_repo = DjangoCryptoAssetRepository()
         use_case = GetAssetsUseCase(asset_repo)
         output_dtos = use_case.execute()
@@ -612,7 +620,9 @@ class AssetListView(APIView):
             [vars(dto) for dto in output_dtos],
             many=True,
         )
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        data = serializer.data
+        cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
+        return Response(data, status=status.HTTP_200_OK)
 
 
 
@@ -687,6 +697,7 @@ class AssetSparklinesView(APIView):
             except Exception:
                 result[symbol] = []
 
+        cache.set(cache_key, result, 3600)  # 1 hora
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -723,14 +734,23 @@ class MarketOverviewView(APIView):
     """
     GET /api/market/overview/ — Resumen global del mercado.
     Público: usado también desde la landing page (sin autenticación).
+    Caché Redis 5 min: evita llamadas externas a CoinGecko/Alternative.me en cada request.
     """
 
     permission_classes = [AllowAny]
+    _CACHE_KEY = "market_overview"
+    _CACHE_TTL = 300  # 5 minutos
 
     def get(self, request):
+        cached = cache.get(self._CACHE_KEY)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
         output_dto = GetMarketOverviewUseCase().execute()
         serializer = MarketOverviewSerializer(vars(output_dto))
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        data = serializer.data
+        cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
+        return Response(data, status=status.HTTP_200_OK)
 
 class AssetOhlcvView(APIView):
 
