@@ -68,6 +68,9 @@ services:
       - ./backend/src:/app/src
       - ./backend/tests:/app/tests
       - ./backend/pytest.ini:/app/pytest.ini
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,6 +97,9 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ./backend/src:/app/src
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,6 +122,9 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ./backend/src:/app/src
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       postgres:
         condition: service_healthy
