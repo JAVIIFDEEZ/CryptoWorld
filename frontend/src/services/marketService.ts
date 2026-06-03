@@ -127,7 +127,12 @@ export const marketService = {
             params: { symbols: chunk.join(',') },
           })
           .then((r) => r.data)
-          .catch((): Record<string, number[]> => ({})),
+          .catch((err): Record<string, number[]> => {
+            // Degradacion con gracia: la UI no se rompe si falla un grupo,
+            // pero registramos el motivo para no ocultar errores del backend.
+            console.warn('[getSparklines] no se pudo cargar el grupo', chunk, err)
+            return {}
+          }),
       ),
     )
     const merged = Object.assign({}, ...results)

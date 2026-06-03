@@ -658,6 +658,13 @@ class AssetSparklinesView(APIView):
 
         symbols = [s.strip().upper() for s in raw.split(",") if s.strip()][:10]
 
+        # Clave de cache estable por conjunto de simbolos (orden normalizado),
+        # con lectura read-through: si esta cacheado se devuelve sin tocar la BD.
+        cache_key = "sparklines:" + ",".join(sorted(symbols))
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
         # ── 1. Precio medio diario desde MarketDataSnapshot (BD local) ────────
         # Cada asset synced por Celery acumula ~144 snapshots/dia (cada 10 min).
         # Agrupar por dia y promediar elimina ruido y da una curva limpia.
