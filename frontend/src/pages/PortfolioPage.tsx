@@ -21,6 +21,23 @@ import {
   type ClosePositionPayload,
   type AddToPositionPayload,
 } from '../services/portfolioService'
+import PortfolioInsights from '../components/PortfolioInsights'
+import EmptyState from '../components/ui/EmptyState'
+import AnimatedNumber from '../components/ui/AnimatedNumber'
+
+// -- Iconos para estados vacíos --
+
+const IconPositions = () => (
+  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.5 9 7.5l4 4 7-7M21 8.5v5h-5" />
+  </svg>
+)
+
+const IconHistory = () => (
+  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+  </svg>
+)
 
 // -- Helpers --
 
@@ -510,10 +527,11 @@ function OpenPositionsTable({
 }) {
   if (positions.length === 0) {
     return (
-      <div className="bg-slate-800 rounded-xl p-10 text-center text-slate-400">
-        <p className="text-base font-medium mb-1">Sin posiciones abiertas</p>
-        <p className="text-sm">Pulsa "Nueva posición" para abrir tu primera posición LONG o SHORT.</p>
-      </div>
+      <EmptyState
+        icon={<IconPositions />}
+        title="Sin posiciones abiertas"
+        description='Pulsa "Nueva posición" para abrir tu primera posición LONG o SHORT.'
+      />
     )
   }
   return (
@@ -593,9 +611,11 @@ function OpenPositionsTable({
 function ClosedPositionsTable({ positions }: { positions: Position[] }) {
   if (positions.length === 0) {
     return (
-      <div className="bg-slate-800 rounded-xl p-10 text-center text-slate-400">
-        <p>No hay posiciones cerradas aún.</p>
-      </div>
+      <EmptyState
+        icon={<IconPositions />}
+        title="No hay posiciones cerradas"
+        description="Cuando cierres una posición aparecerá aquí con su PnL realizado."
+      />
     )
   }
   return (
@@ -664,9 +684,11 @@ function TradeHistoryTable({
 }) {
   if (trades.length === 0) {
     return (
-      <div className="bg-slate-800 rounded-xl p-10 text-center text-slate-400">
-        <p>No hay operaciones registradas.</p>
-      </div>
+      <EmptyState
+        icon={<IconHistory />}
+        title="No hay operaciones registradas"
+        description="Tus compras y ventas aparecerán en este historial."
+      />
     )
   }
   return (
@@ -802,28 +824,37 @@ export default function PortfolioPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-slate-800 rounded-xl p-4">
                 <p className="text-xs text-slate-400 mb-1">Posiciones abiertas</p>
-                <p className="text-xl font-bold">{openPositions.length}</p>
+                <AnimatedNumber value={openPositions.length} className="text-xl font-bold block" />
                 <p className="text-xs text-slate-500 mt-0.5">
                   {positionSummary.open_long_count} LONG · {positionSummary.open_short_count} SHORT
                 </p>
               </div>
               <div className="bg-slate-800 rounded-xl p-4">
                 <p className="text-xs text-slate-400 mb-1">Posiciones cerradas</p>
-                <p className="text-xl font-bold">{closedPositions.length}</p>
+                <AnimatedNumber value={closedPositions.length} className="text-xl font-bold block" />
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalUnrealized >= 0)}`}>
                 <p className="text-xs text-slate-400 mb-1">PnL no realizado</p>
-                <p className={`text-xl font-bold ${pnlColor(totalUnrealized >= 0)}`}>
-                  {totalUnrealized >= 0 ? '+' : ''}{fmtUSD(totalUnrealized)}
-                </p>
+                <AnimatedNumber
+                  value={totalUnrealized}
+                  format={(n) => `${n >= 0 ? '+' : ''}${fmtUSD(n)}`}
+                  className={`text-xl font-bold block ${pnlColor(totalUnrealized >= 0)}`}
+                />
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalRealized >= 0)}`}>
                 <p className="text-xs text-slate-400 mb-1">PnL realizado total</p>
-                <p className={`text-xl font-bold ${pnlColor(totalRealized >= 0)}`}>
-                  {totalRealized >= 0 ? '+' : ''}{fmtUSD(totalRealized)}
-                </p>
+                <AnimatedNumber
+                  value={totalRealized}
+                  format={(n) => `${n >= 0 ? '+' : ''}${fmtUSD(n)}`}
+                  className={`text-xl font-bold block ${pnlColor(totalRealized >= 0)}`}
+                />
               </div>
             </div>
+
+            {/* Visualizaciones: distribución de cartera + curva de PnL realizado */}
+            {(openPositions.length > 0 || closedPositions.length > 0) && (
+              <PortfolioInsights openPositions={openPositions} closedPositions={closedPositions} />
+            )}
 
             {/* Tabs */}
             <div className="flex gap-2 mb-4">
