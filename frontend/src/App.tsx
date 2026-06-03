@@ -12,7 +12,7 @@
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/hooks/useAuth'
 import AppRoutes from '@/routes'
-import { ErrorBoundary } from '@/components/ErrorBoundary'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 function App() {
   return (

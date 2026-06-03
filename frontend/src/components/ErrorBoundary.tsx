@@ -1,52 +1,71 @@
-import { Component, type ReactNode, type ErrorInfo } from 'react'
+/**
+ * components/ErrorBoundary.tsx — Captura de errores de render de React.
+ *
+ * Evita la "pantalla en blanco": si cualquier componente hijo lanza una
+ * excepción durante el render, se muestra una pantalla de recuperación con
+ * la opción de recargar, en lugar de romper toda la aplicación.
+ *
+ * Los error boundaries deben ser componentes de clase (no hay equivalente
+ * con hooks para `componentDidCatch`).
+ */
 
-interface Props {
+import { Component, type ErrorInfo, type ReactNode } from 'react'
+
+interface ErrorBoundaryProps {
   children: ReactNode
 }
 
-interface State {
+interface ErrorBoundaryState {
   hasError: boolean
   error: Error | null
 }
 
-export class ErrorBoundary extends Component<Props, State> {
-  constructor(props: Props) {
-    super(props)
-    this.state = { hasError: false, error: null }
-  }
+export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('ErrorBoundary caught:', error, info)
+    // Registro para depuración; en producción podría enviarse a un servicio.
+    console.error('[ErrorBoundary] error de render no controlado:', error, info)
+  }
+
+  private handleReload = () => {
+    this.setState({ hasError: false, error: null })
+    window.location.reload()
   }
 
   render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-900 p-8">
-          <div className="max-w-lg w-full bg-slate-800 border border-red-500/40 rounded-xl p-6">
-            <h1 className="text-red-400 text-lg font-bold mb-2">Error en la aplicación</h1>
-            <p className="text-slate-300 text-sm mb-4">
-              Ocurrió un error inesperado. Abre la consola del navegador (F12) para más detalles.
-            </p>
-            <pre className="text-xs text-red-300 bg-slate-900 rounded p-3 overflow-auto max-h-48">
-              {this.state.error?.message}
-              {'\n'}
-              {this.state.error?.stack}
-            </pre>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg"
-            >
-              Recargar página
-            </button>
+    if (!this.state.hasError) return this.props.children
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
+        <div className="max-w-md w-full text-center bg-slate-800 border border-slate-700 rounded-xl p-8">
+          <div className="mx-auto mb-4 w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-400">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+            </svg>
           </div>
+          <h1 className="text-lg font-semibold text-white">Algo ha salido mal</h1>
+          <p className="text-sm text-slate-400 mt-2">
+            Se ha producido un error inesperado en la interfaz. Puedes recargar la página
+            para continuar.
+          </p>
+          {this.state.error?.message && (
+            <p className="mt-3 text-xs font-mono text-slate-500 break-words bg-slate-900/60 rounded-lg px-3 py-2">
+              {this.state.error.message}
+            </p>
+          )}
+          <button
+            onClick={this.handleReload}
+            className="mt-5 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            Recargar
+          </button>
         </div>
-      )
-    }
-    return this.props.children
+      </div>
+    )
   }
 }

@@ -24,6 +24,7 @@ import {
 import PortfolioInsights from '../components/PortfolioInsights'
 import EmptyState from '../components/ui/EmptyState'
 import AnimatedNumber from '../components/ui/AnimatedNumber'
+import Skeleton from '../components/ui/Skeleton'
 
 // -- Iconos para estados vacíos --
 
@@ -154,7 +155,7 @@ function OpenPositionModal({
       <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-lg font-bold text-white">Abrir posición</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} aria-label="Cerrar" className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -318,7 +319,7 @@ function AddToPositionModal({
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} aria-label="Cerrar" className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -438,7 +439,7 @@ function ClosePositionModal({
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} aria-label="Cerrar" className="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-2">
@@ -808,8 +809,17 @@ export default function PortfolioPage() {
         </div>
 
         {loading && (
-          <div className="flex justify-center py-20">
-            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 rounded-xl" />
+              ))}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Skeleton className="h-64 rounded-xl" />
+              <Skeleton className="h-64 rounded-xl" />
+            </div>
+            <Skeleton className="h-48 rounded-xl" />
           </div>
         )}
         {error && !loading && (

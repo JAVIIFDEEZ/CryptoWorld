@@ -168,6 +168,8 @@ export default function SettingsPage() {
                 />
                 <button
                   type="button"
+                  aria-label={showOldPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  aria-pressed={showOldPassword}
                   onClick={() => setShowOldPassword(!showOldPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
                 >
@@ -192,6 +194,8 @@ export default function SettingsPage() {
                 />
                 <button
                   type="button"
+                  aria-label={showNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  aria-pressed={showNewPassword}
                   onClick={() => setShowNewPassword(!showNewPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
                 >
@@ -216,6 +220,8 @@ export default function SettingsPage() {
                 />
                 <button
                   type="button"
+                  aria-label={showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  aria-pressed={showConfirmPassword}
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
                 >
@@ -308,6 +314,8 @@ export default function SettingsPage() {
                   />
                   <button
                     type="button"
+                    aria-label={showDeletePassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    aria-pressed={showDeletePassword}
                     onClick={() => setShowDeletePassword(!showDeletePassword)}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
                   >

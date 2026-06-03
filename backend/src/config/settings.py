@@ -198,12 +198,21 @@ EMAIL_BACKEND = os.environ.get(
     "EMAIL_BACKEND",
     "django.core.mail.backends.console.EmailBackend",  # Imprime en logs Docker
 )
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+# Default orientado a Brevo (SMTP relay). SendGrid: EMAIL_HOST=smtp.sendgrid.net
+# y EMAIL_HOST_USER="apikey". Todos los valores son sobreescribibles por entorno.
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp-relay.brevo.com")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "noreply@cryptoworld.com")
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False") == "True"
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+# El remitente debe ser una direccion VERIFICADA en el proveedor y puede diferir
+# del usuario SMTP (en SendGrid el usuario es literalmente "apikey", que no es un
+# remitente valido). Por eso se configura de forma independiente.
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@cryptoworld.com"
+)
 
 # URL del frontend para construir links en emails
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")

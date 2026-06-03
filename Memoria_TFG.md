@@ -33,6 +33,8 @@
 10. [Decisiones de Diseño Justificadas](#10-decisiones-diseño)
 11. [Estado Actual y Roadmap](#11-estado-actual)
 12. [Registro de Problemas Resueltos](#12-problemas-resueltos)
+13. [Cambios desde v1.47 hasta v1.88](#13-cambios-v147-v188)
+14. [Cambios desde v1.89 hasta v1.102 — Fase de madurez visual/UX](#14-cambios-v189-v1102)
 
 ---
 
@@ -2285,6 +2287,7 @@ Para cada símbolo del usuario:
 | 20 | Sparklines | Sparklines ausentes en los 20 primeros activos del mercado | `assets.slice(0, 25)` usaba el orden de la API (alfabético por `symbol`) en lugar del orden visible (market_cap desc) | Ordenar `[...assets]` por `market_cap` desc antes del `slice(0, 25)` en el `useEffect` de sparklines |
 | 21 | Sparklines | Stablecoins (USDT, USDC) muestran `—` en lugar de gráfica | `{symbol}USDT` forma el par inválido `USDTUSDT` en Binance; no hay datos OHLCV disponibles | Comportamiento correcto: `AssetSparklinesView` devuelve `[]` para ellos y el frontend muestra `—` |
 | 22 | Sync periódico | Intervalo de 10 min excesivo para la demo; precios visualmente desactualizados | El intervalo conservador fue diseñado para respetar el límite mensual de CoinGecko (10 000 calls/mes) antes de que sparklines usaran la BD | Arquitectura dual: `sync_prices_quick` (Binance, cada 60 s, sin cuota) + `sync_market_prices` (CoinGecko, cada 300 s) |
+| 23 | Sparklines | Ningún sparkline se renderizaba en todo el Dashboard (watchlist y movers), ni siquiera en activos con histórico | `AssetSparklinesView.get()` ejecutaba `cache.set(cache_key, ...)` pero `cache_key` nunca se definía → `NameError` → HTTP 500 en cada petición a `/api/assets/sparklines/`. El frontend captura el error por chunk (`.catch(() => ({}))`) y degradaba en silencio, dejando los minigráficos vacíos | Definir `cache_key` a partir de los símbolos normalizados y añadir la lectura *read-through* de caché (faltaba el `cache.get`, solo existía el `cache.set`). Además, registrar el fallo con `console.warn` en `getSparklines` para que futuros 500 sean visibles sin romper la UI |
 
 ---
 
@@ -2464,7 +2467,207 @@ class SyncPricesQuickUseCase:
 
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v1.88.0 — Mayo 2026*  
-*Última actualización: 28 mayo 2026*
+## 14. CAMBIOS DESDE v1.89 HASTA v1.102 (Junio 2026) — Fase de madurez visual/UX
+
+> **Nota para la IA redactora.** Esta sección documenta dos bloques bien diferenciados:
+> (a) un endurecimiento de **robustez y rendimiento** del backend, la infraestructura y la
+> carga del frontend (v1.89–v1.97); y (b) una **fase de pulido visual y de experiencia de
+> usuario** del frontend (v1.98–v1.102), que profesionaliza la interfaz sin tocar la lógica
+> de negocio. El bloque (b) es el más reciente y el que conviene redactar con más detalle en
+> la memoria: introduce un **sistema de animaciones propio**, **estados de carga y vacíos
+> consistentes** y la **visualización de datos del portfolio con gráficos**. Ninguna de estas
+> mejoras altera la Clean Architecture del backend; son cambios de capa de presentación.
+
+### 14.1 Robustez de backend e infraestructura (v1.89–v1.95)
+
+Conjunto de cambios orientados a fiabilidad en producción (despliegue en Railway) y a no
+exceder cuotas de APIs externas. Se resumen por ser cambios incrementales sobre piezas ya
+documentadas en las secciones 6 y 13.
+
+| Versión | Tipo | Cambio |
+|---|---|---|
+| v1.89.0 | feat(sync) | Implementación efectiva del **sync rápido con Binance cada 60 s** (`SyncPricesQuickUseCase`, ver 13.6): `GET /ticker/24hr` en una sola llamada y `bulk_update` de precio, volumen y variación 24 h |
+| v1.90.0 | feat(deploy) | **Configuración multi-servicio de Railway**: tres procesos separados (web Django, worker Celery, beat Celery) para el planificador y las tareas asíncronas |
+| v1.91.0 | fix(frontend) | Corrección de la URL del `TickerBar`, de las etiquetas de las alertas y del color del `Sparkline` |
+| v1.92.0 | infra(docker) | **DNS público** en los contenedores backend para resolver dominios de APIs externas (Binance/CoinGecko/KuCoin) desde dentro de Docker |
+| v1.93.0 | feat(backend) | **Reintentos HTTP automáticos** y *timeout* ampliado en los clientes de APIs externas, para tolerar fallos transitorios de red |
+| v1.94.0 | fix(backend) | Parser de KuCoin a **6 columnas**, `ALLOWED_HOSTS` flexible y migración de `datetime` *naive* a UTC consciente (deprecación de `utcnow`) |
+| v1.95.0 | feat(cache) | **Capa de caché Redis** en las vistas Django y **caché TTL en memoria** en los servicios del frontend, reduciendo llamadas repetidas |
+
+### 14.2 Code splitting del frontend (v1.96.0)
+
+Todas las rutas de la SPA pasan a cargarse de forma diferida con `React.lazy` + `Suspense`,
+de modo que el navegador solo descarga el JavaScript de la página que el usuario visita.
+
+```typescript
+// routes.tsx — antes: import directo de cada página (un único bundle grande)
+// ahora: carga diferida por ruta
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
+const PortfolioPage = lazy(() => import('@/pages/PortfolioPage'))
+// ...envueltas en <Suspense fallback={...}>
+```
+
+**Por qué importa para esta fase:** el *code splitting* es la razón por la que en v1.102 se
+puede añadir una librería de gráficos relativamente pesada (recharts) **sin penalizar al
+resto de la aplicación**: su peso queda aislado en el *chunk* de la página de Portfolio.
+
+### 14.3 Rediseño visual del panel de análisis técnico (v1.97.0)
+
+Rediseño completo de la presentación de `AnalysisPanel` (señales RSI/MACD/Bollinger,
+predicción ML, patrones de velas y *backtesting*) hacia una maquetación más clara y
+jerarquizada, manteniendo intactos los cálculos y endpoints subyacentes. Es el punto de
+partida de la fase de pulido visual que continúa en las versiones siguientes.
+
+---
+
+> A partir de aquí (**v1.98–v1.102**) comienza la fase de pulido visual/UX del frontend.
+> Todos los cambios son de la **capa de presentación** (React/Tailwind); el backend no se
+> modifica. Se introducen tres componentes/abstracciones reutilizables nuevos
+> (`EmptyState`, `AnimatedNumber` + hook `useCountUp`, `PortfolioInsights`) y se unifica la
+> paleta de color de toda la aplicación.
+
+### 14.4 Unificación de la paleta de color a *slate* (v1.98.0)
+
+La aplicación usa un *design system* con tokens semánticos (ver 13 y sección 10) cuya base
+cromática es la escala `slate` de Tailwind. Quedaban dos páginas con la escala `gray`
+heredada, que producían un tono ligeramente distinto. Se completa la migración iniciada en
+v1.83.
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `pages/BlockchainPage.tsx` | Modificado | 39 clases `gray-*` → `slate-*`; se elimina el contenedor `min-h-screen bg-gray-900 p-6` que **duplicaba el fondo y el *padding*** que ya aporta el `AppShell`; radios `rounded-2xl` → `rounded-xl` para igualar el resto de tarjetas |
+| `pages/SettingsPage.tsx` | Modificado | Borde del *knob* de los *toggles* `border-gray-300` → `border-slate-300` |
+| `components/Sparkline.tsx` | **Eliminado** | Componente duplicado y **sin ninguna importación**; el canónico es `components/ui/Sparkline.tsx` |
+
+**Resultado verificable:** cero ocurrencias de la clase `gray-` en todo `frontend/src`.
+
+### 14.5 Estados de carga con *skeleton* (v1.99.0)
+
+Sustitución de los textos planos de carga ("Cargando...") por **placeholders animados
+(*skeleton* con efecto *shimmer*)** que reproducen la silueta del contenido real, reduciendo
+el salto de *layout* y dando sensación de mayor velocidad. Reutilizan el componente
+`components/ui/Skeleton.tsx` (clase CSS `cw-shimmer`).
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `pages/AssetDetailPage.tsx` | Modificado | *Skeleton* de *breadcrumb* + cabecera del activo + zonas de gráficos mientras carga |
+| `pages/TechnicalAnalysisPage.tsx` | Modificado | *Skeleton* de una rejilla de 4 tarjetas de métricas + panel |
+
+### 14.6 Componente `EmptyState` reutilizable (v1.100.0)
+
+Los "no hay datos" estaban repartidos por la app con maquetaciones distintas (unos con
+tarjeta, título y subtítulo; otros un `<p>` plano sin icono). Se introduce un componente
+único para homogeneizarlos.
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `components/ui/EmptyState.tsx` | **Nuevo** | Icono opcional dentro de un círculo + título + descripción + acción opcional. Dos variantes: `card` (tarjeta con borde) y `plain` (incrustado en otro panel) |
+| `pages/AlertsPage.tsx` | Modificado | Estado vacío con icono de campana (SVG *inline*) |
+| `pages/NewsPage.tsx` | Modificado | Estado "Sin resultados" con icono de periódico |
+
+> En las versiones siguientes este componente se adopta también en `DashboardPage`
+> (variante `plain`) y en las tres tablas de `PortfolioPage`.
+
+### 14.7 Sistema de micro-interacciones y animaciones (v1.101.0)
+
+Se construye un **sistema de animación propio, sin dependencias externas** (no se usa
+*framer-motion* ni similar), basado en CSS y dos pequeñas piezas de React. Todas las
+animaciones **respetan la preferencia `prefers-reduced-motion`** del sistema operativo
+(accesibilidad).
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `hooks/useCountUp.ts` | **Nuevo** | Anima una cifra de 0 al valor objetivo con `requestAnimationFrame` y *easing* `easeOutCubic`. Si el usuario pide movimiento reducido, salta directamente al valor final |
+| `components/ui/AnimatedNumber.tsx` | **Nuevo** | Envoltorio fino sobre `useCountUp` para animar números fuera de `StatCard` (KPIs del Portfolio, total del *donut*) |
+| `components/ui/StatCard.tsx` | Modificado | Props opcionales `animateValue` + `format` que activan el *count-up*; **retrocompatible** (sin esas props el comportamiento es idéntico) |
+| `components/TickerBar.tsx` | Modificado | Guarda los precios del refresco anterior en un `ref` y, al recibir datos nuevos, **destella en verde o rojo** el precio que ha cambiado (clase CSS temporal que se retira a los 1,2 s) |
+| `index.css` | Modificado | *Keyframes* `cw-fade-in-up` (entrada con *fade* + desplazamiento) y `cw-flash-up`/`cw-flash-down` (destello de precio); bloque `@media (prefers-reduced-motion: reduce)` que las desactiva todas |
+
+**Aplicación:** *count-up* en los KPIs del **Dashboard** (capitalización total, volumen 24 h,
+dominancia BTC, nº de activos, alcistas, bajistas) y de **Market** (3 tarjetas); animación de
+entrada `cw-fade-in-up` en el Dashboard.
+
+**Por qué un sistema propio en lugar de una librería de animación:**
+- Mantiene el *bundle* ligero (las animaciones necesarias son sencillas: contar números,
+  *fade-in*, destello de color).
+- Evita una dependencia adicional con su superficie de mantenimiento.
+- El respeto a `prefers-reduced-motion` queda centralizado en CSS y en el hook.
+
+### 14.8 Visualización del Portfolio con *recharts* (v1.102.0)
+
+Se añade visualización de datos a la página de Portfolio mediante la librería **recharts**
+(primera dependencia de gráficos del frontend; KLineChart, ya presente, es específica de
+velas OHLCV). El componente nuevo dibuja **dos gráficos construidos exclusivamente con datos
+reales** del portfolio, sin estimaciones sintéticas.
+
+| Archivo | Tipo | Descripción |
+|---|---|---|
+| `components/PortfolioInsights.tsx` | **Nuevo** | Contiene los dos gráficos y su lógica de transformación de datos |
+| `pages/PortfolioPage.tsx` | Modificado | Integra `PortfolioInsights` entre los KPIs y las pestañas; KPIs animados con `AnimatedNumber`; las tablas vacías (abiertas, cerradas, historial) migran a `EmptyState` con iconos |
+| `package.json` | Modificado | Nueva dependencia `recharts` |
+
+**Gráfico 1 — *Donut* de distribución de la cartera:**
+- Mide la **exposición actual por activo** = `cantidad_abierta × precio_actual`, agrupada por
+  símbolo y ordenada de mayor a menor.
+- *Donut* (anillo) con el **total animado en el centro** (*count-up*), leyenda lateral con el
+  porcentaje de cada activo y *tooltip* oscuro (símbolo / USD / % de la cartera).
+
+**Gráfico 2 — Curva de PnL realizado acumulado:**
+- Toma las **posiciones cerradas**, las ordena por `closed_at` y dibuja la **suma acumulada**
+  del `realized_pnl_usd` a lo largo del tiempo.
+- `AreaChart` con degradado, color verde o rojo según el resultado final, ejes formateados y
+  *tooltip* por fecha.
+
+Ambos gráficos muestran un **estado vacío explicativo** (no se ocultan) cuando faltan datos:
+"Abre una posición para ver el reparto…" / "Cierra al menos dos posiciones para trazar…".
+
+**Por qué solo datos reales (y no una *equity curve* sintética):** no existe un endpoint con
+el histórico del valor total de la cartera, de modo que se representan únicamente magnitudes
+verificables: la exposición actual (estado presente) y el PnL realizado por fecha de cierre
+(eventos reales). Se evita así dibujar una curva de patrimonio "inventada".
+
+**Por qué recharts aislado en Portfolio:** la librería arrastra módulos de D3 y engorda el
+*chunk* de la página (~404 KB / ~117 KB *gzip*). Gracias al *code splitting* por ruta (v1.96)
+ese peso **solo se descarga al entrar en `/portfolio`** y no afecta al resto de la aplicación.
+
+### 14.9 Estado actual — v1.102.0
+
+**Componentes y hooks nuevos del frontend (capa de presentación):**
+
+| Pieza | Ubicación | Propósito |
+|---|---|---|
+| `EmptyState` | `components/ui/EmptyState.tsx` | Estado vacío consistente (variantes `card`/`plain`) |
+| `useCountUp` | `hooks/useCountUp.ts` | Animación numérica con respeto a `prefers-reduced-motion` |
+| `AnimatedNumber` | `components/ui/AnimatedNumber.tsx` | Envoltorio de `useCountUp` para cifras sueltas |
+| `PortfolioInsights` | `components/PortfolioInsights.tsx` | *Donut* de distribución + curva de PnL realizado (recharts) |
+
+**Dependencias del frontend:** se añade `recharts`; el resto del stack (React 18, Vite,
+Tailwind, KLineChart, Axios) se mantiene.
+
+**Naturaleza de los cambios v1.98–v1.102:** exclusivamente **frontend / capa de
+presentación**. No hay migraciones de base de datos, ni cambios en la API, ni en la Clean
+Architecture del backend. El valor académico de esta fase está en la **profesionalización de
+la interfaz** (consistencia visual, estados de carga/vacío, micro-interacciones accesibles y
+visualización de datos), no en nueva lógica de negocio.
+
+### 14.10 Corrección de sparklines, robustez, accesibilidad y email (v1.103–v1.106)
+
+Cierre de la fase con una corrección funcional, mejoras de robustez/accesibilidad y la
+preparación del envío real de correos.
+
+| Versión | Tipo | Cambio |
+|---|---|---|
+| v1.103.0 | fix(sparklines) | Corrección del bug que dejaba **todos los minigráficos vacíos**: `AssetSparklinesView` usaba `cache.set(cache_key, ...)` con `cache_key` indefinido → `NameError` → HTTP 500 en cada petición. Se define la clave y se añade lectura *read-through*. En el frontend, `getSparklines` registra el fallo con `console.warn` para no ocultar errores del backend (ver problema #23 en la sección 12) |
+| v1.104.0 | feat(ux) | **`ErrorBoundary` global**: un error de render ya no deja la SPA en blanco; se muestra una pantalla de recuperación con botón de recarga |
+| v1.105.0 | feat(a11y/ux) | **Foco visible** por teclado (`:focus-visible`) en toda la app; **`aria-label`/`aria-pressed`** en los botones solo-icono (mostrar/ocultar contraseña, cierres de modal, borrado de alertas); **entrada escalonada** de las secciones del Dashboard (`.cw-stagger`); el *spinner* del Portfolio pasa a **skeleton** coherente con su layout |
+| v1.106.0 | feat(email) | Preparación del **envío SMTP real con Brevo/SendGrid**: `EMAIL_HOST` por defecto a Brevo, soporte de `EMAIL_USE_SSL`/`EMAIL_TIMEOUT` y, sobre todo, **`DEFAULT_FROM_EMAIL` desacoplado del usuario SMTP** (en SendGrid el usuario es literalmente `apikey`, que no es un remitente válido). `.env.example` documentado para ambos proveedores |
+
+**Componentes/abstracciones nuevos en esta sub-fase:** `ErrorBoundary` (`components/ErrorBoundary.tsx`)
+y la utilidad CSS `.cw-stagger`. Todas las animaciones añadidas respetan `prefers-reduced-motion`.
+
+---
+
+*Documento técnico completo del proyecto CryptoWorld — Estado v1.106.0 — Junio 2026*  
+*Última actualización: 3 junio 2026*
 
 <!-- FIN DEL DOCUMENTO -->

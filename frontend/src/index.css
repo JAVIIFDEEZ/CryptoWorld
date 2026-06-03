@@ -22,6 +22,20 @@
     @apply border-slate-700;
   }
 
+  /* ── Foco visible accesible (navegación por teclado) ──
+     Solo se muestra con :focus-visible (teclado), no al hacer clic con ratón.
+     Anillo azul consistente con el resto del sistema de diseño. */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
   /* ── Scrollbar personalizado (Webkit) ── */
   ::-webkit-scrollbar {
     width: 6px;
@@ -86,6 +100,17 @@
   animation: cw-fade-in-up 0.4s ease-out both;
 }
 
+/* Entrada escalonada de los hijos directos (secciones de una página). */
+.cw-stagger > * {
+  animation: cw-fade-in-up 0.45s ease-out both;
+}
+.cw-stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.cw-stagger > *:nth-child(2) { animation-delay: 0.10s; }
+.cw-stagger > *:nth-child(3) { animation-delay: 0.16s; }
+.cw-stagger > *:nth-child(4) { animation-delay: 0.22s; }
+.cw-stagger > *:nth-child(5) { animation-delay: 0.28s; }
+.cw-stagger > *:nth-child(6) { animation-delay: 0.34s; }
+
 /* ── Flash de precio al actualizar cotizaciones (ticker) ── */
 @keyframes cw-flash-up {
   0%   { background-color: rgba(34, 197, 94, 0.35); }
@@ -102,6 +127,7 @@
 /* Respeta la preferencia de reducir movimiento del sistema operativo. */
 @media (prefers-reduced-motion: reduce) {
   .cw-fade-in-up,
+  .cw-stagger > *,
   .cw-flash-up,
   .cw-flash-down,
   .cw-ticker-track {
