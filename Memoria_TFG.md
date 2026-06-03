@@ -2650,9 +2650,24 @@ Architecture del backend. El valor académico de esta fase está en la **profesi
 la interfaz** (consistencia visual, estados de carga/vacío, micro-interacciones accesibles y
 visualización de datos), no en nueva lógica de negocio.
 
+### 14.10 Corrección de sparklines, robustez, accesibilidad y email (v1.103–v1.106)
+
+Cierre de la fase con una corrección funcional, mejoras de robustez/accesibilidad y la
+preparación del envío real de correos.
+
+| Versión | Tipo | Cambio |
+|---|---|---|
+| v1.103.0 | fix(sparklines) | Corrección del bug que dejaba **todos los minigráficos vacíos**: `AssetSparklinesView` usaba `cache.set(cache_key, ...)` con `cache_key` indefinido → `NameError` → HTTP 500 en cada petición. Se define la clave y se añade lectura *read-through*. En el frontend, `getSparklines` registra el fallo con `console.warn` para no ocultar errores del backend (ver problema #23 en la sección 12) |
+| v1.104.0 | feat(ux) | **`ErrorBoundary` global**: un error de render ya no deja la SPA en blanco; se muestra una pantalla de recuperación con botón de recarga |
+| v1.105.0 | feat(a11y/ux) | **Foco visible** por teclado (`:focus-visible`) en toda la app; **`aria-label`/`aria-pressed`** en los botones solo-icono (mostrar/ocultar contraseña, cierres de modal, borrado de alertas); **entrada escalonada** de las secciones del Dashboard (`.cw-stagger`); el *spinner* del Portfolio pasa a **skeleton** coherente con su layout |
+| v1.106.0 | feat(email) | Preparación del **envío SMTP real con Brevo/SendGrid**: `EMAIL_HOST` por defecto a Brevo, soporte de `EMAIL_USE_SSL`/`EMAIL_TIMEOUT` y, sobre todo, **`DEFAULT_FROM_EMAIL` desacoplado del usuario SMTP** (en SendGrid el usuario es literalmente `apikey`, que no es un remitente válido). `.env.example` documentado para ambos proveedores |
+
+**Componentes/abstracciones nuevos en esta sub-fase:** `ErrorBoundary` (`components/ErrorBoundary.tsx`)
+y la utilidad CSS `.cw-stagger`. Todas las animaciones añadidas respetan `prefers-reduced-motion`.
+
 ---
 
-*Documento técnico completo del proyecto CryptoWorld — Estado v1.102.0 — Junio 2026*  
+*Documento técnico completo del proyecto CryptoWorld — Estado v1.106.0 — Junio 2026*  
 *Última actualización: 3 junio 2026*
 
 <!-- FIN DEL DOCUMENTO -->
