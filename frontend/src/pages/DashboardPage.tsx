@@ -106,7 +106,7 @@ function DashboardPage() {
   const bearishCount = assets.length - bullishCount
 
   return (
-    <div className="space-y-8 cw-fade-in-up">
+    <div className="space-y-8 cw-stagger">
       {/* Cabecera */}
       <div>
         <h1 className="text-2xl font-bold text-white">Dashboard</h1>

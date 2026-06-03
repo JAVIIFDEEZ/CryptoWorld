@@ -60,7 +60,7 @@ function CreateAlertModal({
       <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-slate-700">
         <div className="flex justify-between items-center mb-5">
           <h2 className="text-lg font-bold text-white">Nueva alerta de precio</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl">×</button>
+          <button onClick={onClose} aria-label="Cerrar" className="text-slate-400 hover:text-white text-xl">×</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -192,6 +192,7 @@ function AlertCard({
           <button
             onClick={() => onDelete(alert.id)}
             title="Eliminar alerta"
+            aria-label="Eliminar alerta"
             className="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-slate-700 text-slate-400 hover:bg-red-900/40 hover:text-red-400"
           >
             ×
