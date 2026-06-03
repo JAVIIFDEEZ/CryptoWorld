@@ -11,6 +11,13 @@ import {
   type PriceAlert,
   type CreateAlertPayload,
 } from '../services/alertsService'
+import EmptyState from '../components/ui/EmptyState'
+
+const IconBell = () => (
+  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.85 23.85 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m6.714 0a3 3 0 1 1-6.714 0m6.714 0a24.2 24.2 0 0 1-6.714 0" />
+  </svg>
+)
 
 // ────────────────────────── Modal crear alerta ────────────────────
 
@@ -309,14 +316,11 @@ export default function AlertsPage() {
         )}
 
         {!loading && !error && filtered.length === 0 && (
-          <div className="bg-slate-800 rounded-xl p-8 text-center text-slate-400">
-            <p className="text-lg mb-2">
-              {filter === 'all' ? 'No hay alertas configuradas' : 'No hay alertas en esta categoría'}
-            </p>
-            {filter === 'all' && (
-              <p className="text-sm">Crea tu primera alerta para recibir notificaciones automáticas.</p>
-            )}
-          </div>
+          <EmptyState
+            icon={<IconBell />}
+            title={filter === 'all' ? 'No hay alertas configuradas' : 'No hay alertas en esta categoría'}
+            description={filter === 'all' ? 'Crea tu primera alerta para recibir notificaciones automáticas.' : undefined}
+          />
         )}
 
         {!loading && !error && (
