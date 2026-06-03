@@ -26,11 +26,21 @@ import logging
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
 BLOCKCHAIN_BASE_URL = "https://api.blockchain.info/charts"
-REQUEST_TIMEOUT = 12  # segundos
+REQUEST_TIMEOUT = 15  # segundos
+
+_RETRY_STRATEGY = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+    raise_on_status=False,
+)
 
 # Mapeo de nombres internos a nombres de la API
 METRIC_MAP = {
@@ -75,6 +85,9 @@ class BlockchainDotComClient:
     def __init__(self) -> None:
         self._session = requests.Session()
         self._session.headers.update({"Accept": "application/json"})
+        adapter = HTTPAdapter(max_retries=_RETRY_STRATEGY)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def get_chart(
         self,

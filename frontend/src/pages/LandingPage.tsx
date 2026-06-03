@@ -498,7 +498,7 @@ export default function LandingPage() {
           <span className="font-bold text-slate-300">CryptoWorld</span>
         </div>
         <p className="text-slate-600 text-sm">
-          © 2026 CryptoWorld · Tu copiloto cuantitativo cripto
+          © 2026 CryptoWorld · Análisis cuantitativo de criptomonedas
         </p>
         <div className="flex items-center justify-center gap-6 mt-4 text-slate-600 text-sm">
           <Link to="/login" className="hover:text-slate-400 transition-colors">Iniciar sesión</Link>

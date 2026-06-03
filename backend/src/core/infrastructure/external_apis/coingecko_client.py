@@ -19,12 +19,23 @@ import logging
 from typing import Any, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3"
 REQUEST_TIMEOUT = 15  # segundos
+
+# Reintentos ante fallos SSL/red transitorios
+_RETRY_STRATEGY = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+    raise_on_status=False,
+)
 
 
 class CoinGeckoClientError(Exception):
@@ -44,6 +55,9 @@ class CoinGeckoClient:
     def __init__(self) -> None:
         self._session = requests.Session()
         self._session.headers.update({"Accept": "application/json"})
+        adapter = HTTPAdapter(max_retries=_RETRY_STRATEGY)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
         api_key = getattr(settings, "COINGECKO_API_KEY", None)
         if api_key:
             self._session.headers["x-cg-demo-api-key"] = api_key
@@ -113,6 +127,48 @@ class CoinGeckoClient:
             "vs_currency": vs_currency,
             "days": days,
         })
+
+    def get_coin_detail(self, coin_id: str) -> dict[str, Any]:
+        """
+        GET /coins/{id} — Información detallada de una moneda: enlaces,
+        datos de mercado (ATH, suministro) y categorías.
+
+        Se solicita únicamente lo imprescindible para reducir el payload:
+        tickers, community_data y developer_data se deshabilitan.
+
+        Docs: https://docs.coingecko.com/reference/coins-id
+        """
+        return self._get(f"/coins/{coin_id}", params={
+            "localization": "false",
+            "tickers": "false",
+            "market_data": "true",
+            "community_data": "false",
+            "developer_data": "false",
+            "sparkline": "false",
+        })
+
+    def get_sparkline_prices(
+        self,
+        coin_id: str,
+        vs_currency: str = "usd",
+        days: int = 7,
+    ) -> list[float]:
+        """
+        GET /coins/{id}/market_chart — Precios de cierre diarios para sparklines.
+
+        Devuelve una lista plana de precios (float) ordenados cronológicamente,
+        uno por día durante los últimos `days` días.
+
+        Docs: https://docs.coingecko.com/reference/coins-id-market-chart
+        """
+        data = self._get(f"/coins/{coin_id}/market_chart", params={
+            "vs_currency": vs_currency,
+            "days": days,
+            "interval": "daily",
+        })
+        # data["prices"] = [[timestamp_ms, price], ...]
+        prices: list[list] = data.get("prices", [])
+        return [float(point[1]) for point in prices]
 
     def ping(self) -> bool:
         """Comprueba que la API responde."""

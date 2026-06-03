@@ -7,6 +7,13 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { newsService, type NewsItem } from '../services/newsService'
+import EmptyState from '../components/ui/EmptyState'
+
+const IconNews = () => (
+  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 0 1-2.25 2.25M16.5 7.5V18a2.25 2.25 0 0 0 2.25 2.25M16.5 7.5V4.875c0-.621-.504-1.125-1.125-1.125H4.125C3.504 3.75 3 4.254 3 4.875V18a2.25 2.25 0 0 0 2.25 2.25h13.5" />
+  </svg>
+)
 
 type Sentiment = 'positive' | 'negative' | 'neutral' | ''
 
@@ -347,10 +354,11 @@ export default function NewsPage() {
       )}
 
       {!loading && !error && allItems.length === 0 && (
-        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-12 text-center">
-          <p className="text-slate-300 font-medium">Sin resultados</p>
-          <p className="text-slate-500 text-sm mt-1">No hay noticias para los filtros seleccionados.</p>
-        </div>
+        <EmptyState
+          icon={<IconNews />}
+          title="Sin resultados"
+          description="No hay noticias para los filtros seleccionados."
+        />
       )}
 
       {!loading && !error && allItems.length > 0 && (

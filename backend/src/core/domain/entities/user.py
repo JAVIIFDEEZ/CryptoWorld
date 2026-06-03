@@ -10,7 +10,7 @@ La entidad solo sabe sobre sí misma, no sobre cómo se persiste.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 
@@ -25,7 +25,7 @@ class UserEntity:
     username: str
     is_active: bool = True
     is_staff: bool = False
-    date_joined: datetime = field(default_factory=datetime.utcnow)
+    date_joined: datetime = field(default_factory=lambda: datetime.now(UTC))
     id: Optional[int] = None
     # Campos de autenticación extendida
     is_email_verified: bool = False

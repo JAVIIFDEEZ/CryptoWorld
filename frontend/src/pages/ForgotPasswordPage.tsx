@@ -128,7 +128,7 @@ function ForgotPasswordPage() {
 
         {/* Footer */}
         <p className="text-center text-slate-600 text-xs mt-6">
-          © 2026 CryptoWorld · Tu copiloto cuantitativo cripto
+          © 2026 CryptoWorld · Análisis cuantitativo de criptomonedas
         </p>
       </div>
     </div>

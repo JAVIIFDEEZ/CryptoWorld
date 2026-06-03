@@ -222,6 +222,22 @@ CRYPTOCOMPARE_API_KEY = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
 # ------------------------------------------------------------------
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
+# ------------------------------------------------------------------
+# Caché — Redis (comparte instancia con Celery, usa DB 1 separada)
+# Django 4.0+ incluye backend Redis nativo; no requiere django-redis.
+# ------------------------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL.rstrip("/0") + "/1",  # DB 1 → no colisiona con Celery (DB 0)
+        "TIMEOUT": 300,  # TTL por defecto: 5 minutos
+        "OPTIONS": {
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        },
+    }
+}
+
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -240,10 +256,15 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.check_price_alerts",
         "schedule": 120.0,  # segundos
     },
-    # Sincronizar precios de mercado cada 10 minutos
+    # Sync rápido de precios vía Binance (1 llamada, weight=40, sin cuota CoinGecko)
+    "sync-prices-quick": {
+        "task": "core.tasks.sync_prices_quick",
+        "schedule": 60.0,   # segundos — cada 1 min
+    },
+    # Sync completo vía CoinGecko (market_cap, logos, MarketDataSnapshot para sparklines)
     "sync-market-prices": {
         "task": "core.tasks.sync_market_prices",
-        "schedule": 600.0,  # segundos
+        "schedule": 300.0,  # segundos — cada 5 min (8 640 calls/mes < 10 000 límite Demo)
     },
 }
 

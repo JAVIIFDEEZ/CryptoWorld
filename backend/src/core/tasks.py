@@ -5,8 +5,11 @@ Las tareas se ejecutan en background por el servicio 'celery-worker' de Docker.
 El scheduler (celery-beat) las dispara según CELERY_BEAT_SCHEDULE en settings.py.
 
 Tareas:
-- check_price_alerts: Evalúa todas las alertas activas cada 2 min.
-- sync_market_prices: Sincroniza precios desde CoinGecko cada 10 min.
+- check_price_alerts:  Evalúa todas las alertas activas cada 2 min.
+- sync_prices_quick:   Actualiza precios vía Binance ticker/24hr cada 60 s.
+                       Sin cuota CoinGecko, sin crear MarketDataSnapshot.
+- sync_market_prices:  Sync completo vía CoinGecko cada 5 min.
+                       Actualiza market_cap, logos y crea MarketDataSnapshot.
 """
 
 import logging
@@ -42,6 +45,38 @@ def check_price_alerts(self):
 
 
 @shared_task(
+    name="core.tasks.sync_prices_quick",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=30,
+)
+def sync_prices_quick(self):
+    """
+    Actualiza current_price, volume_24h y price_change_24h usando Binance
+    ticker/24hr (1 llamada HTTP, weight=40, sin cuota CoinGecko).
+    No crea MarketDataSnapshot. Se ejecuta cada 60 s.
+    """
+    try:
+        from core.application.use_cases.sync_prices_quick import SyncPricesQuickUseCase
+
+        result = SyncPricesQuickUseCase().execute()
+        logger.info(
+            "sync_prices_quick: updated=%d, skipped=%d, errors=%d",
+            result.updated,
+            result.skipped,
+            result.errors,
+        )
+        return {
+            "updated": result.updated,
+            "skipped": result.skipped,
+            "errors": result.errors,
+        }
+    except Exception as exc:
+        logger.error("sync_prices_quick error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.sync_market_prices",
     bind=True,
     max_retries=2,
@@ -49,8 +84,8 @@ def check_price_alerts(self):
 )
 def sync_market_prices(self):
     """
-    Sincroniza precios y datos de mercado de los activos en la BD
-    consultando la API de CoinGecko.
+    Sync completo vía CoinGecko: actualiza market_cap, logos, coingecko_id
+    y crea MarketDataSnapshot para sparklines. Se ejecuta cada 5 min.
     """
     try:
         from core.application.use_cases.sync_market_data import SyncMarketDataUseCase

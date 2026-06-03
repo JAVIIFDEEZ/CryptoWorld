@@ -22,6 +22,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.core.cache import cache
 
 from core.interfaces.api.serializers import (
     RegisterSerializer,
@@ -101,6 +102,7 @@ from core.application.use_cases.get_positions import GetPositionsUseCase
 from core.infrastructure.persistence.models import Position as PositionModel
 from core.infrastructure.persistence.models import UserWatchlist as UserWatchlistModel
 from core.infrastructure.persistence.models import CryptoAsset as CryptoAssetModel
+from core.infrastructure.persistence.models import MarketDataSnapshot as MarketDataSnapshotModel
 from core.application.use_cases.manage_alerts import (
     CreateAlertUseCase,
     ListAlertsUseCase,
@@ -595,10 +597,17 @@ class AssetListView(APIView):
     """
     GET /api/assets â€” Listar todos los activos criptogrÃ¡ficos.
     Requiere autenticaciÃ³n JWT (Authorization: Bearer <token>).
+    CachÃ© Redis 60 s: los activos los actualiza Celery; no necesitamos recargar la BD en cada request.
     """
     permission_classes = [IsAuthenticated]
+    _CACHE_KEY = "asset_list"
+    _CACHE_TTL = 60  # 60 segundos
 
     def get(self, request):
+        cached = cache.get(self._CACHE_KEY)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
         asset_repo = DjangoCryptoAssetRepository()
         use_case = GetAssetsUseCase(asset_repo)
         output_dtos = use_case.execute()
@@ -611,7 +620,85 @@ class AssetListView(APIView):
             [vars(dto) for dto in output_dtos],
             many=True,
         )
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        data = serializer.data
+        cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
+        return Response(data, status=status.HTTP_200_OK)
+
+
+
+class AssetSparklinesView(APIView):
+    """
+    GET /api/assets/sparklines/?symbols=BTC,ETH,SOL
+
+    Devuelve el precio medio diario de los ultimos 7 dias por simbolo,
+    construido desde MarketDataSnapshot (BD local, sin llamadas externas).
+
+    Fuente primaria: MarketDataSnapshot — creado cada 10 min por Celery.
+    Fuente de fallback: OHLCV de Binance/KuCoin, solo para activos con
+    menos de 2 dias de historial local.
+
+    Respuesta: { "BTC": [p1, p2, ...], "ETH": [...], ... }
+    Maximo 10 simbolos por peticion.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from datetime import timedelta
+        from django.utils import timezone
+        from django.db.models import Avg
+        from django.db.models.functions import TruncDate
+        from collections import defaultdict
+
+        raw = request.query_params.get("symbols", "")
+        if not raw:
+            return Response(
+                {"error": "Parametro symbols requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        symbols = [s.strip().upper() for s in raw.split(",") if s.strip()][:10]
+
+        # ── 1. Precio medio diario desde MarketDataSnapshot (BD local) ────────
+        # Cada asset synced por Celery acumula ~144 snapshots/dia (cada 10 min).
+        # Agrupar por dia y promediar elimina ruido y da una curva limpia.
+        cutoff = timezone.now() - timedelta(days=8)
+
+        rows = (
+            MarketDataSnapshotModel.objects
+            .filter(asset__symbol__in=symbols, timestamp__gte=cutoff)
+            .annotate(day=TruncDate("timestamp"))
+            .values("asset__symbol", "day")
+            .annotate(avg_price=Avg("price"))
+            .order_by("asset__symbol", "day")
+        )
+
+        snap_map: dict[str, list[float]] = defaultdict(list)
+        for row in rows:
+            snap_map[row["asset__symbol"]].append(float(row["avg_price"]))
+
+        result: dict[str, list[float]] = {}
+        needs_fallback: list[str] = []
+
+        for symbol in symbols:
+            prices = snap_map.get(symbol, [])
+            if len(prices) >= 2:
+                result[symbol] = prices
+            else:
+                needs_fallback.append(symbol)
+
+        # ── 2. Fallback OHLCV para activos sin historial local suficiente ─────
+        # Solo actua para assets muy nuevos (< 2 dias en el sistema).
+        for symbol in needs_fallback:
+            try:
+                candles, _ = GetAssetOhlcvUseCase().execute(
+                    symbol=symbol, interval="1d", limit=14
+                )
+                result[symbol] = [float(c.close) for c in candles]
+            except Exception:
+                result[symbol] = []
+
+        cache.set(cache_key, result, 3600)  # 1 hora
+        return Response(result, status=status.HTTP_200_OK)
 
 
 # â”€â”€ Analysis Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -647,14 +734,23 @@ class MarketOverviewView(APIView):
     """
     GET /api/market/overview/ — Resumen global del mercado.
     Público: usado también desde la landing page (sin autenticación).
+    Caché Redis 5 min: evita llamadas externas a CoinGecko/Alternative.me en cada request.
     """
 
     permission_classes = [AllowAny]
+    _CACHE_KEY = "market_overview"
+    _CACHE_TTL = 300  # 5 minutos
 
     def get(self, request):
+        cached = cache.get(self._CACHE_KEY)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
         output_dto = GetMarketOverviewUseCase().execute()
         serializer = MarketOverviewSerializer(vars(output_dto))
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        data = serializer.data
+        cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
+        return Response(data, status=status.HTTP_200_OK)
 
 class AssetOhlcvView(APIView):
 
@@ -942,6 +1038,79 @@ class RunBacktestView(APIView):
             )
         )
         return Response(result, status=status.HTTP_200_OK)
+
+
+class AssetDetailInfoView(APIView):
+    """
+    GET /api/assets/<symbol>/info/ — Información de proyecto de un activo.
+
+    Consolida desde CoinGecko: enlaces (web, whitepaper, twitter, reddit),
+    datos de mercado (ATH, suministro) y categorías.
+    Requiere autenticación JWT.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, symbol: str):
+        from core.infrastructure.external_apis.coingecko_client import (
+            CoinGeckoClient,
+            CoinGeckoClientError,
+        )
+
+        symbol = symbol.upper()
+        asset = CryptoAssetModel.objects.filter(symbol=symbol).values("coingecko_id").first()
+        if not asset or not asset["coingecko_id"]:
+            return Response(
+                {"error": f"Activo {symbol} no encontrado o sin coingecko_id."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            data = CoinGeckoClient().get_coin_detail(asset["coingecko_id"])
+        except CoinGeckoClientError as exc:
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        links = data.get("links", {})
+        market = data.get("market_data", {})
+
+        homepage = next(
+            (u for u in links.get("homepage", []) if u), None
+        )
+        whitepaper = links.get("whitepaper") or None
+        twitter_handle = links.get("twitter_screen_name") or None
+        twitter = f"https://twitter.com/{twitter_handle}" if twitter_handle else None
+        reddit = links.get("subreddit_url") or None
+        telegram_id = links.get("telegram_channel_identifier") or None
+        telegram = f"https://t.me/{telegram_id}" if telegram_id else None
+        github_repos = (links.get("repos_url") or {}).get("github") or []
+        github = next((u for u in github_repos if u), None)
+
+        ath = (market.get("ath") or {}).get("usd")
+        ath_date_raw = (market.get("ath_date") or {}).get("usd")
+        ath_date = ath_date_raw[:10] if ath_date_raw else None
+        circulating_supply = market.get("circulating_supply")
+        max_supply = market.get("max_supply")
+
+        categories = [c for c in data.get("categories", []) if c][:5]
+        description = (data.get("description") or {}).get("en") or None
+
+        return Response({
+            "homepage": homepage,
+            "whitepaper": whitepaper,
+            "twitter": twitter,
+            "reddit": reddit,
+            "telegram": telegram,
+            "github": github,
+            "ath": ath,
+            "ath_date": ath_date,
+            "circulating_supply": circulating_supply,
+            "max_supply": max_supply,
+            "categories": categories,
+            "description": description,
+        }, status=status.HTTP_200_OK)
+
 
 
 class AvailableStrategiesView(APIView):

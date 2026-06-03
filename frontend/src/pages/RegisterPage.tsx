@@ -90,7 +90,7 @@ function RegisterPage() {
             <span className="text-blue-400">Crypto</span>World
           </h1>
           <p className="text-slate-400 mt-2 text-sm">
-            Decisiones cripto basadas en datos, no en intuición
+            Sistema de análisis de criptomonedas
           </p>
         </div>
 
@@ -229,7 +229,7 @@ function RegisterPage() {
 
         {/* Footer */}
         <p className="text-center text-slate-600 text-xs mt-6">
-          © 2026 CryptoWorld · Tu copiloto cuantitativo cripto
+          © 2026 CryptoWorld · Análisis cuantitativo de criptomonedas
         </p>
       </div>
     </div>

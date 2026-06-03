@@ -211,13 +211,12 @@ export default function BlockchainPage() {
   const isUp = pct != null && pct >= 0
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-5xl mx-auto">
+    <div>
 
         {/* ── Cabecera ── */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold">Blockchain Analytics</h1>
-          <p className="text-gray-400 text-sm mt-1">
+          <h1 className="text-2xl font-bold text-white">Blockchain Analytics</h1>
+          <p className="text-slate-400 text-sm mt-1">
             Estadísticas on-chain en tiempo real · 10 blockchains
           </p>
         </div>
@@ -229,7 +228,7 @@ export default function BlockchainPage() {
               key={s}
               onClick={() => setChain(s)}
               className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors border ${
-                chain === s ? 'text-white border-transparent' : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'
+                chain === s ? 'text-white border-transparent' : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
               }`}
               style={chain === s ? { backgroundColor: CHAIN_COLORS[s] + '33', borderColor: CHAIN_COLORS[s], color: CHAIN_COLORS[s] } : {}}
             >
@@ -239,7 +238,7 @@ export default function BlockchainPage() {
         </div>
 
         {/* ── Snapshot Blockchair ── */}
-        <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700 mb-6">
+        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 mb-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div
@@ -250,20 +249,20 @@ export default function BlockchainPage() {
               </div>
               <div>
                 <h2 className="text-lg font-bold">{chain} — Estadísticas actuales</h2>
-                <p className="text-xs text-gray-400">Snapshot · Fuente: Blockchair</p>
+                <p className="text-xs text-slate-400">Snapshot · Fuente: Blockchair</p>
               </div>
             </div>
             <button
               onClick={fetchSnapshot}
               disabled={snapLoading}
-              className="text-xs text-gray-400 hover:text-white px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors disabled:opacity-50"
+              className="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors disabled:opacity-50"
             >
               ↻ Actualizar
             </button>
           </div>
 
           {snapMeta.best_block_time && (
-            <p className="text-xs text-gray-500 mb-4">
+            <p className="text-xs text-slate-500 mb-4">
               Último bloque: #{snapMeta.best_block_height?.toLocaleString()} ·{' '}
               {new Date(snapMeta.best_block_time).toLocaleString('es-ES')}
             </p>
@@ -288,18 +287,18 @@ export default function BlockchainPage() {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {snapStats.map(stat => (
-                  <div key={stat.key} className="bg-gray-700/50 rounded-xl p-4 border border-gray-600/50">
-                    <p className="text-xs text-gray-400 mb-1 truncate">{stat.label}</p>
+                  <div key={stat.key} className="bg-slate-700/50 rounded-xl p-4 border border-slate-600/50">
+                    <p className="text-xs text-slate-400 mb-1 truncate">{stat.label}</p>
                     <p className="text-lg font-bold font-mono" style={{ color }}>
                       {fmtStatValue(stat.value, stat.unit)}
                     </p>
                     {stat.unit && stat.unit !== 'USD' && stat.unit !== '%' && (
-                      <p className="text-xs text-gray-500 mt-0.5">{stat.unit}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{stat.unit}</p>
                     )}
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-gray-600 mt-3">Fuente: {snapMeta.source}</p>
+              <p className="text-xs text-slate-600 mt-3">Fuente: {snapMeta.source}</p>
             </>
           )}
         </div>
@@ -309,10 +308,10 @@ export default function BlockchainPage() {
           <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="w-2 h-2 rounded-full bg-yellow-500" />
-              <h2 className="text-base font-semibold text-gray-200">
+              <h2 className="text-base font-semibold text-slate-200">
                 Histórico BTC — Series temporales
               </h2>
-              <span className="text-xs text-gray-500 ml-1">Fuente: Blockchain.com</span>
+              <span className="text-xs text-slate-500 ml-1">Fuente: Blockchain.com</span>
             </div>
 
             {/* Selector de métricas */}
@@ -324,7 +323,7 @@ export default function BlockchainPage() {
                   className={`px-3 py-2 rounded-xl text-xs font-medium text-left transition-colors ${
                     metric === m
                       ? 'text-white border'
-                      : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
+                      : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700'
                   }`}
                   style={metric === m ? { backgroundColor: `${chartColor}22`, borderColor: chartColor } : {}}
                 >
@@ -340,7 +339,7 @@ export default function BlockchainPage() {
                   key={d}
                   onClick={() => setDays(d)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                    days === d ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+                    days === d ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
                 >
                   {d === 365 ? '1A' : d === 180 ? '6M' : d === 90 ? '3M' : d === 30 ? '1M' : '7D'}
@@ -349,10 +348,10 @@ export default function BlockchainPage() {
             </div>
 
             {/* Gráfico */}
-            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <p className="text-xs text-gray-400 mb-1">{chartMeta.label || METRIC_LABELS[metric]}</p>
+                  <p className="text-xs text-slate-400 mb-1">{chartMeta.label || METRIC_LABELS[metric]}</p>
                   {latestValue != null && (
                     <p className="text-3xl font-bold font-mono">{fmtValue(latestValue)}</p>
                   )}
@@ -362,12 +361,12 @@ export default function BlockchainPage() {
                     </p>
                   )}
                   {chartMeta.description && (
-                    <p className="text-xs text-gray-500 mt-1 max-w-md">{chartMeta.description}</p>
+                    <p className="text-xs text-slate-500 mt-1 max-w-md">{chartMeta.description}</p>
                   )}
                 </div>
                 {hovered && (
                   <div className="text-right text-sm">
-                    <p className="text-gray-400 text-xs">
+                    <p className="text-slate-400 text-xs">
                       {new Date(hovered.timestamp * 1000).toLocaleDateString('es-ES')}
                     </p>
                     <p className="font-mono font-bold">{fmtValue(hovered.value)}</p>
@@ -417,25 +416,25 @@ export default function BlockchainPage() {
               )}
 
               {!chartLoading && !chartError && chartData.length === 0 && (
-                <div className="py-12 text-center text-gray-500 text-sm">
+                <div className="py-12 text-center text-slate-500 text-sm">
                   No hay datos disponibles para esta métrica y período.
                 </div>
               )}
 
               {chartMeta.source && (
-                <p className="text-xs text-gray-600 mt-3">Fuente: {chartMeta.source}</p>
+                <p className="text-xs text-slate-600 mt-3">Fuente: {chartMeta.source}</p>
               )}
             </div>
 
             {/* Tabla de últimos valores */}
             {chartData.length > 0 && !chartLoading && (
-              <div className="mt-4 bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-700">
-                  <h3 className="text-sm font-medium text-gray-300">Últimos 10 valores</h3>
+              <div className="mt-4 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-700">
+                  <h3 className="text-sm font-medium text-slate-300">Últimos 10 valores</h3>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-xs text-gray-400 border-b border-gray-700">
+                    <tr className="text-xs text-slate-400 border-b border-slate-700">
                       <th className="text-left px-4 py-2">Fecha</th>
                       <th className="text-right px-4 py-2">{METRIC_LABELS[metric]}</th>
                       <th className="text-right px-4 py-2">Var. diaria</th>
@@ -446,8 +445,8 @@ export default function BlockchainPage() {
                       const prev = arr[i + 1]
                       const change = prev ? ((p.value - prev.value) / prev.value) * 100 : null
                       return (
-                        <tr key={p.timestamp} className="border-b border-gray-700/40 hover:bg-gray-700/30">
-                          <td className="px-4 py-2 text-gray-400">
+                        <tr key={p.timestamp} className="border-b border-slate-700/40 hover:bg-slate-700/30">
+                          <td className="px-4 py-2 text-slate-400">
                             {new Date(p.timestamp * 1000).toLocaleDateString('es-ES')}
                           </td>
                           <td className="text-right px-4 py-2 font-mono">{fmtValue(p.value)}</td>
@@ -464,7 +463,6 @@ export default function BlockchainPage() {
           </div>
         )}
 
-      </div>
     </div>
   )
 }

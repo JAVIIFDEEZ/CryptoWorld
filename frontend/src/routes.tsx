@@ -11,31 +11,43 @@
  *   /assets/:symbol      → AssetDetailPage (protegido)
  */
 
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import LandingPage from '@/pages/LandingPage'
-import LoginPage from '@/pages/LoginPage'
-import RegisterPage from '@/pages/RegisterPage'
-import VerifyEmailPage from '@/pages/VerifyEmailPage'
-import ForgotPasswordPage from '@/pages/ForgotPasswordPage'
-import ResetPasswordPage from '@/pages/ResetPasswordPage'
-import DashboardPage from '@/pages/DashboardPage'
-import AssetDetailPage from '@/pages/AssetDetailPage'
-import MarketPage from '@/pages/MarketPage'
-import TechnicalAnalysisPage from '@/pages/TechnicalAnalysisPage'
-import PortfolioPage from '@/pages/PortfolioPage'
-import AlertsPage from '@/pages/AlertsPage'
-import NewsPage from '@/pages/NewsPage'
-import BlockchainPage from '@/pages/BlockchainPage'
-import Security2FAPage from '@/pages/Security2FAPage'
-import SettingsPage from '@/pages/SettingsPage'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { AdminRoute } from '@/components/AdminRoute'
 import AppShell from '@/components/AppShell'
-import AdminDashboardPage from '@/pages/AdminDashboardPage'
+
+// Code splitting: cada página se carga sólo cuando se navega a ella
+const LandingPage = lazy(() => import('@/pages/LandingPage'))
+const LoginPage = lazy(() => import('@/pages/LoginPage'))
+const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
+const VerifyEmailPage = lazy(() => import('@/pages/VerifyEmailPage'))
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
+const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'))
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
+const AssetDetailPage = lazy(() => import('@/pages/AssetDetailPage'))
+const MarketPage = lazy(() => import('@/pages/MarketPage'))
+const TechnicalAnalysisPage = lazy(() => import('@/pages/TechnicalAnalysisPage'))
+const PortfolioPage = lazy(() => import('@/pages/PortfolioPage'))
+const AlertsPage = lazy(() => import('@/pages/AlertsPage'))
+const NewsPage = lazy(() => import('@/pages/NewsPage'))
+const BlockchainPage = lazy(() => import('@/pages/BlockchainPage'))
+const Security2FAPage = lazy(() => import('@/pages/Security2FAPage'))
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const AdminDashboardPage = lazy(() => import('@/pages/AdminDashboardPage'))
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-slate-900">
+      <div className="w-8 h-8 border-2 border-slate-600 border-t-slate-300 rounded-full animate-spin" />
+    </div>
+  )
+}
 
 function AppRoutes() {
   return (
-    <Routes>
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
       {/* Rutas públicas */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
@@ -74,6 +86,7 @@ function AppRoutes() {
       {/* 404 catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   )
 }
 

@@ -2,14 +2,14 @@
  * components/AnalysisPanel.tsx — Panel de análisis técnico avanzado reutilizable.
  *
  * 5 pestañas:
- *   1. Señales (Signal Dashboard)  — semáforos multi-indicador
- *   2. Indicadores individuales    — cálculo detallado de un indicador
- *   3. Predicción ML               — predicción de dirección de precio
- *   4. Patrones de velas           — detección de patrones chartistas
- *   5. Backtesting                 — simulación de estrategia sobre histórico
+ *   1. Señales        — medidor de sentimiento + semáforos multi-indicador
+ *   2. Indicadores    — cálculo detallado con gauge visual contextual
+ *   3. Predicción ML  — predicción de dirección + explicación del modelo
+ *   4. Patrones       — detección de patrones chartistas con fiabilidad
+ *   5. Backtesting    — simulación de estrategia con comparativa vs buy&hold
  */
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   analysisService,
   type IntervalType,
@@ -21,6 +21,7 @@ import {
   type AnalysisResult,
   type StrategyInfo,
 } from '@/services/analysisService'
+import InfoTooltip from '@/components/ui/InfoTooltip'
 
 // ── Tipos locales ────────────────────────────────────────────────
 
@@ -46,72 +47,6 @@ const INTERVALS: { label: string; value: IntervalType }[] = [
 const ANALYSIS_TYPES: AnalysisType[] = ['RSI', 'MACD', 'SMA', 'EMA', 'BOLLINGER']
 
 // ── Helpers de señal ─────────────────────────────────────────────
-
-// Descripciones educativas de cada indicador técnico
-const INDICATOR_INFO: Record<string, { short: string; thresholds: string }> = {
-  'RSI (14)': {
-    short: 'Relative Strength Index (RSI). Mide la velocidad y magnitud de los cambios de precio.',
-    thresholds: 'Sobrecompra: > 70 · Sobreventa: < 30',
-  },
-  'MACD (12,26,9)': {
-    short: 'Moving Average Convergence Divergence. Mide la diferencia entre dos EMAs para detectar cambios de tendencia.',
-    thresholds: 'Señal de compra: MACD cruza Signal hacia arriba. Venta: cruza hacia abajo.',
-  },
-  'SMA (20)': {
-    short: 'Simple Moving Average de 20 periodos. Media aritmética de los últimos 20 cierres.',
-    thresholds: 'Precio > SMA → alcista. Precio < SMA → bajista.',
-  },
-  'SMA (50)': {
-    short: 'Simple Moving Average de 50 periodos. Tendencia de medio plazo.',
-    thresholds: 'Precio > SMA 50 → tendencia positiva de medio plazo.',
-  },
-  'EMA (12)': {
-    short: 'Exponential Moving Average de 12 periodos. Más sensible a movimientos recientes que la SMA.',
-    thresholds: 'Precio > EMA 12 → impulso alcista a corto plazo.',
-  },
-  'EMA (26)': {
-    short: 'Exponential Moving Average de 26 periodos. Usada junto a EMA 12 para formar el MACD.',
-    thresholds: 'EMA 12 > EMA 26 → señal alcista (Golden Cross).',
-  },
-  'Bollinger (20,2)': {
-    short: 'Bandas de Bollinger: canal de 2 desviaciones estándar alrededor de la SMA 20.',
-    thresholds: 'Precio toca banda superior → sobrecompra. Banda inferior → sobreventa.',
-  },
-  'Stoch RSI': {
-    short: 'Stochastics RSI. Aplica la fórmula estocástica sobre el RSI, más sensible.',
-    thresholds: 'Sobrecompra: > 80 · Sobreventa: < 20',
-  },
-  'ADX (14)': {
-    short: 'Average Directional Index. Mide la fuerza de la tendencia (no su dirección).',
-    thresholds: '> 25 → tendencia fuerte. < 20 → tendencia débil o lateral.',
-  },
-  'CCI (20)': {
-    short: 'Commodity Channel Index. Detecta ciclos de mercado comparando precio con su media.',
-    thresholds: '> +100 → sobrecompra. < -100 → sobreventa.',
-  },
-  'Williams %R': {
-    short: 'Williams %R. Oscilador que mide el nivel de cierre relativo al rango máx-mín reciente.',
-    thresholds: '0 a -20 → sobrecompra. -80 a -100 → sobreventa.',
-  },
-}
-
-function IndicatorTooltip({ name }: { name: string }) {
-  const info = INDICATOR_INFO[name]
-  if (!info) return null
-  return (
-    <span className="relative group inline-flex items-center ml-1">
-      <span className="text-slate-500 hover:text-blue-400 cursor-help text-[10px] border border-slate-600 hover:border-blue-500 rounded-full w-3.5 h-3.5 flex items-center justify-center transition-colors">
-        i
-      </span>
-      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 z-50 hidden group-hover:block">
-        <span className="block bg-slate-900 border border-slate-600 rounded-lg p-2.5 text-left shadow-xl">
-          <span className="block text-slate-200 text-[10px] leading-relaxed">{info.short}</span>
-          <span className="block text-slate-500 text-[10px] mt-1 leading-relaxed">{info.thresholds}</span>
-        </span>
-      </span>
-    </span>
-  )
-}
 
 function signalColor(signal: string): string {
   switch (signal) {
@@ -150,6 +85,19 @@ function signalLabel(signal: string): string {
   return map[signal] ?? signal
 }
 
+function signalDot(signal: string): string {
+  switch (signal) {
+    case 'COMPRA':
+    case 'COMPRA_FUERTE':
+      return 'bg-green-400'
+    case 'VENTA':
+    case 'VENTA_FUERTE':
+      return 'bg-red-400'
+    default:
+      return 'bg-yellow-400'
+  }
+}
+
 function reliabilityBadge(r: string) {
   const colors: Record<string, string> = {
     'ALTA':  'bg-green-600/30 text-green-300',
@@ -157,6 +105,76 @@ function reliabilityBadge(r: string) {
     'BAJA':  'bg-slate-600/30 text-slate-300',
   }
   return colors[r] ?? 'bg-slate-600/30 text-slate-300'
+}
+
+function reliabilityStars(r: string): string {
+  const map: Record<string, string> = { 'ALTA': '★★★', 'MEDIA': '★★☆', 'BAJA': '★☆☆' }
+  return map[r] ?? '—'
+}
+
+// Descripción educativa de 1 frase por indicador. El orden importa:
+// los más específicos (Stochastic) se comprueban antes que los genéricos.
+function indicatorDescription(name: string): string | null {
+  const n = name.toLowerCase()
+  if (n.includes('stoch')) return 'Stochastic RSI: aplica el oscilador estocástico sobre el RSI para anticipar giros de precio antes que el RSI clásico.'
+  if (n.includes('rsi')) return 'RSI (Índice de Fuerza Relativa): escala de 0 a 100; por encima de 70 indica sobrecompra y por debajo de 30, sobreventa.'
+  if (n.includes('macd')) return 'MACD: compara dos medias móviles exponenciales para detectar cambios de momentum y de tendencia.'
+  if (n.includes('boll')) return 'Bandas de Bollinger: miden la volatilidad; tocar la banda superior sugiere sobrecompra y la inferior, sobreventa.'
+  if (n.includes('sma')) return 'SMA (Media Móvil Simple): precio medio de las últimas N velas; si el precio la supera, la tendencia es alcista.'
+  if (n.includes('ema')) return 'EMA (Media Móvil Exponencial): como la SMA pero da más peso a las velas recientes, por lo que reacciona antes.'
+  if (n.includes('adx')) return 'ADX: mide la fuerza de la tendencia (no su dirección); por encima de 25 indica una tendencia fuerte.'
+  if (n.includes('atr')) return 'ATR (Average True Range): mide la volatilidad media del mercado; valores altos indican movimientos bruscos.'
+  if (n.includes('cci')) return 'CCI (Commodity Channel Index): detecta condiciones de sobrecompra/sobreventa y posibles giros de precio.'
+  if (n.includes('obv')) return 'OBV (On-Balance Volume): acumula el volumen según la dirección del precio para confirmar tendencias.'
+  if (n.includes('vwap')) return 'VWAP: precio medio ponderado por volumen del día; actúa como soporte/resistencia intradiario.'
+  if (n.includes('williams')) return 'Williams %R: oscilador de momentum; cerca de 0 indica sobrecompra y cerca de -100, sobreventa.'
+  return null
+}
+
+// ── Iconos SVG de pestañas ───────────────────────────────────────
+
+function IcoSignals() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  )
+}
+function IcoIndicator() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+    </svg>
+  )
+}
+function IcoPredict() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+    </svg>
+  )
+}
+function IcoPatterns() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  )
+}
+function IcoBacktest() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  )
+}
+
+const TAB_ICONS: Record<string, JSX.Element> = {
+  signals:   <IcoSignals />,
+  indicator: <IcoIndicator />,
+  predict:   <IcoPredict />,
+  patterns:  <IcoPatterns />,
+  backtest:  <IcoBacktest />,
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -284,6 +302,7 @@ export default function AnalysisPanel({ symbol }: Props) {
                 : 'text-slate-400 hover:text-white hover:bg-slate-700'
             }`}
           >
+            {TAB_ICONS[t.key]}
             {t.label}
           </button>
         ))}
@@ -382,13 +401,14 @@ export default function AnalysisPanel({ symbol }: Props) {
         )}
 
         {loading && (
-          <div className="flex items-center justify-center py-12 text-slate-400 text-sm animate-pulse">
-            Procesando análisis...
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="w-8 h-8 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
+            <p className="text-slate-400 text-sm">Procesando análisis...</p>
           </div>
         )}
 
         {!loading && tab === 'signals' && <SignalsTab data={signals} />}
-        {!loading && tab === 'indicator' && <IndicatorTab data={indResult} />}
+        {!loading && tab === 'indicator' && <IndicatorTab data={indResult} indType={indType} />}
         {!loading && tab === 'predict' && <PredictTab data={prediction} />}
         {!loading && tab === 'patterns' && <PatternsTab data={patterns} />}
         {!loading && tab === 'backtest' && <BacktestTab data={btResult} strategies={strategies} selected={selStrategy} />}
@@ -403,25 +423,75 @@ export default function AnalysisPanel({ symbol }: Props) {
 // ══════════════════════════════════════════════════════════════════
 
 function SignalsTab({ data }: { data: SignalsResult | null }) {
-  if (!data) return <EmptyState text="Pulsa 'Ejecutar análisis' para ver el panel de señales multi-indicador." />
+  if (!data) {
+    return (
+      <EmptyState
+        icon={
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+        }
+        title="Panel de señales multi-indicador"
+        description="Analiza simultáneamente RSI, MACD, Bollinger, ADX y más. Cada indicador emite una señal (Compra / Neutral / Venta) y el sistema calcula un veredicto global por consenso ponderado."
+      />
+    )
+  }
 
   const { indicators, summary } = data
+  const maxScore = summary.total * 2
+  const buyPct  = summary.total > 0 ? (summary.buy_count  / summary.total) * 100 : 0
+  const neutPct = summary.total > 0 ? (summary.neutral_count / summary.total) * 100 : 0
+  const sellPct = summary.total > 0 ? (summary.sell_count / summary.total) * 100 : 0
 
   return (
     <div className="space-y-4">
-      {/* Veredicto */}
-      <div className={`rounded-xl border p-4 text-center ${signalBg(summary.verdict)}`}>
-        <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Veredicto Global</p>
-        <p className={`text-2xl font-bold ${signalColor(summary.verdict)}`}>
-          {signalLabel(summary.verdict)}
-        </p>
-        <p className="text-xs text-slate-400 mt-1">
-          Score: {summary.score} &middot; {summary.buy_count} compra &middot; {summary.sell_count} venta &middot; {summary.neutral_count} neutral
-        </p>
+      {/* Veredicto con medidor visual */}
+      <div className={`rounded-xl border p-4 ${signalBg(summary.verdict)}`}>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Veredicto Global</p>
+            <p className={`text-2xl font-bold ${signalColor(summary.verdict)}`}>
+              {signalLabel(summary.verdict)}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Score {summary.score > 0 ? '+' : ''}{summary.score} de {maxScore} máximo
+            </p>
+          </div>
+          {/* Contadores en badges */}
+          <div className="flex gap-2 flex-wrap">
+            <span className="bg-green-600/30 text-green-300 text-[11px] font-medium px-2 py-1 rounded-lg">
+              ▲ {summary.buy_count} compra
+            </span>
+            <span className="bg-yellow-600/30 text-yellow-300 text-[11px] font-medium px-2 py-1 rounded-lg">
+              — {summary.neutral_count} neutral
+            </span>
+            <span className="bg-red-600/30 text-red-300 text-[11px] font-medium px-2 py-1 rounded-lg">
+              ▼ {summary.sell_count} venta
+            </span>
+          </div>
+        </div>
+
+        {/* Barra de sentimiento */}
+        <div className="mt-3 space-y-1">
+          <div className="flex h-3 rounded-full overflow-hidden gap-0.5 bg-slate-700">
+            {buyPct > 0 && (
+              <div className="bg-green-500 h-full transition-all" style={{ width: `${buyPct}%` }} title={`Compra: ${summary.buy_count}`} />
+            )}
+            {neutPct > 0 && (
+              <div className="bg-yellow-500 h-full transition-all" style={{ width: `${neutPct}%` }} title={`Neutral: ${summary.neutral_count}`} />
+            )}
+            {sellPct > 0 && (
+              <div className="bg-red-500 h-full transition-all" style={{ width: `${sellPct}%` }} title={`Venta: ${summary.sell_count}`} />
+            )}
+          </div>
+          <p className="text-[10px] text-slate-500 italic">
+            Score ponderado: señales fuertes ×2, señales normales ×1. Rango: −{maxScore} (bajista extremo) a +{maxScore} (alcista extremo).
+          </p>
+        </div>
       </div>
 
       {/* Tabla de indicadores */}
-      <div className="overflow-x-auto">
+      <div>
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-slate-700">
@@ -431,24 +501,30 @@ function SignalsTab({ data }: { data: SignalsResult | null }) {
             </tr>
           </thead>
           <tbody>
-            {indicators.map((ind, i) => (
-              <tr key={i} className="border-b border-slate-700/40 hover:bg-slate-700/30">
-                <td className="py-2 px-2 text-slate-200">
-                  <span className="inline-flex items-center gap-0.5">
-                    {ind.name}
-                    <IndicatorTooltip name={ind.name} />
-                  </span>
-                </td>
-                <td className="py-2 px-2 text-right font-mono text-slate-300">
-                  {typeof ind.value === 'number' ? ind.value.toFixed(4) : ind.value}
-                </td>
-                <td className="py-2 px-2 text-center">
-                  <span className={`${signalColor(ind.signal)} font-medium`}>
-                    {signalLabel(ind.signal)}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {indicators.map((ind, i) => {
+              const desc = indicatorDescription(ind.name)
+              return (
+                <tr key={i} className="border-b border-slate-700/40 hover:bg-slate-700/30">
+                  <td className="py-2 px-2 text-slate-200">
+                    <span className="inline-flex items-center gap-1.5">
+                      {ind.name}
+                      {desc && <InfoTooltip text={desc} />}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-slate-300 tabular-nums">
+                    {typeof ind.value === 'number' ? ind.value.toFixed(4) : ind.value}
+                  </td>
+                  <td className="py-2 px-2 text-center">
+                    <span className="inline-flex items-center justify-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${signalDot(ind.signal)}`} />
+                      <span className={`${signalColor(ind.signal)} font-medium`}>
+                        {signalLabel(ind.signal)}
+                      </span>
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -456,9 +532,49 @@ function SignalsTab({ data }: { data: SignalsResult | null }) {
   )
 }
 
+// ── Gauge RSI ─────────────────────────────────────────────────────
+function RsiGauge({ value }: { value: number }) {
+  const pct = Math.min(Math.max(value, 0), 100)
+  const color = pct >= 70 ? 'text-red-400' : pct <= 30 ? 'text-green-400' : 'text-yellow-400'
+  const label = pct >= 70 ? 'Sobrecompra ≥ 70' : pct <= 30 ? 'Sobreventa ≤ 30' : 'Zona neutral'
+  return (
+    <div className="space-y-2">
+      <div className="relative h-5 rounded-full overflow-hidden flex">
+        <div className="w-[30%] bg-green-900/50 border-r border-slate-700" />
+        <div className="w-[40%] bg-slate-700/30 border-r border-slate-700" />
+        <div className="w-[30%] bg-red-900/50" />
+        <div
+          className="absolute top-1 bottom-1 w-2 bg-white rounded-full shadow transition-all"
+          style={{ left: `calc(${pct}% - 4px)` }}
+        />
+      </div>
+      <div className="flex justify-between text-[9px] text-slate-500">
+        <span className="text-green-500">0 — Sobreventa</span>
+        <span>30 &nbsp;&nbsp;&nbsp; 70</span>
+        <span className="text-red-500">Sobrecompra — 100</span>
+      </div>
+      <div className="flex items-baseline gap-2 mt-1">
+        <span className={`text-3xl font-bold font-mono ${color}`}>{pct.toFixed(2)}</span>
+        <span className="text-xs text-slate-400">{label}</span>
+      </div>
+    </div>
+  )
+}
 
-function IndicatorTab({ data }: { data: AnalysisResult | null }) {
-  if (!data) return <EmptyState text="Selecciona un indicador y pulsa 'Ejecutar análisis'." />
+function IndicatorTab({ data, indType }: { data: AnalysisResult | null; indType: AnalysisType }) {
+  if (!data) {
+    return (
+      <EmptyState
+        icon={
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+          </svg>
+        }
+        title="Cálculo individual de indicador"
+        description="Selecciona RSI, MACD, SMA, EMA o Bollinger y obtén el valor actual con interpretación detallada sobre datos reales de mercado."
+      />
+    )
+  }
 
   const r = data.result as Record<string, unknown> | null
   if (!r || data.status === 'failed') {
@@ -467,23 +583,32 @@ function IndicatorTab({ data }: { data: AnalysisResult | null }) {
 
   const signal = (r.signal as string) ?? 'NEUTRAL'
   const interp = (r.interpretation as string) ?? ''
+  const numValue = typeof r.value === 'number' ? r.value : null
 
   return (
     <div className="space-y-4">
-      {/* Señal */}
+      {/* Señal principal */}
       <div className={`rounded-xl border p-4 ${signalBg(signal)}`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-slate-400 uppercase">{r.indicator as string}</p>
-            <p className={`text-xl font-bold font-mono ${signalColor(signal)}`}>
-              {typeof r.value === 'number' ? (r.value as number).toFixed(4) : String(r.value ?? '—')}
-            </p>
-          </div>
-          <span className={`text-lg font-bold ${signalColor(signal)}`}>
-            {signalLabel(signal)}
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs text-slate-400 uppercase font-medium">{r.indicator as string}</p>
+          <span className="inline-flex items-center gap-1.5">
+            <span className={`w-2.5 h-2.5 rounded-full ${signalDot(signal)}`} />
+            <span className={`text-lg font-bold ${signalColor(signal)}`}>{signalLabel(signal)}</span>
           </span>
         </div>
-        <p className="text-xs text-slate-300 mt-2">{interp}</p>
+
+        {/* RSI: gauge visual */}
+        {indType === 'RSI' && numValue !== null ? (
+          <RsiGauge value={numValue} />
+        ) : (
+          <p className={`text-2xl font-bold font-mono ${signalColor(signal)}`}>
+            {numValue !== null ? numValue.toFixed(4) : String(r.value ?? '—')}
+          </p>
+        )}
+
+        {interp && (
+          <p className="text-xs text-slate-300 mt-3 pt-3 border-t border-slate-700/50">{interp}</p>
+        )}
       </div>
 
       {/* Datos extra */}
@@ -492,6 +617,7 @@ function IndicatorTab({ data }: { data: AnalysisResult | null }) {
           if (['indicator', 'signal', 'interpretation', 'series', 'params'].includes(key)) return null
           if (key.startsWith('series_')) return null
           if (val === null || val === undefined) return null
+          if (key === 'value' && indType === 'RSI') return null  // ya mostrado en gauge
           return (
             <div key={key} className="bg-slate-900/50 rounded-lg p-3">
               <p className="text-[10px] text-slate-500 uppercase">{key.replace(/_/g, ' ')}</p>
@@ -507,8 +633,42 @@ function IndicatorTab({ data }: { data: AnalysisResult | null }) {
 }
 
 
+// ── Ring de confianza (SVG) ───────────────────────────────────────
+function ConfidenceRing({ value }: { value: number }) {
+  const pct = Math.round(value * 100)
+  const r = 28, circ = 2 * Math.PI * r
+  const offset = circ - (pct / 100) * circ
+  const color = pct >= 70 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444'
+  return (
+    <div className="relative inline-flex items-center justify-center shrink-0">
+      <svg width="72" height="72" className="-rotate-90">
+        <circle cx="36" cy="36" r={r} fill="none" stroke="#334155" strokeWidth="6" />
+        <circle cx="36" cy="36" r={r} fill="none" stroke={color} strokeWidth="6"
+          strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+        />
+      </svg>
+      <span className="absolute text-sm font-bold font-mono text-white">{pct}%</span>
+    </div>
+  )
+}
+
 function PredictTab({ data }: { data: PredictionResult | null }) {
-  if (!data) return <EmptyState text="Pulsa 'Ejecutar análisis' para obtener una predicción ML." />
+  const [showHow, setShowHow] = useState(false)
+
+  if (!data) {
+    return (
+      <EmptyState
+        icon={
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        }
+        title="Predicción ML de dirección de precio"
+        description="Modelo Random Forest entrenado con indicadores técnicos como features. Predice si el precio subirá o bajará en las próximas N velas. Validado con cross-validation de 5 folds."
+      />
+    )
+  }
 
   if (data.prediction === 'INSUFFICIENT_DATA') {
     return <div className="text-yellow-400 text-sm">{data.message}</div>
@@ -518,34 +678,84 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
 
   return (
     <div className="space-y-4">
-      {/* Predicción principal */}
-      <div className={`rounded-xl border p-5 text-center ${isBullish ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-        <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Predicción ({data.horizon} velas)</p>
-        <p className={`text-3xl font-bold ${isBullish ? 'text-green-400' : 'text-red-400'}`}>
-          {isBullish ? 'ALCISTA' : 'BAJISTA'}
+      {/* Disclaimer prominente */}
+      <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2 flex items-start gap-2">
+        <svg className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <p className="text-[11px] text-amber-300/80">
+          {data.disclaimer ?? 'Esta predicción es orientativa. El modelo ML no garantiza resultados futuros. No constituye asesoramiento financiero.'}
         </p>
-        <div className="mt-3 flex items-center justify-center gap-3">
-          <div>
-            <p className="text-[10px] text-slate-500 uppercase">Confianza</p>
-            <p className="text-lg font-bold font-mono text-white">{(data.confidence * 100).toFixed(1)}%</p>
-          </div>
-          {data.cv_accuracy !== undefined && (
-            <div>
-              <p className="text-[10px] text-slate-500 uppercase">Precisión CV</p>
-              <p className="text-lg font-bold font-mono text-white">{(data.cv_accuracy * 100).toFixed(1)}%</p>
+      </div>
+
+      {/* Predicción principal con ring */}
+      <div className={`rounded-xl border p-5 ${isBullish ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+        <div className="flex items-center gap-5">
+          <ConfidenceRing value={data.confidence} />
+          <div className="flex-1">
+            <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">
+              Predicción — {data.horizon} velas adelante
+            </p>
+            <p className={`text-3xl font-bold ${isBullish ? 'text-green-400' : 'text-red-400'}`}>
+              {isBullish ? '▲ ALCISTA' : '▼ BAJISTA'}
+            </p>
+            <div className="flex flex-wrap gap-4 mt-2">
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase">Confianza del modelo</p>
+                <p className="text-sm font-bold font-mono text-white">{(data.confidence * 100).toFixed(1)}%</p>
+              </div>
+              {data.cv_accuracy !== undefined && (
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase">Precisión CV (5-fold)</p>
+                  <p className="text-sm font-bold font-mono text-white">
+                    {(data.cv_accuracy * 100).toFixed(1)}%
+                    {data.cv_std !== undefined && (
+                      <span className="text-slate-500 font-normal ml-1">± {(data.cv_std * 100).toFixed(1)}%</span>
+                    )}
+                  </p>
+                </div>
+              )}
+              {data.model && (
+                <div>
+                  <p className="text-[10px] text-slate-500 uppercase">Modelo</p>
+                  <p className="text-sm font-mono text-slate-300">{data.model}</p>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
+      </div>
+
+      {/* ¿Cómo funciona? — colapsable */}
+      <div className="border border-slate-700 rounded-lg overflow-hidden">
+        <button
+          onClick={() => setShowHow(!showHow)}
+          className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700/30 transition-colors"
+        >
+          <span className="font-medium">¿Cómo funciona este modelo?</span>
+          <svg className={`w-4 h-4 text-slate-500 transition-transform ${showHow ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {showHow && (
+          <div className="px-4 py-3 bg-slate-900/40 border-t border-slate-700 space-y-2 text-[11px] text-slate-400 leading-relaxed">
+            <p><span className="text-slate-300 font-medium">Algoritmo:</span> Random Forest — ensemble de árboles de decisión. Combina múltiples modelos débiles para reducir overfitting y mejorar la generalización.</p>
+            <p><span className="text-slate-300 font-medium">Features:</span> Indicadores técnicos calculados sobre las últimas N velas: RSI, MACD, Bollinger, ATR, ADX, EMA, volumen relativo y variaciones de precio.</p>
+            <p><span className="text-slate-300 font-medium">Target:</span> Variable binaria — ¿sube o baja el precio en las próximas {data.horizon} velas?</p>
+            <p><span className="text-slate-300 font-medium">Validación CV:</span> Cross-validation de 5 folds sobre el histórico disponible. La precisión ± std es la métrica más fiable (evita data leakage). La confianza refleja el % de votos del ensemble en la predicción actual.</p>
+          </div>
+        )}
       </div>
 
       {/* Feature importances */}
       {data.features_importance && data.features_importance.length > 0 && (
         <div>
-          <p className="text-xs text-slate-400 uppercase mb-2">Importancia de variables</p>
+          <p className="text-xs text-slate-400 uppercase mb-2">Variables más influyentes</p>
           <div className="space-y-1.5">
             {data.features_importance.map((fi) => (
               <div key={fi.feature} className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-300 w-28 truncate">{fi.feature}</span>
+                <span className="text-[11px] text-slate-300 w-28 truncate" title={fi.feature}>{fi.feature}</span>
                 <div className="flex-1 bg-slate-700 rounded-full h-2">
                   <div
                     className="bg-blue-500 h-2 rounded-full transition-all"
@@ -560,23 +770,36 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
           </div>
         </div>
       )}
-
-      {/* Disclaimer */}
-      {data.disclaimer && (
-        <p className="text-[10px] text-slate-500 italic mt-2">{data.disclaimer}</p>
-      )}
     </div>
   )
 }
 
 
 function PatternsTab({ data }: { data: PatternsResult | null }) {
-  if (!data) return <EmptyState text="Pulsa 'Ejecutar análisis' para detectar patrones de velas." />
+  if (!data) {
+    return (
+      <EmptyState
+        icon={
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        }
+        title="Detección de patrones de velas"
+        description="Identifica formaciones chartistas clásicas (Doji, Hammer, Engulfing, etc.) en las últimas velas. Cada patrón incluye señal alcista/bajista y fiabilidad histórica."
+      />
+    )
+  }
 
   if (data.patterns.length === 0) {
     return (
-      <div className="text-center py-8 text-slate-400 text-sm">
-        No se detectaron patrones en las últimas velas.
+      <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+        <svg className="w-8 h-8 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p className="text-slate-400 text-sm">No se detectaron patrones en las últimas velas.</p>
+        <p className="text-[11px] text-slate-500 max-w-xs">
+          Los patrones requieren condiciones específicas de precio y volumen. Prueba con otro intervalo temporal.
+        </p>
       </div>
     )
   }
@@ -584,21 +807,23 @@ function PatternsTab({ data }: { data: PatternsResult | null }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400">
-        {data.patterns.length} patrón(es) detectado(s) en las últimas velas ({data.total_candles} analizadas)
+        {data.patterns.length} patrón(es) detectado(s) — {data.total_candles} velas analizadas
       </p>
       {data.patterns.map((p, i) => (
         <div key={i} className={`rounded-lg border p-3 ${signalBg(p.signal)}`}>
           <div className="flex items-start justify-between">
-            <div>
+            <div className="flex-1 mr-3">
               <p className="text-sm font-semibold text-white">{p.name}</p>
               <p className="text-xs text-slate-300 mt-0.5">{p.description}</p>
             </div>
-            <div className="flex flex-col items-end gap-1">
-              <span className={`text-xs font-bold ${signalColor(p.signal)}`}>
-                {signalLabel(p.signal)}
+            <div className="flex flex-col items-end gap-1.5 shrink-0">
+              <span className="inline-flex items-center gap-1">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${signalDot(p.signal)}`} />
+                <span className={`text-xs font-bold ${signalColor(p.signal)}`}>{signalLabel(p.signal)}</span>
               </span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full ${reliabilityBadge(p.reliability)}`}>
-                {p.reliability}
+              <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full ${reliabilityBadge(p.reliability)}`}>
+                <span>{reliabilityStars(p.reliability)}</span>
+                <span>{p.reliability}</span>
               </span>
             </div>
           </div>
@@ -613,22 +838,29 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
   if (!data) {
     const desc = strategies.find((s) => s.key === selected)?.description
     return (
-      <EmptyState text={desc
-        ? `Estrategia seleccionada: ${desc}\n\nPulsa 'Ejecutar análisis' para simular.`
-        : "Selecciona una estrategia y pulsa 'Ejecutar análisis' para simular el backtesting."
-      } />
+      <EmptyState
+        icon={
+          <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        }
+        title="Simulación de estrategia sobre histórico"
+        description={desc ?? 'Selecciona una estrategia de trading y simula su rendimiento sobre datos históricos reales. Compara el resultado con la estrategia pasiva Buy & Hold.'}
+      />
     )
   }
 
   const isPositive = data.total_return_pct >= 0
   const beatsBuyHold = data.total_return_pct > data.buy_hold_return_pct
+  const alpha = data.total_return_pct - data.buy_hold_return_pct
+  const maxAbs = Math.max(Math.abs(data.total_return_pct), Math.abs(data.buy_hold_return_pct), 1)
 
   return (
     <div className="space-y-4">
-      {/* Descripción */}
+      {/* Descripción de estrategia */}
       <div className="bg-slate-900/50 rounded-lg p-3">
-        <p className="text-xs text-slate-400 uppercase">{data.strategy}</p>
-        <p className="text-xs text-slate-300 mt-1">{data.description}</p>
+        <p className="text-xs text-slate-400 uppercase mb-1">{data.strategy}</p>
+        <p className="text-xs text-slate-300">{data.description}</p>
       </div>
 
       {/* Periodo analizado */}
@@ -640,7 +872,6 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
               <span className="text-slate-300 font-mono">{data.start_date}</span>
               <span className="mx-1 text-slate-600">→</span>
               <span className="text-slate-300 font-mono">{data.end_date}</span>
-              <span className="text-slate-500 ml-1">(UTC)</span>
             </span>
           )}
           {data.candles_count && (
@@ -658,31 +889,58 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
         </div>
       )}
 
-      {/* Métricas principales */}
+      {/* Comparativa visual retorno estrategia vs Buy & Hold */}
+      <div className="space-y-2 bg-slate-900/30 rounded-lg p-3">
+        <p className="text-[10px] text-slate-500 uppercase mb-3">Retorno — Estrategia vs Buy & Hold</p>
+        {[
+          { label: 'Estrategia', value: data.total_return_pct, color: isPositive ? 'bg-blue-600' : 'bg-red-700' },
+          { label: 'Buy & Hold', value: data.buy_hold_return_pct, color: data.buy_hold_return_pct >= 0 ? 'bg-slate-500' : 'bg-red-900' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400 w-20 truncate">{label}</span>
+            <div className="flex-1 h-6 bg-slate-700 rounded overflow-hidden">
+              <div
+                className={`h-full rounded flex items-center justify-end pr-2 transition-all ${color}`}
+                style={{ width: `${Math.max((Math.abs(value) / maxAbs) * 100, 4)}%` }}
+              >
+                <span className="text-[10px] font-bold text-white whitespace-nowrap">
+                  {value >= 0 ? '+' : ''}{value.toFixed(2)}%
+                </span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Alpha badge */}
+      <div className={`flex items-center gap-2 rounded-lg px-3 py-2 ${beatsBuyHold ? 'bg-green-900/30 border border-green-700/30' : 'bg-red-900/20 border border-red-700/20'}`}>
+        <svg className={`w-4 h-4 ${beatsBuyHold ? 'text-green-400' : 'text-red-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d={beatsBuyHold ? 'M5 10l7-7m0 0l7 7m-7-7v18' : 'M19 14l-7 7m0 0l-7-7m7 7V3'} />
+        </svg>
+        <p className="text-xs text-slate-300">
+          <span className={`font-bold ${beatsBuyHold ? 'text-green-400' : 'text-red-400'}`}>
+            {beatsBuyHold ? 'Supera' : 'No supera'} al Buy & Hold
+          </span>
+          {' '}— Alpha:{' '}
+          <span className={`font-mono font-medium ${alpha >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {alpha >= 0 ? '+' : ''}{alpha.toFixed(2)}%
+          </span>
+          <span className="text-slate-500 ml-1 text-[10px]">(retorno estrategia − retorno pasivo)</span>
+        </p>
+      </div>
+
+      {/* Métricas */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <MetricCard
-          label="Retorno total"
-          value={`${isPositive ? '+' : ''}${data.total_return_pct.toFixed(2)}%`}
-          color={isPositive ? 'text-green-400' : 'text-red-400'}
-        />
-        <MetricCard
-          label="Buy & Hold"
-          value={`${data.buy_hold_return_pct >= 0 ? '+' : ''}${data.buy_hold_return_pct.toFixed(2)}%`}
-          color={data.buy_hold_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}
-        />
+        <MetricCard label="Retorno total" value={`${isPositive ? '+' : ''}${data.total_return_pct.toFixed(2)}%`} color={isPositive ? 'text-green-400' : 'text-red-400'} />
+        <MetricCard label="Buy & Hold" value={`${data.buy_hold_return_pct >= 0 ? '+' : ''}${data.buy_hold_return_pct.toFixed(2)}%`} color={data.buy_hold_return_pct >= 0 ? 'text-green-400' : 'text-red-400'} />
         <MetricCard label="Win Rate" value={`${data.win_rate_pct.toFixed(1)}%`} color="text-white" />
         <MetricCard label="Max Drawdown" value={`-${data.max_drawdown_pct.toFixed(2)}%`} color="text-red-400" />
       </div>
-
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricCard label="Total trades" value={String(data.total_trades)} color="text-white" />
         <MetricCard label="Cap. inicial" value={`$${data.initial_capital.toLocaleString()}`} color="text-slate-300" />
         <MetricCard label="Cap. final" value={`$${data.final_capital.toLocaleString()}`} color={isPositive ? 'text-green-400' : 'text-red-400'} />
-        <MetricCard
-          label="vs Buy&Hold"
-          value={beatsBuyHold ? 'Supera' : 'No supera'}
-          color={beatsBuyHold ? 'text-green-400' : 'text-red-400'}
-        />
+        <MetricCard label="Avg Win / Avg Loss" value={`${data.avg_win_pct.toFixed(1)}% / ${data.avg_loss_pct.toFixed(1)}%`} color="text-slate-300" />
       </div>
 
       {/* Últimas trades */}
@@ -710,7 +968,8 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
                       {t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct}%
                     </td>
                     <td className="py-1.5 px-2 text-center">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${t.result === 'WIN' ? 'bg-green-600/30 text-green-300' : 'bg-red-600/30 text-red-300'}`}>
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${t.result === 'WIN' ? 'bg-green-600/30 text-green-300' : 'bg-red-600/30 text-red-300'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${t.result === 'WIN' ? 'bg-green-400' : 'bg-red-400'}`} />
                         {t.result}
                       </span>
                     </td>
@@ -736,10 +995,15 @@ function MetricCard({ label, value, color }: { label: string; value: string; col
 }
 
 
-function EmptyState({ text }: { text: string }) {
+function EmptyState({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
   return (
-    <div className="flex items-center justify-center py-12 text-center">
-      <p className="text-slate-400 text-sm max-w-md whitespace-pre-line">{text}</p>
+    <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
+      <div className="text-slate-600">{icon}</div>
+      <div>
+        <p className="text-slate-300 text-sm font-medium">{title}</p>
+        <p className="text-slate-500 text-xs max-w-md mt-1 leading-relaxed">{description}</p>
+      </div>
+      <p className="text-[10px] text-slate-600 mt-1">Pulsa "Ejecutar análisis" para comenzar</p>
     </div>
   )
 }

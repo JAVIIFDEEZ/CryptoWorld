@@ -37,13 +37,23 @@ import time
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
 # ── Configuración ──────────────────────────────────────────────────
 
 KUCOIN_BASE_URL = "https://api.kucoin.com"
-REQUEST_TIMEOUT = 10  # segundos
+REQUEST_TIMEOUT = 15  # segundos (aumentado para Docker DNS)
+
+_RETRY_STRATEGY = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+    raise_on_status=False,
+)
 MAX_CANDLES_PER_CALL = 1500
 
 # Mapa de intervalos Binance → KuCoin
@@ -105,6 +115,9 @@ class KuCoinPublicClient:
             "Accept": "application/json",
             "User-Agent": "CryptoWorld/1.0",
         })
+        adapter = HTTPAdapter(max_retries=_RETRY_STRATEGY)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def get_klines(
         self,
