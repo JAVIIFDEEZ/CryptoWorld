@@ -13,6 +13,7 @@ import { formatPrice, formatCompact, formatNumber } from '@/utils/format'
 import DeltaChip from '@/components/ui/DeltaChip'
 import OhlcvChart from '@/components/OhlcvChart'
 import AnalysisPanel from '@/components/AnalysisPanel'
+import Skeleton from '@/components/ui/Skeleton'
 
 function AssetDetailPage() {
   const { symbol } = useParams<{ symbol: string }>()
@@ -63,8 +64,19 @@ function AssetDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-20 text-slate-400 animate-pulse">
-        Cargando...
+      <div>
+        <Skeleton className="h-4 w-40 mb-6" />
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 mb-6">
+          <div className="flex items-center gap-4">
+            <Skeleton className="w-12 h-12 rounded-full shrink-0" />
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-6 w-44" />
+            </div>
+          </div>
+        </div>
+        <Skeleton className="h-80 rounded-xl mb-6" />
+        <Skeleton className="h-64 rounded-xl" />
       </div>
     )
   }

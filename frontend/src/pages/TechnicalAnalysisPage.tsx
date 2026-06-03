@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import AnalysisPanel from '@/components/AnalysisPanel'
+import Skeleton from '@/components/ui/Skeleton'
 
 function TechnicalAnalysisPage() {
   const [assets, setAssets] = useState<CryptoAsset[]>([])
@@ -80,7 +81,14 @@ function TechnicalAnalysisPage() {
       </header>
 
       {isLoadingAssets && (
-        <p className="text-slate-400 text-sm animate-pulse">Cargando activos...</p>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-24 rounded-xl" />
+            ))}
+          </div>
+          <Skeleton className="h-72 rounded-xl" />
+        </div>
       )}
 
       {error && (
