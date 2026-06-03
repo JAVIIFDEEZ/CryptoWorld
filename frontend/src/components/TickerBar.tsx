@@ -17,6 +17,10 @@ const SCROLL_SPEED = 0.6
 
 export default function TickerBar() {
   const [assets, setAssets] = useState<CryptoAsset[]>([])
+  // Dirección del último cambio de precio por símbolo, para el flash visual.
+  const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
+  const prevPricesRef = useRef<Map<string, number>>(new Map())
+  const flashTimerRef = useRef<number>(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const innerRef  = useRef<HTMLDivElement>(null)
   const offsetRef = useRef(0)
@@ -30,7 +34,26 @@ export default function TickerBar() {
     async function load() {
       try {
         const data = await analysisService.getAssets()
-        if (!cancelled) setAssets(data)
+        if (cancelled) return
+
+        // Detectar variaciones de precio respecto a la carga anterior.
+        const prev = prevPricesRef.current
+        const next: Record<string, 'up' | 'down'> = {}
+        for (const a of data) {
+          const price = parseFloat(a.current_price)
+          const before = prev.get(a.symbol)
+          if (before !== undefined && price !== before) {
+            next[a.symbol] = price > before ? 'up' : 'down'
+          }
+          prev.set(a.symbol, price)
+        }
+
+        setAssets(data)
+        if (Object.keys(next).length > 0) {
+          setFlashes(next)
+          window.clearTimeout(flashTimerRef.current)
+          flashTimerRef.current = window.setTimeout(() => setFlashes({}), 1200)
+        }
       } catch {
         // silencioso — si falla, ticker queda vacío
       }
@@ -38,7 +61,7 @@ export default function TickerBar() {
 
     load()
     const timer = window.setInterval(load, 60_000) // refresco cada 60s
-    return () => { cancelled = true; clearInterval(timer) }
+    return () => { cancelled = true; clearInterval(timer); window.clearTimeout(flashTimerRef.current) }
   }, [])
 
   // ── Animación continua ────────────────────────────────────────
@@ -86,6 +109,7 @@ export default function TickerBar() {
           const fmt    = price >= 1
             ? price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             : price.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+          const flash  = flashes[a.symbol]
 
           return (
             <Link
@@ -97,7 +121,7 @@ export default function TickerBar() {
                 <img src={a.logo_url} alt="" className="w-4 h-4 rounded-full" />
               )}
               <span className="text-slate-400 font-medium">{a.symbol}</span>
-              <span className="text-slate-200 font-mono">${fmt}</span>
+              <span className={`text-slate-200 font-mono rounded px-0.5 ${flash === 'up' ? 'cw-flash-up' : flash === 'down' ? 'cw-flash-down' : ''}`}>${fmt}</span>
               <span className={`font-mono font-medium ${isUp ? 'text-green-400' : 'text-red-400'}`}>
                 {isUp ? '▲' : '▼'}{Math.abs(change).toFixed(2)}%
               </span>

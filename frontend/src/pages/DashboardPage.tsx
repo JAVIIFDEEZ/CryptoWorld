@@ -18,6 +18,7 @@ import { formatCompact, formatPrice } from '@/utils/format'
 import StatCard from '@/components/ui/StatCard'
 import Gauge from '@/components/ui/Gauge'
 import Sparkline from '@/components/ui/Sparkline'
+import EmptyState from '@/components/ui/EmptyState'
 import DeltaChip from '@/components/ui/DeltaChip'
 import { SkeletonRow } from '@/components/ui/Skeleton'
 
@@ -105,7 +106,7 @@ function DashboardPage() {
   const bearishCount = assets.length - bullishCount
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 cw-fade-in-up">
       {/* Cabecera */}
       <div>
         <h1 className="text-2xl font-bold text-white">Dashboard</h1>
@@ -125,9 +126,9 @@ function DashboardPage() {
           <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
             {overview ? (
               <>
-                <StatCard label="Cap. total" value={formatCompact(overview.total_market_cap_usd)} tone="brand" />
-                <StatCard label="Volumen 24h" value={formatCompact(overview.total_volume_24h_usd)} tone="brand" />
-                <StatCard label="Dominancia BTC" value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`} tone="brand" />
+                <StatCard label="Cap. total" value={formatCompact(overview.total_market_cap_usd)} animateValue={Number(overview.total_market_cap_usd)} format={formatCompact} tone="brand" />
+                <StatCard label="Volumen 24h" value={formatCompact(overview.total_volume_24h_usd)} animateValue={Number(overview.total_volume_24h_usd)} format={formatCompact} tone="brand" />
+                <StatCard label="Dominancia BTC" value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`} animateValue={parseFloat(overview.btc_dominance_pct)} format={(n) => `${n.toFixed(1)}%`} tone="brand" />
               </>
             ) : (
               <>
@@ -156,16 +157,20 @@ function DashboardPage() {
           Catálogo
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatCard label="Activos monitorizados" value={String(assets.length)} />
+          <StatCard label="Activos monitorizados" value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
           <StatCard
             label="Alcistas (24h)"
             value={String(bullishCount)}
+            animateValue={bullishCount}
+            format={(n) => String(Math.round(n))}
             sub={assets.length ? `${((bullishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
             tone="positive"
           />
           <StatCard
             label="Bajistas (24h)"
             value={String(bearishCount)}
+            animateValue={bearishCount}
+            format={(n) => String(Math.round(n))}
             sub={assets.length ? `${((bearishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
             tone="negative"
           />
@@ -244,9 +249,7 @@ function MoversCard({
           ))}
         </div>
       ) : assets.length === 0 ? (
-        <div className="px-5 py-10 text-center text-slate-500 text-sm">
-          Sin datos en esta categoría todavía.
-        </div>
+        <EmptyState variant="plain" title="Sin datos en esta categoría todavía." />
       ) : (
         <div className="divide-y divide-slate-700/50">
           {assets.map((asset) => (

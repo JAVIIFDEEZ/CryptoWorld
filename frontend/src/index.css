@@ -75,3 +75,36 @@
 .cw-ticker-track:hover {
   animation-play-state: paused;
 }
+
+/* ── Entrada de secciones/tarjetas (fade + slide-up) ── */
+@keyframes cw-fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.cw-fade-in-up {
+  animation: cw-fade-in-up 0.4s ease-out both;
+}
+
+/* ── Flash de precio al actualizar cotizaciones (ticker) ── */
+@keyframes cw-flash-up {
+  0%   { background-color: rgba(34, 197, 94, 0.35); }
+  100% { background-color: transparent; }
+}
+@keyframes cw-flash-down {
+  0%   { background-color: rgba(239, 68, 68, 0.35); }
+  100% { background-color: transparent; }
+}
+
+.cw-flash-up   { animation: cw-flash-up 1.1s ease-out; }
+.cw-flash-down { animation: cw-flash-down 1.1s ease-out; }
+
+/* Respeta la preferencia de reducir movimiento del sistema operativo. */
+@media (prefers-reduced-motion: reduce) {
+  .cw-fade-in-up,
+  .cw-flash-up,
+  .cw-flash-down,
+  .cw-ticker-track {
+    animation: none !important;
+  }
+}

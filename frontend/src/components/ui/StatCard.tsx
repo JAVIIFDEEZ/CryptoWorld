@@ -8,6 +8,7 @@
 
 import type { ReactNode } from 'react'
 import DeltaChip from './DeltaChip'
+import { useCountUp } from '@/hooks/useCountUp'
 
 interface StatCardProps {
   label: string
@@ -17,10 +18,17 @@ interface StatCardProps {
   delta?: number | string | null
   /** Color del valor principal. */
   tone?: 'default' | 'positive' | 'negative' | 'brand'
+  /** Si se pasa junto a `format`, el valor se anima con count-up desde 0. */
+  animateValue?: number
+  /** Formateador para `animateValue` (ej. formatCompact). */
+  format?: (n: number) => string
   children?: ReactNode
 }
 
-export default function StatCard({ label, value, sub, delta, tone = 'default', children }: StatCardProps) {
+export default function StatCard({ label, value, sub, delta, tone = 'default', animateValue, format, children }: StatCardProps) {
+  // Hook llamado siempre (regla de hooks); solo se usa si hay animateValue.
+  const animated = useCountUp(animateValue ?? 0)
+  const displayValue = animateValue !== undefined && format ? format(animated) : value
   const valueColor =
     tone === 'positive'
       ? 'text-positive'
@@ -45,7 +53,7 @@ export default function StatCard({ label, value, sub, delta, tone = 'default', c
         <p className="text-slate-500 text-xs font-medium uppercase tracking-wide">{label}</p>
         {delta !== undefined && delta !== null && <DeltaChip value={delta} size="sm" />}
       </div>
-      <p className={`text-2xl font-bold font-mono tabular-nums mt-1.5 tracking-tight ${valueColor}`}>{value}</p>
+      <p className={`text-2xl font-bold font-mono tabular-nums mt-1.5 tracking-tight ${valueColor}`}>{displayValue}</p>
       {sub && <p className="text-slate-500 text-xs mt-1">{sub}</p>}
       {children && <div className="mt-3">{children}</div>}
     </div>

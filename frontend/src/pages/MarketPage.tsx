@@ -134,9 +134,9 @@ function MarketPage() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard label="Activos listados" value={String(assets.length)} />
-        <StatCard label="Alcistas (24h)" value={String(bullishCount)} tone="positive" />
-        <StatCard label="Bajistas (24h)" value={String(bearishCount)} tone="negative" />
+        <StatCard label="Activos listados" value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
+        <StatCard label="Alcistas (24h)" value={String(bullishCount)} animateValue={bullishCount} format={(n) => String(Math.round(n))} tone="positive" />
+        <StatCard label="Bajistas (24h)" value={String(bearishCount)} animateValue={bearishCount} format={(n) => String(Math.round(n))} tone="negative" />
       </div>
 
       {/* Sección: Mi seguimiento */}
