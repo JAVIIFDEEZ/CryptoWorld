@@ -46,6 +46,9 @@ gunicorn==22.0.0
 dj-database-url==2.2.0          # Parsea DATABASE_URL (Railway lo inyecta automáticamente)
 whitenoise==6.7.0               # Sirve archivos estáticos sin Nginx (Railway no tiene Nginx)
 
+# ── Email transaccional ───────────────────────────────────────────
+django-anymail[sendgrid]==10.3  # Integración API nativa SendGrid (mejor que SMTP puro)
+
 # ── Celery — Worker asíncrono para alertas y tareas periódicas ─────
 celery==5.4.0
 redis==5.0.8                    # Cliente Redis para Python (broker/backend)
