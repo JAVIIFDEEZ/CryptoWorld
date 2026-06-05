@@ -76,6 +76,8 @@ from core.application.use_cases.verify_email import VerifyEmailUseCase
 from core.application.use_cases.send_verification_email import SendVerificationEmailUseCase
 from core.application.use_cases.request_password_reset import RequestPasswordResetUseCase
 from core.application.use_cases.confirm_password_reset import ConfirmPasswordResetUseCase
+from core.tasks import send_verification_email as send_verification_email_task
+from core.tasks import send_password_reset_email as send_password_reset_email_task
 from core.application.use_cases.change_password import ChangePasswordUseCase
 from core.application.use_cases.setup_2fa import Setup2FAUseCase
 from core.application.use_cases.enable_2fa import Enable2FAUseCase
@@ -197,8 +199,8 @@ class RegisterView(APIView):
             # la establecemos aquí usando el método del repositorio.
             user_repo.set_password(output_dto.id, validated["password"])
 
-            # Enviar email de verificaciÃ³n (se imprime en consola en desarrollo)
-            SendVerificationEmailUseCase().execute(output_dto.id)
+            # Enviar email de verificación de forma asíncrona (no bloquea la respuesta HTTP)
+            send_verification_email_task.delay(output_dto.id)
 
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -378,7 +380,7 @@ class ResendVerificationEmailView(APIView):
         from core.infrastructure.persistence.models import User as UserModel
         user = UserModel.objects.filter(email=serializer.validated_data["email"]).first()
         if user and not user.is_email_verified:
-            SendVerificationEmailUseCase().execute(user.pk)
+            send_verification_email_task.delay(user.pk)
 
         return Response(
             {"message": "Si el email existe y no está verificado, recibirás un enlace."},
@@ -398,9 +400,8 @@ class PasswordResetRequestView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        RequestPasswordResetUseCase().execute(
-            PasswordResetRequestDTO(email=serializer.validated_data["email"])
-        )
+        # Enviar email de forma asíncrona (no revela si el email existe)
+        send_password_reset_email_task.delay(serializer.validated_data["email"])
 
         # Respuesta siempre igual para no revelar si el email existe
         return Response(
