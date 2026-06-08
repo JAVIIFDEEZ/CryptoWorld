@@ -5,7 +5,8 @@ Puede llamarse también manualmente si el usuario solicita reenviar el email.
 """
 
 from django.core import signing
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from django.conf import settings
 
 from core.infrastructure.persistence.models import User as UserModel
@@ -19,6 +20,8 @@ class SendVerificationEmailUseCase:
     No depende de last_login ni del hash de contraseña, por lo que no se
     invalida al hacer login. Expira tras EMAIL_VERIFICATION_TIMEOUT segundos
     (por defecto 3 días).
+
+    Envía tanto versión texto plano como HTML (email responsive oscuro).
     """
 
     def execute(self, user_id: int) -> None:
@@ -44,16 +47,23 @@ class SendVerificationEmailUseCase:
             f"?token={token}"
         )
 
-        send_mail(
-            subject="[CryptoWorld] Confirma tu dirección de email",
-            message=(
-                f"Hola {user.username},\n\n"
-                f"Gracias por registrarte en CryptoWorld.\n\n"
-                f"Confirma tu email haciendo clic en el siguiente enlace:\n{verify_url}\n\n"
-                f"El enlace es válido durante 3 días.\n\n"
-                f"El equipo de CryptoWorld"
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
+        context = {"username": user.username, "verify_url": verify_url}
+
+        html_body = render_to_string("email/verification.html", context)
+        text_body = (
+            f"Hola {user.username},\n\n"
+            f"Gracias por registrarte en CryptoWorld.\n\n"
+            f"Confirma tu email haciendo clic en el siguiente enlace:\n{verify_url}\n\n"
+            f"El enlace es válido durante 3 días.\n\n"
+            f"El equipo de CryptoWorld"
         )
+
+        msg = EmailMultiAlternatives(
+            subject="[CryptoWorld] Confirma tu dirección de email",
+            body=text_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[user.email],
+        )
+        msg.attach_alternative(html_body, "text/html")
+        msg.send(fail_silently=False)
+

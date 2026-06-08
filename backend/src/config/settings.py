@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist", # Blacklist para logout seguro
     "corsheaders",                             # CORS para comunicación con el frontend
     "django_celery_beat",                      # Scheduler persistente para Celery beat
+    "anymail",                                 # SendGrid API nativa (mejor que SMTP)
 
     # Apps del proyecto (capa interfaces expone los endpoints)
     "core",
@@ -79,7 +80,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "core" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -190,31 +191,38 @@ CORS_ALLOWED_ORIGINS = re.split(r'[,\s]+', os.environ.get(
 CORS_ALLOW_CREDENTIALS = True
 
 # ------------------------------------------------------------------
-# Email — Console backend en desarrollo, SMTP en producción
-# Para producción: define EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-#   + EMAIL_HOST, EMAIL_PORT, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, EMAIL_USE_TLS
+# Email — SendGrid API (producción) / Console (desarrollo)
+#
+# En producción: define SENDGRID_API_KEY en las variables de entorno.
+# El backend cambia automáticamente a la API nativa de SendGrid,
+# que ofrece mejor deliverability, tracking y webhooks que SMTP puro.
+#
+# En desarrollo (sin SENDGRID_API_KEY): usa ConsoleEmailBackend que
+# imprime los emails en los logs de Docker → visible con:
+#   docker compose logs -f backend
 # ------------------------------------------------------------------
-EMAIL_BACKEND = os.environ.get(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend",  # Imprime en logs Docker
-)
-# Default orientado a Brevo (SMTP relay). SendGrid: EMAIL_HOST=smtp.sendgrid.net
-# y EMAIL_HOST_USER="apikey". Todos los valores son sobreescribibles por entorno.
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp-relay.brevo.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
-EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False") == "True"
-EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-# El remitente debe ser una direccion VERIFICADA en el proveedor y puede diferir
-# del usuario SMTP (en SendGrid el usuario es literalmente "apikey", que no es un
-# remitente valido). Por eso se configura de forma independiente.
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+
+if SENDGRID_API_KEY:
+    # Producción: SendGrid Web API v3 (no SMTP)
+    EMAIL_BACKEND = "anymail.backends.sendgrid.EmailBackend"
+    ANYMAIL = {
+        "SENDGRID_API_KEY": SENDGRID_API_KEY,
+        # Webhook secret para verificar eventos (bounce, open, click)
+        # Configurable en SendGrid → Settings → Mail Settings → Event Webhook
+        "WEBHOOK_SECRET": os.environ.get("SENDGRID_WEBHOOK_SECRET", ""),
+    }
+else:
+    # Desarrollo: imprime emails en logs Docker (sin necesidad de cuenta SMTP)
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# El remitente debe estar VERIFICADO como Single Sender o Domain en SendGrid.
+# Formato recomendado: "Nombre <email@dominio.com>"
 DEFAULT_FROM_EMAIL = os.environ.get(
-    "DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@cryptoworld.com"
+    "DEFAULT_FROM_EMAIL", "CryptoWorld <noreply@cryptoworld.com>"
 )
 
-# URL del frontend para construir links en emails
+# URL del frontend para construir links en emails (verificación, reset)
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
 # ── APIs externas ──────────────────────────────────────────────────

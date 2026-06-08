@@ -8,7 +8,8 @@ Usa el generador de tokens estándar de Django para máxima seguridad.
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from django.conf import settings
 
 import logging
@@ -44,22 +45,27 @@ class RequestPasswordResetUseCase:
             f"?uid={uid}&token={token}"
         )
 
-        send_mail(
-            subject="[CryptoWorld] Restablece tu contraseña",
-            message=(
-                f"Hola {user.username},\n\n"
-                f"Hemos recibido una solicitud para restablecer la contraseña de tu cuenta.\n\n"
-                f"Usa el siguiente enlace (válido 24 horas):\n{reset_url}\n\n"
-                f"Si no solicitaste esto, ignora este mensaje.\n\n"
-                f"El equipo de CryptoWorld"
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
+        context = {"username": user.username, "reset_url": reset_url}
+
+        html_body = render_to_string("email/password_reset.html", context)
+        text_body = (
+            f"Hola {user.username},\n\n"
+            f"Hemos recibido una solicitud para restablecer la contraseña de tu cuenta.\n\n"
+            f"Usa el siguiente enlace (válido 24 horas):\n{reset_url}\n\n"
+            f"Si no solicitaste esto, ignora este mensaje.\n\n"
+            f"El equipo de CryptoWorld"
         )
 
+        msg = EmailMultiAlternatives(
+            subject="[CryptoWorld] Restablece tu contraseña",
+            body=text_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[user.email],
+        )
+        msg.attach_alternative(html_body, "text/html")
+        msg.send(fail_silently=False)
+
         # En desarrollo el email se imprime en los logs Docker (console backend)
-        # Este print hace el link visible de forma prominente
         logger.info(
             "\n[DEV] PasswordReset para %s\n  Link: %s\n",
             user.email,
