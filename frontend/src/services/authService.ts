@@ -130,6 +130,14 @@ export const authService = {
   },
 
   /**
+   * Cerrar sesión: añade el refresh token a la blacklist del backend.
+   * POST /api/auth/logout/
+   */
+  async logout(refreshToken: string): Promise<void> {
+    await apiClient.post('/auth/logout/', { refresh_token: refreshToken })
+  },
+
+  /**
    * Confirmar email desde el token recibido por correo.
    * GET /api/auth/verify-email/?token=...
    */

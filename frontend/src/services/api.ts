@@ -16,6 +16,8 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 
 const TOKEN_KEY = 'cw_access_token'
+const REFRESH_KEY = 'cw_refresh_token'
+const USER_KEY = 'cw_user'
 
 /**
  * Instancia de Axios configurada para el backend CryptoWorld.
@@ -48,23 +50,70 @@ apiClient.interceptors.request.use(
 )
 
 /**
- * Interceptor de respuesta:
- * Centraliza el manejo de errores de autenticación.
- * Si el backend devuelve 401, limpia la sesión y recarga la app.
+ * Renovación del access token con el refresh token almacenado.
  *
- * Esto evita tener que manejar el 401 en cada servicio/componente.
+ * Se usa axios "crudo" (no apiClient) para no pasar por los interceptores
+ * y evitar bucles. SimpleJWT rota el refresh token (ROTATE_REFRESH_TOKENS),
+ * así que si la respuesta incluye uno nuevo también se persiste.
+ */
+let refreshPromise: Promise<string | null> | null = null
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = localStorage.getItem(REFRESH_KEY)
+  if (!refreshToken) return null
+  try {
+    const { data } = await axios.post<{ access: string; refresh?: string }>(
+      `${apiClient.defaults.baseURL}/auth/token/refresh/`,
+      { refresh: refreshToken },
+      { timeout: 10_000 },
+    )
+    localStorage.setItem(TOKEN_KEY, data.access)
+    if (data.refresh) {
+      localStorage.setItem(REFRESH_KEY, data.refresh)
+    }
+    return data.access
+  } catch {
+    return null
+  }
+}
+
+function clearSessionAndRedirect(): void {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+  localStorage.removeItem(USER_KEY)
+  if (window.location.pathname !== '/login') {
+    window.location.href = '/login'
+  }
+}
+
+/**
+ * Interceptor de respuesta:
+ * Ante un 401, intenta renovar el access token con el refresh token y
+ * reintenta la petición original una vez (single-flight: si hay varias
+ * peticiones en vuelo comparten la misma renovación). Solo si el refresh
+ * también falla se considera la sesión caducada y se redirige al login.
  */
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Token expirado o inválido — limpiar sesión
-      localStorage.removeItem(TOKEN_KEY)
-      localStorage.removeItem('cw_user')
-      // Redirigir al login sin usar react-router (no tenemos acceso al navigate aquí)
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+  async (error) => {
+    const original = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined
+    const status = error.response?.status
+    // Los propios endpoints de login/refresh no deben disparar renovaciones
+    const isAuthEndpoint =
+      !!original?.url && (original.url.includes('/auth/login') || original.url.includes('/auth/token/refresh'))
+
+    if (status === 401 && original && !original._retry && !isAuthEndpoint) {
+      original._retry = true
+
+      refreshPromise = refreshPromise ?? refreshAccessToken()
+      const newToken = await refreshPromise
+      refreshPromise = null
+
+      if (newToken) {
+        original.headers.Authorization = `Bearer ${newToken}`
+        return apiClient(original)
       }
+      clearSessionAndRedirect()
     }
     return Promise.reject(error)
   },
