@@ -65,6 +65,11 @@ urlpatterns = [
     path("auth/2fa/enable/", views.Enable2FAView.as_view(), name="auth-2fa-enable"),
     path("auth/2fa/disable/", views.Disable2FAView.as_view(), name="auth-2fa-disable"),
     path("auth/2fa/login/", views.Verify2FALoginView.as_view(), name="auth-2fa-login"),
+    path(
+        "auth/2fa/recovery-codes/",
+        views.Regenerate2FARecoveryCodesView.as_view(),
+        name="auth-2fa-recovery-codes",
+    ),
 
     # ── Assets ──────────────────────────────────────────────────────
     path("assets/", views.AssetListView.as_view(), name="asset-list"),
@@ -83,6 +88,7 @@ urlpatterns = [
 
     # ── Market Intelligence ─────────────────────────────────────────
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
+    path("market/fx/", views.FxRatesView.as_view(), name="market-fx"),
     path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
     path("blockchain/multichain/", views.MultiChainStatsView.as_view(), name="blockchain-multichain"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),

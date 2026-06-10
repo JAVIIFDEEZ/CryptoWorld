@@ -164,6 +164,15 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
+    # Rate limiting por IP en endpoints sensibles de auth (ScopedRateThrottle
+    # declarado view a view). El contador vive en la cache Redis.
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_login": "10/min",
+        "auth_register": "10/hour",
+        "auth_password_reset": "5/hour",
+        "auth_resend_verification": "5/hour",
+        "auth_2fa": "10/min",
+    },
 }
 
 # ------------------------------------------------------------------
@@ -290,6 +299,11 @@ CELERY_BEAT_SCHEDULE = {
     "sync-market-prices": {
         "task": "core.tasks.sync_market_prices",
         "schedule": 300.0,  # segundos — cada 5 min (8 640 calls/mes < 10 000 límite Demo)
+    },
+    # Resumen semanal del mercado para usuarios suscritos (lunes 08:00 UTC)
+    "send-market-digest": {
+        "task": "core.tasks.send_market_digest",
+        "schedule": crontab(day_of_week=1, hour=8, minute=0),
     },
 }
 

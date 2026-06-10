@@ -126,9 +126,26 @@ class Disable2FASerializer(serializers.Serializer):
 
 
 class Verify2FALoginSerializer(serializers.Serializer):
-    """Valida el cuerpo de POST /api/auth/2fa/login/."""
+    """
+    Valida el cuerpo de POST /api/auth/2fa/login/.
+
+    Acepta totp_code (app autenticadora) o recovery_code (código de
+    recuperación de un solo uso); exactamente uno de los dos.
+    """
     pre_auth_token = serializers.CharField()
-    totp_code = serializers.CharField(min_length=6, max_length=6)
+    totp_code = serializers.CharField(
+        min_length=6, max_length=6, required=False, allow_blank=True, default=""
+    )
+    recovery_code = serializers.CharField(
+        max_length=20, required=False, allow_blank=True, default=""
+    )
+
+    def validate(self, data: dict) -> dict:
+        if bool(data.get("totp_code")) == bool(data.get("recovery_code")):
+            raise serializers.ValidationError(
+                "Debes enviar totp_code o recovery_code (solo uno de los dos)."
+            )
+        return data
 
 
 # ── Assets ─────────────────────────────────────────────────────────
