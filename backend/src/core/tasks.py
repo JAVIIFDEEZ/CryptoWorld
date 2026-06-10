@@ -19,6 +19,31 @@ from celery import shared_task
 logger = logging.getLogger(__name__)
 
 
+def dispatch_task(task, *args, **kwargs):
+    """
+    Encolar una tarea en Celery con degradación a ejecución síncrona.
+
+    En despliegues sin worker Celery o sin broker Redis accesible
+    (p. ej. Railway con solo el servicio web), `.delay()` lanza
+    OperationalError y la tarea se perdería — el usuario nunca
+    recibiría su email de verificación. Este helper detecta el fallo
+    de conexión al broker y ejecuta la tarea en el propio proceso web
+    como plan B, de forma que el envío de emails nunca depende de que
+    la infraestructura asíncrona esté disponible.
+    """
+    try:
+        return task.delay(*args, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "Broker Celery no disponible (%s). Ejecutando %s de forma síncrona.",
+            exc,
+            task.name,
+        )
+        # .apply() ejecuta en el proceso actual; los errores quedan en el
+        # EagerResult (no se propagan) y la propia tarea ya los loguea.
+        return task.apply(args=args, kwargs=kwargs)
+
+
 @shared_task(
     name="core.tasks.check_price_alerts",
     bind=True,
