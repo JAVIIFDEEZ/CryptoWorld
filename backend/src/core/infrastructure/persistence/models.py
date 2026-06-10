@@ -109,6 +109,35 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.email
 
 
+class TwoFactorRecoveryCode(models.Model):
+    """
+    Código de recuperación 2FA de un solo uso.
+
+    Se generan 10 al activar 2FA y permiten completar el login si el
+    usuario pierde el dispositivo TOTP. Solo se almacena el hash
+    (mismo esquema PBKDF2 que las contraseñas); el código en claro se
+    muestra una única vez al usuario.
+    """
+
+    user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        related_name="recovery_codes",
+    )
+    code_hash = models.CharField(max_length=128)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "two_factor_recovery_codes"
+        verbose_name = "Código de recuperación 2FA"
+        verbose_name_plural = "Códigos de recuperación 2FA"
+
+    def __str__(self) -> str:
+        state = "usado" if self.used_at else "disponible"
+        return f"RecoveryCode({self.user_id}, {state})"
+
+
 # ── Modelos del dominio criptográfico ─────────────────────────────
 
 class CryptoAsset(models.Model):

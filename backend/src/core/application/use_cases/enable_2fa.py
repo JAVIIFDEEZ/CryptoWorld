@@ -9,19 +9,22 @@ import pyotp
 
 from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import Enable2FADTO
+from core.application.use_cases.recovery_codes import generate_recovery_codes
 
 
 class Enable2FAUseCase:
     """
     Segundo paso del setup de 2FA: confirmación.
 
-    Valida que el código TOTP coincide con el secreto guardado
-    y, si es correcto, activa el 2FA para el usuario.
+    Valida que el código TOTP coincide con el secreto guardado y, si es
+    correcto, activa el 2FA y genera los códigos de recuperación de un
+    solo uso, que se devuelven en claro (única vez que existen así).
     """
 
-    def execute(self, dto: Enable2FADTO) -> None:
+    def execute(self, dto: Enable2FADTO) -> list[str]:
         """
         Activa 2FA si el código TOTP es válido.
+        Devuelve los códigos de recuperación generados.
 
         Lanza ValueError si:
         - El usuario no existe
@@ -48,3 +51,5 @@ class Enable2FAUseCase:
 
         user.is_2fa_enabled = True
         user.save(update_fields=["is_2fa_enabled"])
+
+        return generate_recovery_codes(user)
