@@ -90,6 +90,11 @@ urlpatterns = [
     # ── Admin ───────────────────────────────────────────────────────
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),
     path("admin/users/<int:user_id>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),
+    path(
+        "admin/users/<int:user_id>/resend-verification/",
+        admin_views.AdminResendVerificationView.as_view(),
+        name="admin-user-resend-verification",
+    ),
     path("admin/market/sync/", admin_views.AdminMarketSyncView.as_view(), name="admin-market-sync"),
 
     # ── Portfolio ────────────────────────────────────────────────────
