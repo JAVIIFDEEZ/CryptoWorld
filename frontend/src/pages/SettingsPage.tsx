@@ -1,11 +1,96 @@
-import { useState } from 'react'
+/**
+ * pages/SettingsPage.tsx — Ajustes de cuenta.
+ *
+ * Secciones:
+ *   - Perfil: datos de la cuenta con estado de verificación y antigüedad.
+ *   - Preferencias: moneda fiat persistida en el backend (PATCH /auth/me/).
+ *   - Notificaciones: toggles persistidos (alertas de precio, resúmenes).
+ *   - Seguridad: cambio de contraseña y acceso a la gestión de 2FA.
+ *   - Zona de peligro: eliminación de cuenta con confirmación por contraseña.
+ *
+ * Las preferencias se guardan automáticamente al cambiarlas (con feedback
+ * por toast); el resto de acciones usa formularios explícitos.
+ */
+
+import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
-import { authService } from '@/services/authService'
+import {
+  authService,
+  type PreferredCurrency,
+  type UserMeResponse,
+} from '@/services/authService'
+import { useToast } from '@/components/ui/Toast'
+import PasswordInput from '@/components/ui/PasswordInput'
+
+const CURRENCY_OPTIONS: { value: PreferredCurrency; label: string }[] = [
+  { value: 'usd', label: 'Dólar Estadounidense (USD - $)' },
+  { value: 'eur', label: 'Euro (EUR - €)' },
+  { value: 'gbp', label: 'Libra Esterlina (GBP - £)' },
+]
+
+/** Toggle accesible reutilizado por las dos preferencias de notificación. */
+function ToggleSwitch({
+  checked,
+  disabled,
+  onChange,
+  label,
+  description,
+}: {
+  checked: boolean
+  disabled?: boolean
+  onChange: (value: boolean) => void
+  label: string
+  description: string
+}) {
+  return (
+    <label className={`flex items-center justify-between gap-4 ${disabled ? 'opacity-60' : 'cursor-pointer'}`}>
+      <div>
+        <span className="block text-sm font-medium text-slate-300">{label}</span>
+        <span className="block text-xs text-slate-500">{description}</span>
+      </div>
+      <div className="relative shrink-0">
+        <input
+          type="checkbox"
+          className="sr-only peer"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+      </div>
+    </label>
+  )
+}
+
+function VerifiedBadge({ verified }: { verified: boolean }) {
+  return verified ? (
+    <span className="inline-flex items-center gap-1 text-xs font-medium bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      Verificado
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-xs font-medium bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
+      Sin verificar
+    </span>
+  )
+}
 
 export default function SettingsPage() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { showToast } = useToast()
+
+  // Perfil y preferencias cargadas del backend (fuente de verdad)
+  const [me, setMe] = useState<UserMeResponse | null>(null)
+  const [isLoadingMe, setIsLoadingMe] = useState(true)
+  const [isSavingPrefs, setIsSavingPrefs] = useState(false)
+  const [isResendingVerification, setIsResendingVerification] = useState(false)
 
   // Modal para borrar cuenta
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -13,19 +98,62 @@ export default function SettingsPage() {
   const [deleteError, setDeleteError] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
 
-  // Estado para cambio de contraseña
+  // Cambio de contraseña
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordError, setPasswordError] = useState('')
-  const [passwordSuccess, setPasswordSuccess] = useState('')
   const [isChangingPassword, setIsChangingPassword] = useState(false)
 
-  // Visibilidad de contraseñas
-  const [showOldPassword, setShowOldPassword] = useState(false)
-  const [showNewPassword, setShowNewPassword] = useState(false)
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [showDeletePassword, setShowDeletePassword] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    authService
+      .me()
+      .then((data) => {
+        if (!cancelled) setMe(data)
+      })
+      .catch(() => {
+        if (!cancelled) showToast('No se pudo cargar la información de la cuenta.', 'error')
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingMe(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showToast])
+
+  /** Guardar una preferencia y sincronizar el estado con la respuesta. */
+  const savePreference = async (payload: Parameters<typeof authService.updatePreferences>[0]) => {
+    if (!me) return
+    const previous = me
+    // Optimista: aplicar en UI, revertir si el backend falla
+    setMe({ ...me, ...payload })
+    setIsSavingPrefs(true)
+    try {
+      const updated = await authService.updatePreferences(payload)
+      setMe(updated)
+      showToast('Preferencias guardadas.', 'success')
+    } catch {
+      setMe(previous)
+      showToast('No se pudieron guardar las preferencias.', 'error')
+    } finally {
+      setIsSavingPrefs(false)
+    }
+  }
+
+  const handleResendVerification = async () => {
+    if (!me) return
+    setIsResendingVerification(true)
+    try {
+      await authService.resendVerificationEmail(me.email)
+      showToast('Email de verificación reenviado. Revisa tu bandeja de entrada.', 'success')
+    } catch {
+      showToast('No se pudo reenviar el email de verificación.', 'error')
+    } finally {
+      setIsResendingVerification(false)
+    }
+  }
 
   const handleDeleteAccount = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -47,7 +175,6 @@ export default function SettingsPage() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setPasswordError('')
-    setPasswordSuccess('')
 
     if (newPassword !== confirmPassword) {
       setPasswordError('Las nuevas contraseñas no coinciden.')
@@ -61,7 +188,7 @@ export default function SettingsPage() {
     setIsChangingPassword(true)
     try {
       await authService.changePassword(oldPassword, newPassword)
-      setPasswordSuccess('Contraseña actualizada correctamente.')
+      showToast('Contraseña actualizada correctamente.', 'success')
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
@@ -73,13 +200,17 @@ export default function SettingsPage() {
     }
   }
 
+  const memberSince = me
+    ? new Date(me.date_joined).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
+
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 h-full overflow-y-auto">
       <h1 className="text-3xl font-bold text-white mb-2">Ajustes</h1>
       <p className="text-slate-400 mb-8">Administra la información de tu perfil y las opciones de seguridad.</p>
 
       <div className="space-y-8">
-        
+
         {/* SECCIÓN PERFIL */}
         <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
           <h2 className="text-xl font-semibold text-white mb-6">Información del Perfil</h2>
@@ -87,30 +218,71 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Nombre de usuario</label>
               <div className="bg-slate-900/50 px-4 py-3 rounded-lg border border-slate-700 text-slate-300">
-                {user?.username}
+                {me?.username ?? user?.username}
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Correo electrónico</label>
-              <div className="bg-slate-900/50 px-4 py-3 rounded-lg border border-slate-700 text-slate-300">
-                {user?.email}
+              <div className="bg-slate-900/50 px-4 py-3 rounded-lg border border-slate-700 text-slate-300 flex items-center justify-between gap-2">
+                <span className="truncate">{me?.email ?? user?.email}</span>
+                {me && <VerifiedBadge verified={me.is_email_verified} />}
               </div>
             </div>
           </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
+            {memberSince && <span>Miembro desde el {memberSince}</span>}
+            {me && (
+              <span className="inline-flex items-center gap-1.5">
+                2FA:
+                {me.is_2fa_enabled ? (
+                  <span className="text-emerald-400 font-medium">activado</span>
+                ) : (
+                  <span className="text-slate-400 font-medium">desactivado</span>
+                )}
+              </span>
+            )}
+          </div>
+
+          {me && !me.is_email_verified && (
+            <div className="mt-4 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-sm text-amber-300">
+                Tu email aún no está verificado. Algunas funciones, como las notificaciones, requieren verificación.
+              </p>
+              <button
+                onClick={handleResendVerification}
+                disabled={isResendingVerification}
+                className="shrink-0 text-sm bg-amber-600 hover:bg-amber-700 disabled:bg-amber-800 text-white px-4 py-2 rounded-lg transition-colors"
+              >
+                {isResendingVerification ? 'Enviando...' : 'Reenviar email'}
+              </button>
+            </div>
+          )}
         </section>
 
         {/* SECCIÓN PREFERENCIAS */}
         <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-          <h2 className="text-xl font-semibold text-white mb-2">Preferencias Generales</h2>
-          <p className="text-slate-400 text-sm mb-6">Personaliza tu experiencia en la plataforma.</p>
-          
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xl font-semibold text-white">Preferencias Generales</h2>
+            {isSavingPrefs && <span className="text-xs text-slate-500">Guardando...</span>}
+          </div>
+          <p className="text-slate-400 text-sm mb-6">Personaliza tu experiencia en la plataforma. Los cambios se guardan automáticamente.</p>
+
           <div className="max-w-md space-y-6">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Moneda principal (Fiat)</label>
-              <select className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full outline-none">
-                <option value="usd">Dólar Estadounidense (USD - $)</option>
-                <option value="eur">Euro (EUR - €)</option>
-                <option value="gbp">Libra Esterlina (GBP - £)</option>
+              <label htmlFor="preferred-currency" className="block text-sm font-medium text-slate-300 mb-2">
+                Moneda principal (Fiat)
+              </label>
+              <select
+                id="preferred-currency"
+                value={me?.preferred_currency ?? 'usd'}
+                disabled={isLoadingMe || isSavingPrefs}
+                onChange={(e) => savePreference({ preferred_currency: e.target.value as PreferredCurrency })}
+                className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full outline-none disabled:opacity-60"
+              >
+                {CURRENCY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
               <p className="text-xs text-slate-500 mt-2">La moneda base para mostrar precios y tu portafolio.</p>
             </div>
@@ -120,32 +292,26 @@ export default function SettingsPage() {
         {/* SECCIÓN NOTIFICACIONES */}
         <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
           <h2 className="text-xl font-semibold text-white mb-2">Notificaciones</h2>
-          <p className="text-slate-400 text-sm mb-6">Administra qué alertas deseas recibir por correo electrónico.</p>
-          
+          <p className="text-slate-400 text-sm mb-6">Administra qué avisos deseas recibir por correo electrónico.</p>
+
           <div className="space-y-4 max-w-md">
-            <label className="flex items-center justify-between cursor-pointer">
-              <div>
-                <span className="block text-sm font-medium text-slate-300">Alertas de precio</span>
-                <span className="block text-xs text-slate-500">Recibe un correo cuando tus activos seleccionados cambien bruscamente (+/- 5%).</span>
-              </div>
-              <div className="relative">
-                <input type="checkbox" className="sr-only peer" defaultChecked />
-                <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </div>
-            </label>
-            
+            <ToggleSwitch
+              checked={me?.notify_price_alerts ?? true}
+              disabled={isLoadingMe || isSavingPrefs}
+              onChange={(value) => savePreference({ notify_price_alerts: value })}
+              label="Alertas de precio"
+              description="Recibe un correo cuando se dispare una de tus alertas de precio configuradas."
+            />
+
             <hr className="border-slate-700 my-4" />
 
-            <label className="flex items-center justify-between cursor-pointer">
-              <div>
-                <span className="block text-sm font-medium text-slate-300">Novedades y Noticias</span>
-                <span className="block text-xs text-slate-500">Recibe resúmenes semanales sobre el estado del mercado.</span>
-              </div>
-              <div className="relative">
-                <input type="checkbox" className="sr-only peer" />
-                <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </div>
-            </label>
+            <ToggleSwitch
+              checked={me?.notify_market_digest ?? false}
+              disabled={isLoadingMe || isSavingPrefs}
+              onChange={(value) => savePreference({ notify_market_digest: value })}
+              label="Novedades y Noticias"
+              description="Recibe resúmenes periódicos sobre el estado del mercado."
+            />
           </div>
         </section>
 
@@ -153,89 +319,43 @@ export default function SettingsPage() {
         <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
           <h2 className="text-xl font-semibold text-white mb-2">Cambiar Contraseña</h2>
           <p className="text-slate-400 text-sm mb-6">Actualiza la contraseña utilizada para acceder a tu cuenta.</p>
-          
+
           <form onSubmit={handleChangePassword} className="max-w-md space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">Contraseña actual</label>
-              <div className="relative">
-                <input
-                  type={showOldPassword ? "text" : "password"}
-                  required
-                  value={oldPassword}
-                  onChange={(e) => setOldPassword(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 pr-10 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Introducir contraseña actual"
-                />
-                <button
-                  type="button"
-                  aria-label={showOldPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                  aria-pressed={showOldPassword}
-                  onClick={() => setShowOldPassword(!showOldPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
-                >
-                  {showOldPassword ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.242m4.242 4.242L9.88 9.88" /></svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                  )}
-                </button>
-              </div>
+              <label htmlFor="current-password" className="block text-sm font-medium text-slate-300 mb-1">Contraseña actual</label>
+              <PasswordInput
+                id="current-password"
+                value={oldPassword}
+                onChange={setOldPassword}
+                required
+                autoComplete="current-password"
+                placeholder="Introducir contraseña actual"
+              />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">Nueva contraseña</label>
-              <div className="relative">
-                <input
-                  type={showNewPassword ? "text" : "password"}
-                  required
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 pr-10 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Mínimo 8 caracteres"
-                />
-                <button
-                  type="button"
-                  aria-label={showNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                  aria-pressed={showNewPassword}
-                  onClick={() => setShowNewPassword(!showNewPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
-                >
-                  {showNewPassword ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.242m4.242 4.242L9.88 9.88" /></svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                  )}
-                </button>
-              </div>
+              <label htmlFor="new-password" className="block text-sm font-medium text-slate-300 mb-1">Nueva contraseña</label>
+              <PasswordInput
+                id="new-password"
+                value={newPassword}
+                onChange={setNewPassword}
+                required
+                autoComplete="new-password"
+                placeholder="Mínimo 8 caracteres"
+              />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1">Confirmar nueva contraseña</label>
-              <div className="relative">
-                <input
-                  type={showConfirmPassword ? "text" : "password"}
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 pr-10 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Repetir nueva contraseña"
-                />
-                <button
-                  type="button"
-                  aria-label={showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                  aria-pressed={showConfirmPassword}
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
-                >
-                  {showConfirmPassword ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.242m4.242 4.242L9.88 9.88" /></svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                  )}
-                </button>
-              </div>
+              <label htmlFor="confirm-password" className="block text-sm font-medium text-slate-300 mb-1">Confirmar nueva contraseña</label>
+              <PasswordInput
+                id="confirm-password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+                required
+                autoComplete="new-password"
+                placeholder="Repetir nueva contraseña"
+              />
             </div>
 
             {passwordError && <p className="text-sm text-red-400 mt-2">{passwordError}</p>}
-            {passwordSuccess && <p className="text-sm text-emerald-400 mt-2">{passwordSuccess}</p>}
 
             <div className="pt-2">
               <button
@@ -291,41 +411,26 @@ export default function SettingsPage() {
 
       {/* MODAL DE CONFIRMACIÓN DE BORRADO */}
       {showDeleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" role="dialog" aria-modal="true">
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-md w-full shadow-2xl">
             <h3 className="text-xl font-bold text-white mb-4">¿Estás absolutamente seguro?</h3>
             <p className="text-slate-300 text-sm mb-6">
               Esta acción <strong>no se puede deshacer</strong>. Se eliminará permanentemente tu cuenta y se borrarán todos tus datos de nuestros servidores.
             </p>
-            
+
             <form onSubmit={handleDeleteAccount}>
               <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-400 mb-2">
+                <label htmlFor="delete-password" className="block text-sm font-medium text-slate-400 mb-2">
                   Escribe tu contraseña para confirmar
                 </label>
-                <div className="relative">
-                  <input
-                    type={showDeletePassword ? "text" : "password"}
-                    required
-                    value={deletePassword}
-                    onChange={(e) => setDeletePassword(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-md px-4 py-2 pr-10 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-white outline-none"
-                    placeholder="Tu contraseña actual"
-                  />
-                  <button
-                    type="button"
-                    aria-label={showDeletePassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                    aria-pressed={showDeletePassword}
-                    onClick={() => setShowDeletePassword(!showDeletePassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
-                  >
-                    {showDeletePassword ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.242m4.242 4.242L9.88 9.88" /></svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                    )}
-                  </button>
-                </div>
+                <PasswordInput
+                  id="delete-password"
+                  value={deletePassword}
+                  onChange={setDeletePassword}
+                  required
+                  tone="danger"
+                  placeholder="Tu contraseña actual"
+                />
                 {deleteError && (
                   <p className="mt-2 text-sm text-red-400">{deleteError}</p>
                 )}
@@ -333,7 +438,11 @@ export default function SettingsPage() {
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowDeleteModal(false)}
+                  onClick={() => {
+                    setShowDeleteModal(false)
+                    setDeletePassword('')
+                    setDeleteError('')
+                  }}
                   className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-700 transition-colors"
                 >
                   Cancelar
