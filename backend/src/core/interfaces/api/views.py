@@ -29,6 +29,7 @@ from core.interfaces.api.serializers import (
     LoginSerializer,
     LogoutSerializer,
     VerifyEmailSerializer,
+    UpdatePreferencesSerializer,
     PasswordResetRequestSerializer,
     ResendVerificationRequestSerializer,
     PasswordResetConfirmSerializer,
@@ -76,6 +77,7 @@ from core.application.use_cases.verify_email import VerifyEmailUseCase
 from core.application.use_cases.send_verification_email import SendVerificationEmailUseCase
 from core.application.use_cases.request_password_reset import RequestPasswordResetUseCase
 from core.application.use_cases.confirm_password_reset import ConfirmPasswordResetUseCase
+from core.tasks import dispatch_task
 from core.tasks import send_verification_email as send_verification_email_task
 from core.tasks import send_password_reset_email as send_password_reset_email_task
 from core.application.use_cases.change_password import ChangePasswordUseCase
@@ -199,8 +201,9 @@ class RegisterView(APIView):
             # la establecemos aquí usando el método del repositorio.
             user_repo.set_password(output_dto.id, validated["password"])
 
-            # Enviar email de verificación de forma asíncrona (no bloquea la respuesta HTTP)
-            send_verification_email_task.delay(output_dto.id)
+            # Enviar email de verificación de forma asíncrona (no bloquea la
+            # respuesta HTTP); con fallback síncrono si no hay worker Celery.
+            dispatch_task(send_verification_email_task, output_dto.id)
 
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -315,25 +318,45 @@ class LogoutView(APIView):
 
 class MeView(APIView):
     """
-    GET /api/auth/me/ â€” Devolver los datos del usuario autenticado.
+    GET   /api/auth/me/ — Devolver los datos del usuario autenticado.
+    PATCH /api/auth/me/ — Actualizar preferencias de cuenta (moneda,
+                          notificaciones). Solo campos de preferencias:
+                          email/username no se modifican por aquí.
     """
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _serialize(user) -> dict:
+        return {
+            "id": user.pk,
+            "email": user.email,
+            "username": user.username,
+            "is_active": user.is_active,
+            "is_email_verified": user.is_email_verified,
+            "is_2fa_enabled": user.is_2fa_enabled,
+            "is_admin": user.is_staff or user.is_superuser,
+            "date_joined": user.date_joined.isoformat(),
+            "preferred_currency": user.preferred_currency,
+            "notify_price_alerts": user.notify_price_alerts,
+            "notify_market_digest": user.notify_market_digest,
+        }
+
     def get(self, request):
+        return Response(self._serialize(request.user), status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        serializer = UpdatePreferencesSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
         user = request.user
-        return Response(
-            {
-                "id": user.pk,
-                "email": user.email,
-                "username": user.username,
-                "is_active": user.is_active,
-                "is_email_verified": user.is_email_verified,
-                "is_2fa_enabled": user.is_2fa_enabled,
-                "is_admin": user.is_staff or user.is_superuser,
-                "date_joined": user.date_joined.isoformat(),
-            },
-            status=status.HTTP_200_OK,
-        )
+        updated_fields = []
+        for field, value in serializer.validated_data.items():
+            setattr(user, field, value)
+            updated_fields.append(field)
+        user.save(update_fields=updated_fields)
+
+        return Response(self._serialize(user), status=status.HTTP_200_OK)
 
 
 class VerifyEmailView(APIView):
@@ -380,7 +403,7 @@ class ResendVerificationEmailView(APIView):
         from core.infrastructure.persistence.models import User as UserModel
         user = UserModel.objects.filter(email=serializer.validated_data["email"]).first()
         if user and not user.is_email_verified:
-            send_verification_email_task.delay(user.pk)
+            dispatch_task(send_verification_email_task, user.pk)
 
         return Response(
             {"message": "Si el email existe y no está verificado, recibirás un enlace."},
@@ -401,7 +424,7 @@ class PasswordResetRequestView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         # Enviar email de forma asíncrona (no revela si el email existe)
-        send_password_reset_email_task.delay(serializer.validated_data["email"])
+        dispatch_task(send_password_reset_email_task, serializer.validated_data["email"])
 
         # Respuesta siempre igual para no revelar si el email existe
         return Response(

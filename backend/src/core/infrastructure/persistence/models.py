@@ -73,6 +73,27 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="True cuando el usuario finaliza el setup de 2FA.",
     )
 
+    # ── Preferencias de cuenta ──────────────────────────────────────
+    class Currency(models.TextChoices):
+        USD = "usd", "Dólar Estadounidense (USD)"
+        EUR = "eur", "Euro (EUR)"
+        GBP = "gbp", "Libra Esterlina (GBP)"
+
+    preferred_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices,
+        default=Currency.USD,
+        help_text="Moneda fiat de referencia para mostrar precios.",
+    )
+    notify_price_alerts = models.BooleanField(
+        default=True,
+        help_text="Recibir emails cuando se dispare una alerta de precio.",
+    )
+    notify_market_digest = models.BooleanField(
+        default=False,
+        help_text="Recibir resúmenes periódicos del estado del mercado.",
+    )
+
     objects = UserManager()
 
     # Django usará 'email' para autenticación en lugar de 'username'

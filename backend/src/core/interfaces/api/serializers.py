@@ -95,6 +95,26 @@ class ChangePasswordSerializer(serializers.Serializer):
         return data
 
 
+class UpdatePreferencesSerializer(serializers.Serializer):
+    """
+    Valida el cuerpo de PATCH /api/auth/me/.
+
+    Todos los campos son opcionales: el cliente envía solo lo que cambia.
+    """
+    preferred_currency = serializers.ChoiceField(
+        choices=["usd", "eur", "gbp"], required=False
+    )
+    notify_price_alerts = serializers.BooleanField(required=False)
+    notify_market_digest = serializers.BooleanField(required=False)
+
+    def validate(self, data: dict) -> dict:
+        if not data:
+            raise serializers.ValidationError(
+                "Debes enviar al menos una preferencia para actualizar."
+            )
+        return data
+
+
 class Enable2FASerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/2fa/enable/."""
     totp_code = serializers.CharField(min_length=6, max_length=6)
