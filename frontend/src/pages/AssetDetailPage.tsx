@@ -9,13 +9,15 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService, type AssetInfo } from '@/services/marketService'
-import { formatPrice, formatCompact, formatNumber } from '@/utils/format'
+import { formatNumber } from '@/utils/format'
+import { useCurrency } from '@/hooks/useCurrency'
 import DeltaChip from '@/components/ui/DeltaChip'
 import OhlcvChart from '@/components/OhlcvChart'
 import AnalysisPanel from '@/components/AnalysisPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function AssetDetailPage() {
+  const { formatPrice, formatCompact } = useCurrency()
   const { symbol } = useParams<{ symbol: string }>()
   const navigate = useNavigate()
 
@@ -164,6 +166,7 @@ function RangeBar({
   low: string | null | undefined
   high: string | null | undefined
 }>) {
+  const { formatPrice } = useCurrency()
   const c = Number.parseFloat(String(current ?? '0'))
   const l = Number.parseFloat(String(low ?? '0'))
   const h = Number.parseFloat(String(high ?? '0'))
@@ -284,6 +287,7 @@ function MetricRow({ label, children }: Readonly<{ label: string; children: Reac
 }
 
 function ProjectCard({ info, symbol }: Readonly<{ info: AssetInfo; symbol: string }>) {
+  const { formatPrice } = useCurrency()
   const [expanded, setExpanded] = useState(false)
 
   const plainDescription = info.description

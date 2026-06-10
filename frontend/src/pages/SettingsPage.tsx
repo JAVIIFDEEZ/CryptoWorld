@@ -21,6 +21,7 @@ import {
   type UserMeResponse,
 } from '@/services/authService'
 import { useToast } from '@/components/ui/Toast'
+import { useCurrency } from '@/hooks/useCurrency'
 import PasswordInput from '@/components/ui/PasswordInput'
 
 const CURRENCY_OPTIONS: { value: PreferredCurrency; label: string }[] = [
@@ -85,6 +86,7 @@ export default function SettingsPage() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const { setCurrency } = useCurrency()
 
   // Perfil y preferencias cargadas del backend (fuente de verdad)
   const [me, setMe] = useState<UserMeResponse | null>(null)
@@ -133,6 +135,11 @@ export default function SettingsPage() {
     try {
       const updated = await authService.updatePreferences(payload)
       setMe(updated)
+      // Propagar la moneda al contexto global: los precios de toda la
+      // app cambian al instante, sin esperar a recargar.
+      if (payload.preferred_currency) {
+        setCurrency(updated.preferred_currency)
+      }
       showToast('Preferencias guardadas.', 'success')
     } catch {
       setMe(previous)

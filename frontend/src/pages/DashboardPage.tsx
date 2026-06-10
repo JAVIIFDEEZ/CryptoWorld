@@ -14,7 +14,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService, type MarketOverview } from '@/services/marketService'
 import { getWatchlist, type WatchlistItem } from '@/services/watchlistService'
-import { formatCompact, formatPrice } from '@/utils/format'
+import { useCurrency } from '@/hooks/useCurrency'
 import StatCard from '@/components/ui/StatCard'
 import Gauge from '@/components/ui/Gauge'
 import Sparkline from '@/components/ui/Sparkline'
@@ -40,6 +40,7 @@ function greeting(): string {
 
 function DashboardPage() {
   const { user } = useAuth()
+  const { formatCompact } = useCurrency()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [overview, setOverview] = useState<MarketOverview | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -262,6 +263,7 @@ function MoversCard({
 }
 
 function WatchlistRow({ item, spark }: Readonly<{ item: WatchlistItem; spark?: number[] }>) {
+  const { formatPrice } = useCurrency()
   const isPositive = parseFloat(item.price_change_24h ?? '0') >= 0
   return (
     <Link
@@ -293,6 +295,7 @@ function WatchlistRow({ item, spark }: Readonly<{ item: WatchlistItem; spark?: n
 }
 
 function MoverRow({ asset, spark }: { asset: CryptoAsset; spark?: number[] }) {
+  const { formatPrice } = useCurrency()
   const isPositive = parseFloat(asset.price_change_24h ?? '0') >= 0
   return (
     <div className="flex items-center gap-3 px-5 py-3 hover:bg-slate-700/30 transition-colors">
