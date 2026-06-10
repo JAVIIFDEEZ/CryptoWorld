@@ -170,6 +170,18 @@ class CoinGeckoClient:
         prices: list[list] = data.get("prices", [])
         return [float(point[1]) for point in prices]
 
+    def get_exchange_rates(self) -> dict[str, Any]:
+        """
+        GET /exchange_rates — Tasas de cambio con BTC como base.
+
+        Respuesta: { "rates": { "usd": {"value": ...}, "eur": {...}, ... } }
+        Dividiendo dos tasas se obtiene el cambio fiat-fiat
+        (eur_por_usd = rates.eur.value / rates.usd.value).
+
+        Docs: https://docs.coingecko.com/reference/exchange-rates
+        """
+        return self._get("/exchange_rates")
+
     def ping(self) -> bool:
         """Comprueba que la API responde."""
         try:
