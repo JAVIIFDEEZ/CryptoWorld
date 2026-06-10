@@ -191,20 +191,20 @@ CORS_ALLOWED_ORIGINS = re.split(r'[,\s]+', os.environ.get(
 CORS_ALLOW_CREDENTIALS = True
 
 # ------------------------------------------------------------------
-# Email — SendGrid API (producción) / Console (desarrollo)
+# Email — Selección automática de backend por variables de entorno
 #
-# En producción: define SENDGRID_API_KEY en las variables de entorno.
-# El backend cambia automáticamente a la API nativa de SendGrid,
-# que ofrece mejor deliverability, tracking y webhooks que SMTP puro.
-#
-# En desarrollo (sin SENDGRID_API_KEY): usa ConsoleEmailBackend que
-# imprime los emails en los logs de Docker → visible con:
-#   docker compose logs -f backend
+# Prioridad (de mayor a menor):
+#   1. SENDGRID_API_KEY definida  → SendGrid Web API v3 (vía anymail).
+#      Mejor deliverability, tracking y webhooks que SMTP puro.
+#   2. EMAIL_HOST definida        → SMTP clásico (Gmail app password,
+#      Brevo, Mailgun...). Alternativa sin cuenta SendGrid.
+#   3. Ninguna                    → ConsoleEmailBackend (desarrollo):
+#      imprime los emails en los logs → docker compose logs -f backend
 # ------------------------------------------------------------------
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
 
 if SENDGRID_API_KEY:
-    # Producción: SendGrid Web API v3 (no SMTP)
     EMAIL_BACKEND = "anymail.backends.sendgrid.EmailBackend"
     ANYMAIL = {
         "SENDGRID_API_KEY": SENDGRID_API_KEY,
@@ -212,8 +212,16 @@ if SENDGRID_API_KEY:
         # Configurable en SendGrid → Settings → Mail Settings → Event Webhook
         "WEBHOOK_SECRET": os.environ.get("SENDGRID_WEBHOOK_SECRET", ""),
     }
+elif EMAIL_HOST:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+    EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+    # TLS (587) por defecto; SSL (465) si EMAIL_USE_SSL=True
+    EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False") == "True"
+    EMAIL_USE_TLS = not EMAIL_USE_SSL and os.environ.get("EMAIL_USE_TLS", "True") == "True"
+    EMAIL_TIMEOUT = 15  # No bloquear el worker indefinidamente si el SMTP no responde
 else:
-    # Desarrollo: imprime emails en logs Docker (sin necesidad de cuenta SMTP)
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # El remitente debe estar VERIFICADO como Single Sender o Domain en SendGrid.
