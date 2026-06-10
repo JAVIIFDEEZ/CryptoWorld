@@ -20,6 +20,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.core.cache import cache
@@ -29,6 +30,7 @@ from core.interfaces.api.serializers import (
     LoginSerializer,
     LogoutSerializer,
     VerifyEmailSerializer,
+    UpdatePreferencesSerializer,
     PasswordResetRequestSerializer,
     ResendVerificationRequestSerializer,
     PasswordResetConfirmSerializer,
@@ -76,6 +78,7 @@ from core.application.use_cases.verify_email import VerifyEmailUseCase
 from core.application.use_cases.send_verification_email import SendVerificationEmailUseCase
 from core.application.use_cases.request_password_reset import RequestPasswordResetUseCase
 from core.application.use_cases.confirm_password_reset import ConfirmPasswordResetUseCase
+from core.tasks import dispatch_task
 from core.tasks import send_verification_email as send_verification_email_task
 from core.tasks import send_password_reset_email as send_password_reset_email_task
 from core.application.use_cases.change_password import ChangePasswordUseCase
@@ -149,14 +152,66 @@ from core.domain.services.user_domain_service import UserDomainService
 
 class HealthCheckView(APIView):
     """
-    GET /api/health â€” Endpoint de comprobaciÃ³n de estado del servidor.
-    No requiere autenticaciÃ³n. Ãštil para monitorizaciÃ³n y Docker healthcheck.
+    GET /api/health — Comprobación de estado del servidor y sus dependencias.
+
+    No requiere autenticación. Además del estado del proceso web, sondea
+    las dependencias críticas (BD, cache Redis, broker Celery) para poder
+    diagnosticar despliegues (Railway/Docker) de un vistazo. Devuelve
+    siempre 200: el campo `status` distingue "ok" de "degraded" para no
+    tumbar healthchecks de Docker por una dependencia secundaria.
     """
     permission_classes = [AllowAny]
 
+    @staticmethod
+    def _check_components() -> dict:
+        from django.db import connection
+        from django.conf import settings as dj_settings
+        from kombu import Connection as BrokerConnection
+
+        components = {}
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            components["database"] = "ok"
+        except Exception:
+            components["database"] = "error"
+
+        try:
+            cache.set("health_ping", "1", 5)
+            components["cache"] = "ok" if cache.get("health_ping") == "1" else "error"
+        except Exception:
+            components["cache"] = "error"
+
+        try:
+            with BrokerConnection(dj_settings.CELERY_BROKER_URL, connect_timeout=2) as conn:
+                conn.ensure_connection(max_retries=0)
+            components["celery_broker"] = "ok"
+        except Exception:
+            components["celery_broker"] = "error"
+
+        # Informativo: qué backend de email está activo (no afecta al estado)
+        backend = dj_settings.EMAIL_BACKEND
+        if "sendgrid" in backend:
+            components["email_backend"] = "sendgrid"
+        elif "smtp" in backend:
+            components["email_backend"] = "smtp"
+        else:
+            components["email_backend"] = "console"
+
+        return components
+
     def get(self, request):
+        components = self._check_components()
+        checks = {k: v for k, v in components.items() if k != "email_backend"}
+        overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
         return Response(
-            {"status": "ok", "version": "1.0.0", "service": "CryptoWorld API"},
+            {
+                "status": overall,
+                "version": "1.0.0",
+                "service": "CryptoWorld API",
+                "components": components,
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -175,6 +230,8 @@ class RegisterView(APIView):
       5. Devolver respuesta 201 con datos del usuario creado
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_register"
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -199,8 +256,9 @@ class RegisterView(APIView):
             # la establecemos aquí usando el método del repositorio.
             user_repo.set_password(output_dto.id, validated["password"])
 
-            # Enviar email de verificación de forma asíncrona (no bloquea la respuesta HTTP)
-            send_verification_email_task.delay(output_dto.id)
+            # Enviar email de verificación de forma asíncrona (no bloquea la
+            # respuesta HTTP); con fallback síncrono si no hay worker Celery.
+            dispatch_task(send_verification_email_task, output_dto.id)
 
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -225,6 +283,8 @@ class LoginView(APIView):
     en POST /api/auth/2fa/login/.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_login"
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -315,25 +375,50 @@ class LogoutView(APIView):
 
 class MeView(APIView):
     """
-    GET /api/auth/me/ â€” Devolver los datos del usuario autenticado.
+    GET   /api/auth/me/ — Devolver los datos del usuario autenticado.
+    PATCH /api/auth/me/ — Actualizar preferencias de cuenta (moneda,
+                          notificaciones). Solo campos de preferencias:
+                          email/username no se modifican por aquí.
     """
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _serialize(user) -> dict:
+        from core.application.use_cases.recovery_codes import remaining_recovery_codes
+
+        return {
+            "id": user.pk,
+            "email": user.email,
+            "username": user.username,
+            "is_active": user.is_active,
+            "is_email_verified": user.is_email_verified,
+            "is_2fa_enabled": user.is_2fa_enabled,
+            "is_admin": user.is_staff or user.is_superuser,
+            "date_joined": user.date_joined.isoformat(),
+            "preferred_currency": user.preferred_currency,
+            "notify_price_alerts": user.notify_price_alerts,
+            "notify_market_digest": user.notify_market_digest,
+            "recovery_codes_remaining": (
+                remaining_recovery_codes(user) if user.is_2fa_enabled else 0
+            ),
+        }
+
     def get(self, request):
+        return Response(self._serialize(request.user), status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        serializer = UpdatePreferencesSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
         user = request.user
-        return Response(
-            {
-                "id": user.pk,
-                "email": user.email,
-                "username": user.username,
-                "is_active": user.is_active,
-                "is_email_verified": user.is_email_verified,
-                "is_2fa_enabled": user.is_2fa_enabled,
-                "is_admin": user.is_staff or user.is_superuser,
-                "date_joined": user.date_joined.isoformat(),
-            },
-            status=status.HTTP_200_OK,
-        )
+        updated_fields = []
+        for field, value in serializer.validated_data.items():
+            setattr(user, field, value)
+            updated_fields.append(field)
+        user.save(update_fields=updated_fields)
+
+        return Response(self._serialize(user), status=status.HTTP_200_OK)
 
 
 class VerifyEmailView(APIView):
@@ -370,6 +455,8 @@ class ResendVerificationEmailView(APIView):
     email verificado antes de permitir login.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_resend_verification"
 
     def post(self, request):
         serializer = ResendVerificationRequestSerializer(data=request.data)
@@ -380,7 +467,7 @@ class ResendVerificationEmailView(APIView):
         from core.infrastructure.persistence.models import User as UserModel
         user = UserModel.objects.filter(email=serializer.validated_data["email"]).first()
         if user and not user.is_email_verified:
-            send_verification_email_task.delay(user.pk)
+            dispatch_task(send_verification_email_task, user.pk)
 
         return Response(
             {"message": "Si el email existe y no está verificado, recibirás un enlace."},
@@ -394,6 +481,8 @@ class PasswordResetRequestView(APIView):
     No requiere autenticaciÃ³n. No revela si el email existe.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_password_reset"
 
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -401,7 +490,7 @@ class PasswordResetRequestView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         # Enviar email de forma asíncrona (no revela si el email existe)
-        send_password_reset_email_task.delay(serializer.validated_data["email"])
+        dispatch_task(send_password_reset_email_task, serializer.validated_data["email"])
 
         # Respuesta siempre igual para no revelar si el email existe
         return Response(
@@ -512,7 +601,7 @@ class Enable2FAView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            Enable2FAUseCase().execute(
+            recovery_codes = Enable2FAUseCase().execute(
                 Enable2FADTO(
                     user_id=request.user.pk,
                     totp_code=serializer.validated_data["totp_code"],
@@ -522,7 +611,12 @@ class Enable2FAView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
-            {"message": "2FA activado correctamente."},
+            {
+                "message": "2FA activado correctamente.",
+                # Única vez que los códigos viajan en claro: el cliente debe
+                # mostrarlos y pedir al usuario que los guarde.
+                "recovery_codes": recovery_codes,
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -554,6 +648,48 @@ class Disable2FAView(APIView):
         )
 
 
+class Regenerate2FARecoveryCodesView(APIView):
+    """
+    POST /api/auth/2fa/recovery-codes/ — Regenerar códigos de recuperación.
+
+    Requiere un código TOTP vigente (no basta la sesión: evita que un
+    atacante con sesión secuestrada se lleve códigos nuevos). Invalida
+    todos los códigos anteriores. Devuelve también cuántos quedaban.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        import pyotp
+        from core.application.use_cases.recovery_codes import generate_recovery_codes
+
+        serializer = Enable2FASerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        if not user.is_2fa_enabled or not user.totp_secret:
+            return Response(
+                {"error": "2FA no está activado en esta cuenta."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(serializer.validated_data["totp_code"], valid_window=1):
+            return Response(
+                {"error": "Código TOTP incorrecto."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        codes = generate_recovery_codes(user)
+        return Response(
+            {
+                "message": "Códigos de recuperación regenerados. Los anteriores ya no son válidos.",
+                "recovery_codes": codes,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class Verify2FALoginView(APIView):
     """
     POST /api/auth/2fa/login/ â€” Segunda fase del login con 2FA.
@@ -562,6 +698,8 @@ class Verify2FALoginView(APIView):
     Si ambos son vÃ¡lidos, devuelve los tokens JWT completos.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_2fa"
 
     def post(self, request):
         serializer = Verify2FALoginSerializer(data=request.data)
@@ -573,7 +711,8 @@ class Verify2FALoginView(APIView):
             output_dto = Verify2FALoginUseCase().execute(
                 Verify2FALoginDTO(
                     pre_auth_token=v["pre_auth_token"],
-                    totp_code=v["totp_code"],
+                    totp_code=v.get("totp_code", ""),
+                    recovery_code=v.get("recovery_code", ""),
                 )
             )
         except ValueError as exc:
@@ -759,6 +898,31 @@ class MarketOverviewView(APIView):
         data = serializer.data
         cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
         return Response(data, status=status.HTTP_200_OK)
+
+class FxRatesView(APIView):
+    """
+    GET /api/market/fx/ — Tasas de conversión USD→EUR/GBP.
+
+    Público (datos no sensibles) y cacheado 1 hora: el frontend las usa
+    para mostrar precios en la moneda preferida del usuario.
+    """
+    permission_classes = [AllowAny]
+    _CACHE_KEY = "fx_rates"
+    _CACHE_TTL = 3600  # 1 hora
+
+    def get(self, request):
+        from core.application.use_cases.get_fx_rates import GetFxRatesUseCase
+
+        cached = cache.get(self._CACHE_KEY)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        data = GetFxRatesUseCase().execute()
+        # El fallback no se cachea 1h completa: reintentar antes (5 min)
+        ttl = self._CACHE_TTL if data["source"] == "coingecko" else 300
+        cache.set(self._CACHE_KEY, data, ttl)
+        return Response(data, status=status.HTTP_200_OK)
+
 
 class AssetOhlcvView(APIView):
 

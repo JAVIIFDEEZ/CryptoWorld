@@ -7,6 +7,10 @@ from decimal import Decimal
 from datetime import datetime, UTC
 from typing import Optional
 
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+
 from core.application.dto.alerts_dto import CreateAlertInputDTO, AlertOutputDTO
 from core.infrastructure.persistence.models import PriceAlert, CryptoAsset
 
@@ -113,13 +117,52 @@ class CheckAlertsUseCase:
     Evalúa todas las alertas activas y marca las que se han disparado.
 
     Llamado periódicamente por el worker Celery.
+    Para cada alerta disparada notifica por email al dueño, salvo que
+    haya desactivado las notificaciones en sus preferencias de cuenta.
     Devuelve lista de alertas disparadas en esta ejecución.
     """
+
+    @staticmethod
+    def _notify_by_email(alert: PriceAlert) -> None:
+        user = alert.user
+        if not user.notify_price_alerts or not user.is_email_verified:
+            return
+
+        condition_label = "por encima de" if alert.condition == "ABOVE" else "por debajo de"
+        context = {
+            "username": user.username,
+            "asset_symbol": alert.asset.symbol,
+            "asset_name": alert.asset.name,
+            "condition_label": condition_label,
+            "threshold_price": str(alert.threshold_price),
+            "current_price": str(alert.asset.current_price),
+            "alerts_url": f"{settings.FRONTEND_URL}/alerts",
+        }
+
+        html_body = render_to_string("email/alert_triggered.html", context)
+        text_body = (
+            f"Hola {user.username},\n\n"
+            f"Tu alerta de {alert.asset.symbol} se ha disparado:\n"
+            f"precio {condition_label} {alert.threshold_price} USD "
+            f"(precio actual: {alert.asset.current_price} USD).\n\n"
+            f"Gestiona tus alertas en {settings.FRONTEND_URL}/alerts\n\n"
+            f"El equipo de CryptoWorld"
+        )
+
+        msg = EmailMultiAlternatives(
+            subject=f"[CryptoWorld] Alerta disparada: {alert.asset.symbol} {condition_label} {alert.threshold_price} USD",
+            body=text_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[user.email],
+        )
+        msg.attach_alternative(html_body, "text/html")
+        # fail_silently: un fallo de email no debe abortar el resto del batch
+        msg.send(fail_silently=True)
 
     def execute(self) -> list[AlertOutputDTO]:
         alerts = (
             PriceAlert.objects.filter(is_active=True, is_triggered=False)
-            .select_related("asset")
+            .select_related("asset", "user")
         )
 
         triggered = []
@@ -143,6 +186,7 @@ class CheckAlertsUseCase:
                 alert.save(
                     update_fields=["is_triggered", "triggered_at", "is_active", "updated_at"]
                 )
+                self._notify_by_email(alert)
                 triggered.append(_to_dto(alert))
                 logger.info(
                     "Alerta disparada: %s %s %s @ %s (precio actual: %s)",

@@ -45,6 +45,9 @@ class InMemoryUserRepository(IUserRepository):
         self._store[user.id] = user
         return user
 
+    def delete(self, user_id: int) -> None:
+        self._store.pop(user_id, None)
+
     def exists_by_email(self, email: str) -> bool:
         return any(u.email == email for u in self._store.values())
 

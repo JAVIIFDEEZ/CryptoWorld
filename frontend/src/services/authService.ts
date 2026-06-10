@@ -56,6 +56,8 @@ export interface RegisterResponse {
   username: string
 }
 
+export type PreferredCurrency = 'usd' | 'eur' | 'gbp'
+
 export interface UserMeResponse {
   id: number
   email: string
@@ -65,6 +67,16 @@ export interface UserMeResponse {
   is_2fa_enabled: boolean
   is_admin: boolean
   date_joined: string
+  preferred_currency: PreferredCurrency
+  notify_price_alerts: boolean
+  notify_market_digest: boolean
+  recovery_codes_remaining: number
+}
+
+export interface UpdatePreferencesPayload {
+  preferred_currency?: PreferredCurrency
+  notify_price_alerts?: boolean
+  notify_market_digest?: boolean
 }
 
 export interface Setup2FAResponse {
@@ -89,11 +101,17 @@ export const authService = {
   /**
    * Completar login cuando el backend pide segundo factor.
    * POST /api/auth/2fa/login/
+   *
+   * El segundo factor puede ser el código TOTP de la app o un código
+   * de recuperación de un solo uso (si se perdió el dispositivo).
    */
-  async verify2FALogin(pre_auth_token: string, totp_code: string): Promise<AuthResponse> {
+  async verify2FALogin(
+    pre_auth_token: string,
+    factor: { totp_code?: string; recovery_code?: string },
+  ): Promise<AuthResponse> {
     const { data } = await apiClient.post<AuthResponse>('/auth/2fa/login/', {
       pre_auth_token,
-      totp_code,
+      ...factor,
     })
     return data
   },
@@ -116,6 +134,14 @@ export const authService = {
       refresh: refreshToken,
     })
     return data
+  },
+
+  /**
+   * Cerrar sesión: añade el refresh token a la blacklist del backend.
+   * POST /api/auth/logout/
+   */
+  async logout(refreshToken: string): Promise<void> {
+    await apiClient.post('/auth/logout/', { refresh_token: refreshToken })
   },
 
   /**
@@ -150,12 +176,25 @@ export const authService = {
   /**
    * Cambiar contraseña del usuario autenticado.
    * POST /api/auth/change-password/
+   *
+   * El backend espera current_password + new_password + new_password_confirm
+   * (ChangePasswordSerializer); enviar otros nombres provoca un 400.
    */
-  async changePassword(old_password: string, new_password: string): Promise<{ message: string }> {
+  async changePassword(current_password: string, new_password: string): Promise<{ message: string }> {
     const { data } = await apiClient.post<{ message: string }>('/auth/change-password/', {
-      old_password,
+      current_password,
       new_password,
+      new_password_confirm: new_password,
     })
+    return data
+  },
+
+  /**
+   * Actualizar preferencias de cuenta (moneda, notificaciones).
+   * PATCH /api/auth/me/
+   */
+  async updatePreferences(payload: UpdatePreferencesPayload): Promise<UserMeResponse> {
+    const { data } = await apiClient.patch<UserMeResponse>('/auth/me/', payload)
     return data
   },
 
@@ -171,9 +210,25 @@ export const authService = {
   /**
    * Confirmar y activar 2FA con un código TOTP válido.
    * POST /api/auth/2fa/enable/
+   * Devuelve los códigos de recuperación: solo viajan en claro esta vez.
    */
-  async enable2FA(totp_code: string): Promise<{ message: string }> {
-    const { data } = await apiClient.post<{ message: string }>('/auth/2fa/enable/', { totp_code })
+  async enable2FA(totp_code: string): Promise<{ message: string; recovery_codes: string[] }> {
+    const { data } = await apiClient.post<{ message: string; recovery_codes: string[] }>(
+      '/auth/2fa/enable/',
+      { totp_code },
+    )
+    return data
+  },
+
+  /**
+   * Regenerar los códigos de recuperación (invalida los anteriores).
+   * POST /api/auth/2fa/recovery-codes/
+   */
+  async regenerateRecoveryCodes(totp_code: string): Promise<{ message: string; recovery_codes: string[] }> {
+    const { data } = await apiClient.post<{ message: string; recovery_codes: string[] }>(
+      '/auth/2fa/recovery-codes/',
+      { totp_code },
+    )
     return data
   },
 

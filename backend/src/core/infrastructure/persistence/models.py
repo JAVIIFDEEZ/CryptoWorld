@@ -73,6 +73,27 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="True cuando el usuario finaliza el setup de 2FA.",
     )
 
+    # ── Preferencias de cuenta ──────────────────────────────────────
+    class Currency(models.TextChoices):
+        USD = "usd", "Dólar Estadounidense (USD)"
+        EUR = "eur", "Euro (EUR)"
+        GBP = "gbp", "Libra Esterlina (GBP)"
+
+    preferred_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices,
+        default=Currency.USD,
+        help_text="Moneda fiat de referencia para mostrar precios.",
+    )
+    notify_price_alerts = models.BooleanField(
+        default=True,
+        help_text="Recibir emails cuando se dispare una alerta de precio.",
+    )
+    notify_market_digest = models.BooleanField(
+        default=False,
+        help_text="Recibir resúmenes periódicos del estado del mercado.",
+    )
+
     objects = UserManager()
 
     # Django usará 'email' para autenticación en lugar de 'username'
@@ -86,6 +107,35 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.email
+
+
+class TwoFactorRecoveryCode(models.Model):
+    """
+    Código de recuperación 2FA de un solo uso.
+
+    Se generan 10 al activar 2FA y permiten completar el login si el
+    usuario pierde el dispositivo TOTP. Solo se almacena el hash
+    (mismo esquema PBKDF2 que las contraseñas); el código en claro se
+    muestra una única vez al usuario.
+    """
+
+    user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        related_name="recovery_codes",
+    )
+    code_hash = models.CharField(max_length=128)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "two_factor_recovery_codes"
+        verbose_name = "Código de recuperación 2FA"
+        verbose_name_plural = "Códigos de recuperación 2FA"
+
+    def __str__(self) -> str:
+        state = "usado" if self.used_at else "disponible"
+        return f"RecoveryCode({self.user_id}, {state})"
 
 
 # ── Modelos del dominio criptográfico ─────────────────────────────

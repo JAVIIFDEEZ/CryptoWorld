@@ -11,6 +11,8 @@
 
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/hooks/useAuth'
+import { CurrencyProvider } from '@/hooks/useCurrency'
+import { ToastProvider } from '@/components/ui/Toast'
 import AppRoutes from '@/routes'
 import ErrorBoundary from '@/components/ErrorBoundary'
 
@@ -21,9 +23,15 @@ function App() {
         {/*
           AuthProvider debe envolver AppRoutes para que ProtectedRoute
           pueda acceder al contexto de autenticación en cualquier nivel.
+          CurrencyProvider depende de useAuth (sincroniza la moneda del
+          usuario autenticado); ToastProvider expone useToast() a toda la app.
         */}
         <AuthProvider>
-          <AppRoutes />
+          <CurrencyProvider>
+            <ToastProvider>
+              <AppRoutes />
+            </ToastProvider>
+          </CurrencyProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

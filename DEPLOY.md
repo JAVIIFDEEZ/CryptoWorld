@@ -255,12 +255,18 @@ Configura estas variables en **cada uno de los 3 servicios**. Railway inyecta `D
 | `DJANGO_DEBUG` | `False` |
 | `DJANGO_ALLOWED_HOSTS` | `*.up.railway.app,tudominio.com` |
 | `CORS_ALLOWED_ORIGINS` | URL del frontend (Vercel, etc.) |
-| `FRONTEND_URL` | URL del frontend |
-| `EMAIL_HOST` | Servidor SMTP (ej. smtp.gmail.com) |
-| `EMAIL_HOST_USER` | Email de envío |
-| `EMAIL_HOST_PASSWORD` | Contraseña SMTP |
-| `EMAIL_PORT` | `587` |
+| `FRONTEND_URL` | URL del frontend — **se usa para construir los links de los emails** |
+| `SENDGRID_API_KEY` | API key de SendGrid (opción A de email) |
+| `DEFAULT_FROM_EMAIL` | `CryptoWorld <remitente-verificado@dominio.com>` |
+| `EMAIL_HOST` | Servidor SMTP, ej. `smtp.gmail.com` (opción B, si no usas SendGrid) |
+| `EMAIL_HOST_USER` | Email de envío (solo opción B) |
+| `EMAIL_HOST_PASSWORD` | Contraseña de aplicación SMTP (solo opción B) |
+| `EMAIL_PORT` | `587` (solo opción B) |
 | `COINGECKO_API_KEY` | API key de CoinGecko (opcional) |
+
+> **Email:** si `SENDGRID_API_KEY` está definida se usa SendGrid; si no, y
+> `EMAIL_HOST` está definida, se usa SMTP; si ninguna existe, los emails solo
+> se imprimen en los logs (modo desarrollo) y **nunca llegan al usuario**.
 
 Para vincular `DATABASE_URL` al plugin PostgreSQL:
 - En el servicio → "Variables" → "Add Reference" → selecciona el plugin PostgreSQL → variable `DATABASE_URL`
@@ -285,6 +291,39 @@ En el servicio web → "Settings" → "Custom Domain" → añade tu dominio.
 Railway hace **redeploy automático** en cada push a `main`. Los 3 servicios se actualizan solos.
 
 **Precio:** ~$5-10/mes con el plan Hobby (3 servicios + BD + Redis).
+
+### Diagnóstico: los emails (verificación, reset) no llegan
+
+El envío de email pasa por dos piezas: la **cola Celery** (el endpoint encola
+la tarea) y el **backend de email** (SendGrid o SMTP). Revisa en este orden:
+
+1. **¿Está definida `SENDGRID_API_KEY` (o `EMAIL_HOST`) en el servicio web Y en el worker?**
+   Sin ninguna de las dos, Django usa el backend de consola: el email "se envía"
+   pero solo aparece impreso en los logs. Es la causa más común.
+
+2. **¿Existe el servicio `cryptoworld-worker` y está en verde?**
+   El envío es asíncrono vía Celery. Desde la versión actual, si el broker
+   Redis no está disponible el backend hace **fallback síncrono** (el email
+   sale igualmente desde el proceso web y queda un warning
+   `Broker Celery no disponible` en los logs), pero lo correcto en Railway
+   es tener el worker desplegado con las **mismas variables** que el web.
+
+3. **¿`REDIS_URL` está vinculada en los 3 servicios?**
+   Sin ella, las tareas se encolan en un Redis inexistente (localhost).
+
+4. **¿El remitente está verificado en SendGrid?**
+   `DEFAULT_FROM_EMAIL` debe ser un Single Sender o dominio verificado en
+   SendGrid → Settings → Sender Authentication. Si no, SendGrid devuelve 403
+   (visible en los logs del worker como error de la tarea
+   `send_verification_email`).
+
+5. **¿`FRONTEND_URL` apunta al dominio real de Vercel?**
+   Los links de los emails se construyen con esta variable. Si apunta a
+   `http://localhost:5173`, el email llega pero el enlace no funciona.
+
+6. **Logs útiles:**
+   - Servicio web: busca `Broker Celery no disponible` (fallback activado).
+   - Worker: busca `send_verification_email` (éxito o el error de SendGrid/SMTP).
 
 ---
 

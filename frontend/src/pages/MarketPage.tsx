@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService } from '@/services/marketService'
 import { getWatchlist, addToWatchlist, removeFromWatchlist } from '@/services/watchlistService'
-import { formatPrice, formatCompact } from '@/utils/format'
+import { useCurrency } from '@/hooks/useCurrency'
 import DeltaChip from '@/components/ui/DeltaChip'
 import StatCard from '@/components/ui/StatCard'
 import Sparkline from '@/components/ui/Sparkline'
@@ -19,6 +19,7 @@ function parseNumeric(value: string | null | undefined): number {
 }
 
 function MarketPage() {
+  const { formatPrice, formatCompact } = useCurrency()
   const navigate = useNavigate()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -316,6 +317,7 @@ function WatchlistSection({
   onToggle: (symbol: string, e: React.MouseEvent) => void
   onNavigate: (symbol: string) => void
 }>) {
+  const { formatPrice, formatCompact } = useCurrency()
   return (
     <div className="bg-slate-800 border border-yellow-500/20 rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">

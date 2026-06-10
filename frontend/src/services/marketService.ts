@@ -33,6 +33,13 @@ export interface MarketOverview {
   updated_at: string
 }
 
+export interface FxRates {
+  base: 'usd'
+  rates: Record<string, number>
+  source: 'coingecko' | 'fallback'
+  updated_at: string
+}
+
 export type OhlcvInterval =
   | '1m' | '5m' | '15m' | '30m'
   | '1h' | '2h' | '4h' | '6h' | '12h'
@@ -146,6 +153,19 @@ export const marketService = {
    */
   async getAssetInfo(symbol: string): Promise<AssetInfo> {
     const { data } = await apiClient.get<AssetInfo>(`/assets/${symbol}/info/`)
+    return data
+  },
+
+  /**
+   * Tasas de cambio USD→EUR/GBP para mostrar precios en la moneda preferida.
+   * GET /api/market/fx/
+   * Caché en memoria 1h (el backend también cachea en Redis).
+   */
+  async getFxRates(): Promise<FxRates> {
+    const cached = _cGet<FxRates>('fx_rates')
+    if (cached) return cached
+    const { data } = await apiClient.get<FxRates>('/market/fx/')
+    _cSet('fx_rates', data, 60 * 60_000)
     return data
   },
 }

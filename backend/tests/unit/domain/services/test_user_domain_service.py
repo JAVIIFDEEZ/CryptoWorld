@@ -41,6 +41,9 @@ class StubUserRepository(IUserRepository):
         self._emails.add(user.email)
         return user
 
+    def delete(self, user_id: int) -> None:
+        return None
+
 
 # ── TestUserDomainService ──────────────────────────────────────────
 

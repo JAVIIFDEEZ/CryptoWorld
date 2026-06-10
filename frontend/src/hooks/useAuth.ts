@@ -36,7 +36,10 @@ interface AuthContextType {
   isAuthenticated: boolean
   isLoading: boolean
   login: (email: string, password: string) => Promise<{ requires2FA: boolean; preAuthToken?: string }>
-  verify2FALogin: (preAuthToken: string, totpCode: string) => Promise<void>
+  verify2FALogin: (
+    preAuthToken: string,
+    factor: { totpCode?: string; recoveryCode?: string },
+  ) => Promise<void>
   logout: () => void
 }
 
@@ -48,6 +51,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 // ── Provider ───────────────────────────────────────────────────────
 
 const TOKEN_KEY = 'cw_access_token'
+const REFRESH_KEY = 'cw_refresh_token'
 const USER_KEY = 'cw_user'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -63,10 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const [isLoading, setIsLoading] = useState(false)
 
-  function applyAuthenticatedSession(accessToken: string, authUser: AuthUser) {
+  function applyAuthenticatedSession(accessToken: string, refreshToken: string, authUser: AuthUser) {
     setToken(accessToken)
     setUser(authUser)
     localStorage.setItem(TOKEN_KEY, accessToken)
+    // El refresh token permite renovar la sesión sin volver a pedir credenciales
+    localStorage.setItem(REFRESH_KEY, refreshToken)
     localStorage.setItem(USER_KEY, JSON.stringify(authUser))
   }
 
@@ -92,36 +98,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username: response.username,
         isAdmin: !!response.is_admin,
       }
-      applyAuthenticatedSession(response.access_token, authUser)
+      applyAuthenticatedSession(response.access_token, response.refresh_token, authUser)
       return { requires2FA: false }
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  const verify2FALogin = useCallback(async (preAuthToken: string, totpCode: string) => {
+  const verify2FALogin = useCallback(async (
+    preAuthToken: string,
+    factor: { totpCode?: string; recoveryCode?: string },
+  ) => {
     setIsLoading(true)
     try {
-      const response = await authService.verify2FALogin(preAuthToken, totpCode)
+      const response = await authService.verify2FALogin(preAuthToken, {
+        totp_code: factor.totpCode,
+        recovery_code: factor.recoveryCode,
+      })
       const authUser: AuthUser = {
         id: response.user_id,
         email: response.email,
         username: response.username,
         isAdmin: !!response.is_admin,
       }
-      applyAuthenticatedSession(response.access_token, authUser)
+      applyAuthenticatedSession(response.access_token, response.refresh_token, authUser)
     } finally {
       setIsLoading(false)
     }
   }, [])
 
   /**
-   * logout — Limpiar estado local y tokens almacenados.
+   * logout — Invalidar el refresh token en el backend (blacklist) y
+   * limpiar el estado local. La llamada al backend es fire-and-forget:
+   * el logout local no debe bloquearse si la red falla.
    */
   const logout = useCallback(() => {
+    const refreshToken = localStorage.getItem(REFRESH_KEY)
+    if (refreshToken) {
+      authService.logout(refreshToken).catch(() => {
+        // El token expirará solo; el logout local ya se ha completado
+      })
+    }
     setUser(null)
     setToken(null)
     localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(REFRESH_KEY)
     localStorage.removeItem(USER_KEY)
   }, [])
 

@@ -66,9 +66,18 @@ class Verify2FALoginUseCase:
         if not user.is_2fa_enabled or not user.totp_secret:
             raise ValueError("2FA no está habilitado para este usuario.")
 
-        totp = pyotp.TOTP(user.totp_secret)
-        if not totp.verify(dto.totp_code, valid_window=1):
-            raise ValueError("Código TOTP incorrecto.")
+        # Segundo factor: código TOTP o código de recuperación de un solo uso
+        if dto.totp_code:
+            totp = pyotp.TOTP(user.totp_secret)
+            if not totp.verify(dto.totp_code, valid_window=1):
+                raise ValueError("Código TOTP incorrecto.")
+        elif dto.recovery_code:
+            from core.application.use_cases.recovery_codes import consume_recovery_code
+
+            if not consume_recovery_code(user, dto.recovery_code):
+                raise ValueError("Código de recuperación inválido o ya utilizado.")
+        else:
+            raise ValueError("Debes proporcionar un código TOTP o de recuperación.")
 
         # Emitir tokens JWT completos
         refresh = RefreshToken.for_user(user)

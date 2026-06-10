@@ -9,6 +9,7 @@ import pyotp
 
 from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import Disable2FADTO
+from core.application.use_cases.recovery_codes import delete_recovery_codes
 
 
 class Disable2FAUseCase:
@@ -40,3 +41,6 @@ class Disable2FAUseCase:
         user.is_2fa_enabled = False
         user.totp_secret = None
         user.save(update_fields=["is_2fa_enabled", "totp_secret"])
+
+        # Los códigos de recuperación pierden sentido sin 2FA activo
+        delete_recovery_codes(user)

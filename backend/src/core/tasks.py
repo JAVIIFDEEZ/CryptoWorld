@@ -19,6 +19,31 @@ from celery import shared_task
 logger = logging.getLogger(__name__)
 
 
+def dispatch_task(task, *args, **kwargs):
+    """
+    Encolar una tarea en Celery con degradación a ejecución síncrona.
+
+    En despliegues sin worker Celery o sin broker Redis accesible
+    (p. ej. Railway con solo el servicio web), `.delay()` lanza
+    OperationalError y la tarea se perdería — el usuario nunca
+    recibiría su email de verificación. Este helper detecta el fallo
+    de conexión al broker y ejecuta la tarea en el propio proceso web
+    como plan B, de forma que el envío de emails nunca depende de que
+    la infraestructura asíncrona esté disponible.
+    """
+    try:
+        return task.delay(*args, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "Broker Celery no disponible (%s). Ejecutando %s de forma síncrona.",
+            exc,
+            task.name,
+        )
+        # .apply() ejecuta en el proceso actual; los errores quedan en el
+        # EagerResult (no se propagan) y la propia tarea ya los loguea.
+        return task.apply(args=args, kwargs=kwargs)
+
+
 @shared_task(
     name="core.tasks.check_price_alerts",
     bind=True,
@@ -141,6 +166,30 @@ def send_verification_email(self, user_id: int) -> dict:
         return {"status": "skipped", "reason": str(exc)}
     except Exception as exc:
         logger.error("send_verification_email error user_id=%d: %s", user_id, exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.send_market_digest",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=300,
+)
+def send_market_digest(self) -> dict:
+    """
+    Envía el resumen semanal del mercado a los usuarios suscritos
+    (notify_market_digest=True). Programado por celery beat los lunes.
+    """
+    try:
+        from core.application.use_cases.send_market_digest import (
+            SendMarketDigestUseCase,
+        )
+
+        sent = SendMarketDigestUseCase().execute()
+        logger.info("send_market_digest: %d emails enviados", sent)
+        return {"sent": sent}
+    except Exception as exc:
+        logger.error("send_market_digest error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
 
 

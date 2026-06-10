@@ -84,9 +84,16 @@ class Disable2FADTO:
 
 @dataclass(frozen=True)
 class Verify2FALoginDTO:
-    """Token temporal de pre-autenticación + código TOTP."""
+    """
+    Token temporal de pre-autenticación + segundo factor.
+
+    El segundo factor puede ser el código TOTP de la app autenticadora
+    o, si el usuario perdió el dispositivo, un código de recuperación
+    de un solo uso. Debe llegar exactamente uno de los dos.
+    """
     pre_auth_token: str
-    totp_code: str
+    totp_code: str = ""
+    recovery_code: str = ""
 
 
 # ── Salida ─────────────────────────────────────────────────────────

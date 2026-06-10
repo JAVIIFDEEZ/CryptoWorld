@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alerta de precio — CryptoWorld</title>
+</head>
+<body style="margin:0;padding:0;background-color:#0f172a;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#0f172a;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+
+        <!-- Card -->
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;background-color:#1e293b;border-radius:12px;border:1px solid #334155;overflow:hidden;">
+
+          <!-- Header -->
+          <tr>
+            <td align="center" style="padding:32px 40px 24px;background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);border-bottom:1px solid #334155;">
+              <div style="display:inline-flex;align-items:center;gap:10px;">
+                <!-- Logo SVG inline -->
+                <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="18" cy="18" r="18" fill="#3b82f6"/>
+                  <path d="M10 18c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z" fill="#1e40af"/>
+                  <path d="M15 15l3-3 3 3-3 3-3-3zm0 6l3-3 3 3-3 3-3-3z" fill="#93c5fd"/>
+                </svg>
+                <span style="font-size:22px;font-weight:700;color:#f1f5f9;letter-spacing:-0.5px;">CryptoWorld</span>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px;">
+              <!-- Icon -->
+              <div style="text-align:center;margin-bottom:24px;">
+                <div style="display:inline-block;background-color:#b45309;border-radius:50%;padding:16px;margin-bottom:4px;">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fde68a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                  </svg>
+                </div>
+              </div>
+
+              <h1 style="margin:0 0 8px;text-align:center;font-size:22px;font-weight:700;color:#f1f5f9;">
+                Tu alerta de {{ asset_symbol }} se ha disparado
+              </h1>
+              <p style="margin:0 0 24px;text-align:center;font-size:14px;color:#94a3b8;line-height:1.6;">
+                Hola <strong style="color:#e2e8f0;">{{ username }}</strong>, la condición que configuraste se acaba de cumplir.
+              </p>
+
+              <!-- Detalle de la alerta -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#0f172a;border:1px solid #334155;border-radius:8px;">
+                <tr>
+                  <td style="padding:20px 24px;">
+                    <p style="margin:0 0 10px;font-size:13px;color:#94a3b8;">
+                      <strong style="color:#e2e8f0;">{{ asset_name }} ({{ asset_symbol }})</strong>
+                    </p>
+                    <p style="margin:0 0 6px;font-size:13px;color:#94a3b8;">
+                      Condición: <strong style="color:#e2e8f0;">precio {{ condition_label }} {{ threshold_price }} USD</strong>
+                    </p>
+                    <p style="margin:0;font-size:13px;color:#94a3b8;">
+                      Precio actual: <strong style="color:#fbbf24;">{{ current_price }} USD</strong>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA Button -->
+              <div style="text-align:center;margin:32px 0 8px;">
+                <a href="{{ alerts_url }}"
+                   style="display:inline-block;background-color:#3b82f6;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:14px 36px;border-radius:8px;letter-spacing:0.3px;">
+                  Ver mis alertas
+                </a>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px;background-color:#0f172a;border-top:1px solid #1e293b;">
+              <p style="margin:0;font-size:11px;color:#334155;text-align:center;">
+                Recibes este email porque activaste las alertas de precio en tus ajustes de cuenta.
+                Puedes desactivarlas en Ajustes → Notificaciones.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
