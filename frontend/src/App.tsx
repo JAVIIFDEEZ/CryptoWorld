@@ -11,6 +11,7 @@
 
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/hooks/useAuth'
+import { ToastProvider } from '@/components/ui/Toast'
 import AppRoutes from '@/routes'
 import ErrorBoundary from '@/components/ErrorBoundary'
 
@@ -21,9 +22,12 @@ function App() {
         {/*
           AuthProvider debe envolver AppRoutes para que ProtectedRoute
           pueda acceder al contexto de autenticación en cualquier nivel.
+          ToastProvider expone useToast() a toda la app.
         */}
         <AuthProvider>
-          <AppRoutes />
+          <ToastProvider>
+            <AppRoutes />
+          </ToastProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>
