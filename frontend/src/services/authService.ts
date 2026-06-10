@@ -70,6 +70,7 @@ export interface UserMeResponse {
   preferred_currency: PreferredCurrency
   notify_price_alerts: boolean
   notify_market_digest: boolean
+  recovery_codes_remaining: number
 }
 
 export interface UpdatePreferencesPayload {
@@ -100,11 +101,17 @@ export const authService = {
   /**
    * Completar login cuando el backend pide segundo factor.
    * POST /api/auth/2fa/login/
+   *
+   * El segundo factor puede ser el código TOTP de la app o un código
+   * de recuperación de un solo uso (si se perdió el dispositivo).
    */
-  async verify2FALogin(pre_auth_token: string, totp_code: string): Promise<AuthResponse> {
+  async verify2FALogin(
+    pre_auth_token: string,
+    factor: { totp_code?: string; recovery_code?: string },
+  ): Promise<AuthResponse> {
     const { data } = await apiClient.post<AuthResponse>('/auth/2fa/login/', {
       pre_auth_token,
-      totp_code,
+      ...factor,
     })
     return data
   },
@@ -203,9 +210,25 @@ export const authService = {
   /**
    * Confirmar y activar 2FA con un código TOTP válido.
    * POST /api/auth/2fa/enable/
+   * Devuelve los códigos de recuperación: solo viajan en claro esta vez.
    */
-  async enable2FA(totp_code: string): Promise<{ message: string }> {
-    const { data } = await apiClient.post<{ message: string }>('/auth/2fa/enable/', { totp_code })
+  async enable2FA(totp_code: string): Promise<{ message: string; recovery_codes: string[] }> {
+    const { data } = await apiClient.post<{ message: string; recovery_codes: string[] }>(
+      '/auth/2fa/enable/',
+      { totp_code },
+    )
+    return data
+  },
+
+  /**
+   * Regenerar los códigos de recuperación (invalida los anteriores).
+   * POST /api/auth/2fa/recovery-codes/
+   */
+  async regenerateRecoveryCodes(totp_code: string): Promise<{ message: string; recovery_codes: string[] }> {
+    const { data } = await apiClient.post<{ message: string; recovery_codes: string[] }>(
+      '/auth/2fa/recovery-codes/',
+      { totp_code },
+    )
     return data
   },
 

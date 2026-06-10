@@ -36,7 +36,10 @@ interface AuthContextType {
   isAuthenticated: boolean
   isLoading: boolean
   login: (email: string, password: string) => Promise<{ requires2FA: boolean; preAuthToken?: string }>
-  verify2FALogin: (preAuthToken: string, totpCode: string) => Promise<void>
+  verify2FALogin: (
+    preAuthToken: string,
+    factor: { totpCode?: string; recoveryCode?: string },
+  ) => Promise<void>
   logout: () => void
 }
 
@@ -102,10 +105,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const verify2FALogin = useCallback(async (preAuthToken: string, totpCode: string) => {
+  const verify2FALogin = useCallback(async (
+    preAuthToken: string,
+    factor: { totpCode?: string; recoveryCode?: string },
+  ) => {
     setIsLoading(true)
     try {
-      const response = await authService.verify2FALogin(preAuthToken, totpCode)
+      const response = await authService.verify2FALogin(preAuthToken, {
+        totp_code: factor.totpCode,
+        recovery_code: factor.recoveryCode,
+      })
       const authUser: AuthUser = {
         id: response.user_id,
         email: response.email,

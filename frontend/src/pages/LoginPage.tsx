@@ -27,6 +27,7 @@ function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [totpCode, setTotpCode] = useState('')
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false)
   const [preAuthToken, setPreAuthToken] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [errorCode, setErrorCode] = useState<string | null>(null)
@@ -50,7 +51,10 @@ function LoginPage() {
 
     try {
       if (preAuthToken) {
-        await verify2FALogin(preAuthToken, totpCode)
+        await verify2FALogin(
+          preAuthToken,
+          useRecoveryCode ? { recoveryCode: totpCode } : { totpCode },
+        )
         const from = nextPath ?? (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
         navigate(from, { replace: true })
         return
@@ -193,7 +197,7 @@ function LoginPage() {
             {preAuthToken && (
               <div>
                 <label htmlFor="totp" className="block text-sm font-medium text-slate-300 mb-1.5">
-                  Código de autenticación (2FA)
+                  {useRecoveryCode ? 'Código de recuperación' : 'Código de autenticación (2FA)'}
                 </label>
                 <input
                   id="totp"
@@ -201,11 +205,23 @@ function LoginPage() {
                   value={totpCode}
                   onChange={(e) => setTotpCode(e.target.value)}
                   required
-                  minLength={6}
-                  maxLength={6}
-                  placeholder="123456"
+                  minLength={useRecoveryCode ? 9 : 6}
+                  maxLength={useRecoveryCode ? 9 : 6}
+                  placeholder={useRecoveryCode ? 'XXXX-XXXX' : '123456'}
                   className="w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseRecoveryCode(!useRecoveryCode)
+                    setTotpCode('')
+                  }}
+                  className="mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  {useRecoveryCode
+                    ? 'Usar código de la app autenticadora'
+                    : '¿Perdiste el dispositivo? Usa un código de recuperación'}
+                </button>
               </div>
             )}
 
