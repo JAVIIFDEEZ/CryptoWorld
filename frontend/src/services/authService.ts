@@ -56,6 +56,8 @@ export interface RegisterResponse {
   username: string
 }
 
+export type PreferredCurrency = 'usd' | 'eur' | 'gbp'
+
 export interface UserMeResponse {
   id: number
   email: string
@@ -65,6 +67,15 @@ export interface UserMeResponse {
   is_2fa_enabled: boolean
   is_admin: boolean
   date_joined: string
+  preferred_currency: PreferredCurrency
+  notify_price_alerts: boolean
+  notify_market_digest: boolean
+}
+
+export interface UpdatePreferencesPayload {
+  preferred_currency?: PreferredCurrency
+  notify_price_alerts?: boolean
+  notify_market_digest?: boolean
 }
 
 export interface Setup2FAResponse {
@@ -150,12 +161,25 @@ export const authService = {
   /**
    * Cambiar contraseña del usuario autenticado.
    * POST /api/auth/change-password/
+   *
+   * El backend espera current_password + new_password + new_password_confirm
+   * (ChangePasswordSerializer); enviar otros nombres provoca un 400.
    */
-  async changePassword(old_password: string, new_password: string): Promise<{ message: string }> {
+  async changePassword(current_password: string, new_password: string): Promise<{ message: string }> {
     const { data } = await apiClient.post<{ message: string }>('/auth/change-password/', {
-      old_password,
+      current_password,
       new_password,
+      new_password_confirm: new_password,
     })
+    return data
+  },
+
+  /**
+   * Actualizar preferencias de cuenta (moneda, notificaciones).
+   * PATCH /api/auth/me/
+   */
+  async updatePreferences(payload: UpdatePreferencesPayload): Promise<UserMeResponse> {
+    const { data } = await apiClient.patch<UserMeResponse>('/auth/me/', payload)
     return data
   },
 
