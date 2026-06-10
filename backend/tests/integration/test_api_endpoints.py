@@ -16,14 +16,14 @@ import pytest
 class TestHealthEndpoint:
 
     @pytest.mark.integration
-    def test_health_returns_200(self, api_client):
+    def test_health_returns_200(self, api_client, db):
         response = api_client.get("/api/health/")
         assert response.status_code == 200
         assert response.data["status"] == "ok"
 
     @pytest.mark.integration
     def test_health_no_auth_required(self, api_client):
-        """El health check debe ser público."""
+        """El health check debe ser público (responde 200 incluso degradado)."""
         response = api_client.get("/api/health/")
         assert response.status_code == 200
 
@@ -55,11 +55,23 @@ class TestAuthEndpoints:
 
     @pytest.mark.integration
     def test_login_returns_tokens(self, api_client, test_user):
+        # La política de login exige email verificado
+        test_user.is_email_verified = True
+        test_user.save(update_fields=["is_email_verified"])
+
         payload = {"email": "test@example.com", "password": "testpass123"}
         response = api_client.post("/api/auth/login/", payload, format="json")
         assert response.status_code == 200
         assert "access_token" in response.data
         assert "refresh_token" in response.data
+
+    @pytest.mark.integration
+    def test_login_blocked_until_email_verified(self, api_client, test_user):
+        """Sin verificar el email, el login devuelve 403 con error_code."""
+        payload = {"email": "test@example.com", "password": "testpass123"}
+        response = api_client.post("/api/auth/login/", payload, format="json")
+        assert response.status_code == 403
+        assert response.data["error_code"] == "email_not_verified"
 
     @pytest.mark.integration
     def test_login_fails_with_wrong_password(self, api_client, test_user):
