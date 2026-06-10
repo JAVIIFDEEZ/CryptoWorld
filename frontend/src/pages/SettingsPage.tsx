@@ -23,6 +23,7 @@ import {
 import { useToast } from '@/components/ui/Toast'
 import { useCurrency } from '@/hooks/useCurrency'
 import PasswordInput from '@/components/ui/PasswordInput'
+import Skeleton from '@/components/ui/Skeleton'
 
 const CURRENCY_OPTIONS: { value: PreferredCurrency; label: string }[] = [
   { value: 'usd', label: 'Dólar Estadounidense (USD - $)' },
@@ -221,6 +222,18 @@ export default function SettingsPage() {
         {/* SECCIÓN PERFIL */}
         <section className="bg-slate-800 rounded-xl p-6 border border-slate-700">
           <h2 className="text-xl font-semibold text-white mb-6">Información del Perfil</h2>
+          {isLoadingMe ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <Skeleton className="h-3.5 w-32 mb-2" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+              <div>
+                <Skeleton className="h-3.5 w-32 mb-2" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Nombre de usuario</label>
@@ -236,6 +249,7 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+          )}
 
           <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
             {memberSince && <span>Miembro desde el {memberSince}</span>}
@@ -275,6 +289,12 @@ export default function SettingsPage() {
           </div>
           <p className="text-slate-400 text-sm mb-6">Personaliza tu experiencia en la plataforma. Los cambios se guardan automáticamente.</p>
 
+          {isLoadingMe ? (
+            <div className="max-w-md space-y-3">
+              <Skeleton className="h-3.5 w-44" />
+              <Skeleton className="h-11 w-full" />
+            </div>
+          ) : (
           <div className="max-w-md space-y-6">
             <div>
               <label htmlFor="preferred-currency" className="block text-sm font-medium text-slate-300 mb-2">
@@ -294,6 +314,7 @@ export default function SettingsPage() {
               <p className="text-xs text-slate-500 mt-2">La moneda base para mostrar precios y tu portafolio.</p>
             </div>
           </div>
+          )}
         </section>
 
         {/* SECCIÓN NOTIFICACIONES */}
