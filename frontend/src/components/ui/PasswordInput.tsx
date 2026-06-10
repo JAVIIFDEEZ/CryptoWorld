@@ -17,6 +17,13 @@ interface PasswordInputProps {
   /** Color del anillo de foco; 'danger' para zonas destructivas. */
   tone?: 'primary' | 'danger'
   id?: string
+  minLength?: number
+  /**
+   * Clases del input. Si se pasa, sustituye el estilo por defecto
+   * (las páginas de auth usan bg-slate-700/70 y rounded-xl).
+   * Debe incluir pr-10 para no solapar el botón del ojo.
+   */
+  inputClassName?: string
 }
 
 function EyeOffIcon() {
@@ -44,6 +51,8 @@ export default function PasswordInput({
   autoComplete = 'current-password',
   tone = 'primary',
   id,
+  minLength,
+  inputClassName,
 }: PasswordInputProps) {
   const [visible, setVisible] = useState(false)
 
@@ -52,16 +61,21 @@ export default function PasswordInput({
       ? 'focus:ring-red-500 focus:border-red-500'
       : 'focus:ring-blue-500 focus:border-blue-500'
 
+  const inputClasses =
+    inputClassName ??
+    `w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 pr-10 text-white focus:ring-2 ${ring} outline-none`
+
   return (
     <div className="relative">
       <input
         id={id}
         type={visible ? 'text' : 'password'}
         required={required}
+        minLength={minLength}
         autoComplete={autoComplete}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 pr-10 text-white focus:ring-2 ${ring} outline-none`}
+        className={inputClasses}
         placeholder={placeholder}
       />
       <button
