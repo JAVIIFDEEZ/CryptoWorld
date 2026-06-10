@@ -170,6 +170,30 @@ def send_verification_email(self, user_id: int) -> dict:
 
 
 @shared_task(
+    name="core.tasks.send_market_digest",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=300,
+)
+def send_market_digest(self) -> dict:
+    """
+    Envía el resumen semanal del mercado a los usuarios suscritos
+    (notify_market_digest=True). Programado por celery beat los lunes.
+    """
+    try:
+        from core.application.use_cases.send_market_digest import (
+            SendMarketDigestUseCase,
+        )
+
+        sent = SendMarketDigestUseCase().execute()
+        logger.info("send_market_digest: %d emails enviados", sent)
+        return {"sent": sent}
+    except Exception as exc:
+        logger.error("send_market_digest error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.send_password_reset_email",
     bind=True,
     max_retries=3,
