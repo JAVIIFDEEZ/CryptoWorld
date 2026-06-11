@@ -18,6 +18,7 @@ import {
   adminService,
   type AdminUser,
   type MarketSyncResult,
+  type SystemHealth,
 } from '@/services/adminService'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -48,6 +49,74 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
   )
 }
 
+function HealthChip({ label, ok, detail }: { label: string; ok: boolean; detail?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+        ok ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
+      }`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
+      {label}
+      {detail && <span className="text-slate-400 font-normal">· {detail}</span>}
+    </span>
+  )
+}
+
+/**
+ * Estado del sistema: chips de BD/cache/broker y modo del email.
+ * Si el email está en modo consola, banner explicando que los emails
+ * NO se entregan y qué variable falta — el fallo más silencioso del deploy.
+ */
+function SystemHealthPanel({ health }: { health: SystemHealth | null }) {
+  if (!health) return null
+
+  const { components } = health
+  const emailReal = components.email_backend !== 'console'
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-white">Estado del sistema</h3>
+        <div className="flex flex-wrap gap-2">
+          <HealthChip label="Base de datos" ok={components.database === 'ok'} />
+          <HealthChip label="Cache Redis" ok={components.cache === 'ok'} />
+          <HealthChip label="Broker Celery" ok={components.celery_broker === 'ok'} />
+          <HealthChip label="Email" ok={emailReal} detail={components.email_backend} />
+        </div>
+      </div>
+
+      {!emailReal && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3">
+          <p className="text-sm text-amber-300 font-medium">
+            Los emails NO se están entregando: el servidor está en modo consola.
+          </p>
+          <p className="text-xs text-amber-200/70 mt-1">
+            Los envíos (verificación, reset, alertas) solo se imprimen en los logs del backend.
+            Define <code className="text-amber-200">SENDGRID_API_KEY</code> (o las variables{' '}
+            <code className="text-amber-200">EMAIL_*</code> de SMTP) junto a{' '}
+            <code className="text-amber-200">DEFAULT_FROM_EMAIL</code> y{' '}
+            <code className="text-amber-200">FRONTEND_URL</code> en los servicios web y worker,
+            y redespliega. Guía completa en DEPLOY.md.
+          </p>
+        </div>
+      )}
+
+      {components.celery_broker === 'error' && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3">
+          <p className="text-sm text-amber-300 font-medium">
+            Broker Celery inaccesible: alertas y sincronización periódica detenidas.
+          </p>
+          <p className="text-xs text-amber-200/70 mt-1">
+            Los emails salen igualmente por el fallback síncrono, pero revisa que{' '}
+            <code className="text-amber-200">REDIS_URL</code> esté vinculada y el servicio worker en marcha.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AdminDashboardPage() {
   const { user: currentUser } = useAuth()
   const { showToast } = useToast()
@@ -55,6 +124,7 @@ export default function AdminDashboardPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
+  const [health, setHealth] = useState<SystemHealth | null>(null)
 
   // Búsqueda y paginación (client-side)
   const [search, setSearch] = useState('')
@@ -88,6 +158,15 @@ export default function AdminDashboardPage() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
+      })
+    // Estado de infraestructura: informativo, no bloquea el panel si falla
+    adminService
+      .getSystemHealth()
+      .then((data) => {
+        if (!cancelled) setHealth(data)
+      })
+      .catch(() => {
+        // El panel funciona igual sin el health check
       })
     return () => {
       cancelled = true
@@ -291,6 +370,9 @@ export default function AdminDashboardPage() {
         <StatCard label="Administradores" value={stats.admins} accent="text-fuchsia-400" />
         <StatCard label="Bloqueados" value={stats.blocked} accent="text-red-400" />
       </div>
+
+      {/* Estado de la infraestructura (BD, Redis, Celery, email) */}
+      <SystemHealthPanel health={health} />
 
       {/* Panel de sincronización */}
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">

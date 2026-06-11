@@ -42,6 +42,18 @@ export interface MarketSyncResult {
   errors: string[]
 }
 
+export interface SystemHealth {
+  status: 'ok' | 'degraded'
+  version: string
+  service: string
+  components: {
+    database: 'ok' | 'error'
+    cache: 'ok' | 'error'
+    celery_broker: 'ok' | 'error'
+    email_backend: 'sendgrid' | 'smtp' | 'console'
+  }
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const adminService = {
@@ -99,6 +111,15 @@ export const adminService = {
     const { data } = await apiClient.post<MarketSyncResult>('/admin/market/sync/', {
       per_page: perPage,
     })
+    return data
+  },
+
+  /**
+   * Estado del sistema: BD, cache, broker Celery y modo del email.
+   * GET /api/health/ (público, pero solo se muestra en el panel admin)
+   */
+  async getSystemHealth(): Promise<SystemHealth> {
+    const { data } = await apiClient.get<SystemHealth>('/health/')
     return data
   },
 }
