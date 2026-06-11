@@ -207,7 +207,7 @@ function AppShell() {
   }
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-slate-900 text-slate-100 flex flex-col">
+    <div className="app-shell-height overflow-hidden bg-slate-900 text-slate-100 flex flex-col">
       {/* Ticker bar — cotizaciones en tiempo real */}
       <TickerBar />
 
@@ -301,13 +301,22 @@ function AppShell() {
         </aside>
 
         <div className="flex-1 min-w-0 flex flex-col">
-          {/* Botón menú móvil */}
-          <div className="lg:hidden h-12 border-b border-slate-700/70 bg-slate-800/80 backdrop-blur px-4 flex items-center">
+          {/* Cabecera móvil: hamburguesa + marca */}
+          <div className="lg:hidden h-12 shrink-0 border-b border-slate-700/70 bg-slate-800/80 backdrop-blur px-3 flex items-center gap-3">
             <button
-              className="rounded-md px-2 py-1 bg-slate-700 text-slate-100 text-sm"
               onClick={() => setMobileMenuOpen(true)}
+              aria-label="Abrir menú de navegación"
+              className="rounded-lg p-2 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
             >
-              Menú
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <button
+              className="text-base font-bold tracking-tight"
+              onClick={() => navigate('/dashboard')}
+            >
+              <span className="text-blue-400">Crypto</span>World
             </button>
           </div>
 
@@ -315,7 +324,9 @@ function AppShell() {
             <Outlet />
           </main>
 
-          <nav className="lg:hidden border-t border-slate-700 bg-slate-800 px-1 py-2 flex justify-between">
+          {/* Barra de navegación inferior (móvil): siempre visible gracias a
+              la altura fija del shell; respeta la safe-area de iOS */}
+          <nav className="lg:hidden shrink-0 border-t border-slate-700 bg-slate-800 px-1 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex justify-between">
             {navItemsFlat.slice(0, 5).map((item) => (
               <NavLink
                 key={item.path}

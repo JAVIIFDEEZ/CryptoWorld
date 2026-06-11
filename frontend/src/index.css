@@ -134,3 +134,17 @@
     animation: none !important;
   }
 }
+
+/* ── Altura del shell de la app ──
+   100dvh respeta la barra de URL dinamica de los navegadores moviles
+   (iOS Safari, Chrome Android): el layout ocupa exactamente la pantalla
+   visible y la barra de navegacion inferior queda siempre anclada.
+   Fallback a 100vh para navegadores sin soporte dvh. */
+.app-shell-height {
+  height: 100vh;
+}
+@supports (height: 100dvh) {
+  .app-shell-height {
+    height: 100dvh;
+  }
+}

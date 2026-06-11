@@ -74,10 +74,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {/* Contenedor de toasts: aria-live para lectores de pantalla */}
+      {/* Contenedor de toasts: aria-live para lectores de pantalla.
+          En móvil se eleva para no tapar la barra de navegación inferior. */}
       <div
         aria-live="polite"
-        className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm"
+        className="fixed bottom-20 lg:bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm"
       >
         {toasts.map((toast) => (
           <div
