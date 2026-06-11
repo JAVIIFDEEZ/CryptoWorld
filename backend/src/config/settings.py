@@ -281,6 +281,15 @@ CELERY_TIMEZONE = "UTC"
 CELERY_ENABLE_UTC = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True  # Evita CPendingDeprecationWarning en Celery 6
 
+# Despliegues SIN worker dedicado (p. ej. Railway con un solo servicio):
+# con CELERY_TASK_ALWAYS_EAGER=True las llamadas .delay() se ejecutan de
+# forma sincrona en el propio proceso web. Sin esta variable y sin worker,
+# las tareas se encolan en Redis y nadie las consume jamas (los emails de
+# verificacion se quedan en la cola). Los errores no se propagan
+# (task_eager_propagates=False por defecto): un fallo de SendGrid no
+# convierte el registro de usuario en un 500.
+CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "False") == "True"
+
 # Tareas periódicas (celery beat)
 from celery.schedules import crontab  # noqa: E402
 
