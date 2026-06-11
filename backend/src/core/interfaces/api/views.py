@@ -31,6 +31,8 @@ from core.interfaces.api.serializers import (
     LogoutSerializer,
     VerifyEmailSerializer,
     UpdatePreferencesSerializer,
+    ChangeEmailRequestSerializer,
+    ChangeEmailConfirmSerializer,
     PasswordResetRequestSerializer,
     ResendVerificationRequestSerializer,
     PasswordResetConfirmSerializer,
@@ -376,9 +378,9 @@ class LogoutView(APIView):
 class MeView(APIView):
     """
     GET   /api/auth/me/ — Devolver los datos del usuario autenticado.
-    PATCH /api/auth/me/ — Actualizar preferencias de cuenta (moneda,
-                          notificaciones). Solo campos de preferencias:
-                          email/username no se modifican por aquí.
+    PATCH /api/auth/me/ — Actualizar nombre de usuario y preferencias de
+                          cuenta (moneda, notificaciones). El email tiene
+                          su propio flujo seguro en /auth/change-email/.
     """
     permission_classes = [IsAuthenticated]
 
@@ -389,6 +391,7 @@ class MeView(APIView):
         return {
             "id": user.pk,
             "email": user.email,
+            "pending_email": user.pending_email,
             "username": user.username,
             "is_active": user.is_active,
             "is_email_verified": user.is_email_verified,
@@ -412,13 +415,100 @@ class MeView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
+        validated = serializer.validated_data
+
+        # Unicidad del username: se comprueba aquí porque el serializer
+        # no conoce al usuario actual (hay que excluirlo de la búsqueda)
+        new_username = validated.get("username")
+        if new_username and (
+            UserModel.objects.filter(username__iexact=new_username)
+            .exclude(pk=user.pk)
+            .exists()
+        ):
+            return Response(
+                {"error": "El nombre de usuario ya está en uso."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         updated_fields = []
-        for field, value in serializer.validated_data.items():
+        for field, value in validated.items():
             setattr(user, field, value)
             updated_fields.append(field)
         user.save(update_fields=updated_fields)
 
         return Response(self._serialize(user), status=status.HTTP_200_OK)
+
+
+class ChangeEmailRequestView(APIView):
+    """
+    POST /api/auth/change-email/ — Solicitar el cambio de email.
+
+    Requiere la contraseña actual. Guarda la nueva dirección como
+    pendiente y envía el enlace de confirmación AL NUEVO correo; el
+    email de login no cambia hasta que se confirme.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_change_email"
+
+    def post(self, request):
+        from core.application.use_cases.change_email import RequestEmailChangeUseCase
+        from core.tasks import send_email_change_email as send_email_change_task
+
+        serializer = ChangeEmailRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            RequestEmailChangeUseCase().execute(
+                user_id=request.user.pk,
+                new_email=v["new_email"],
+                password=v["password"],
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        dispatch_task(send_email_change_task, request.user.pk)
+
+        return Response(
+            {
+                "message": (
+                    "Te hemos enviado un enlace de confirmación a la nueva "
+                    "dirección. Tu email actual sigue activo hasta que confirmes."
+                ),
+                "pending_email": request.user.pending_email,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChangeEmailConfirmView(APIView):
+    """
+    POST /api/auth/change-email/confirm/ — Confirmar el cambio con el
+    token recibido en el nuevo correo. No requiere sesión: el usuario
+    puede abrir el enlace desde cualquier dispositivo.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from core.application.use_cases.change_email import ConfirmEmailChangeUseCase
+
+        serializer = ChangeEmailConfirmSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            new_email = ConfirmEmailChangeUseCase().execute(
+                serializer.validated_data["token"]
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"message": f"Email actualizado correctamente a {new_email}."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class VerifyEmailView(APIView):

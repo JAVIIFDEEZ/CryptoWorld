@@ -171,6 +171,7 @@ REST_FRAMEWORK = {
         "auth_register": "10/hour",
         "auth_password_reset": "5/hour",
         "auth_resend_verification": "5/hour",
+        "auth_change_email": "5/hour",
         "auth_2fa": "10/min",
     },
 }

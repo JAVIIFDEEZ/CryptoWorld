@@ -100,19 +100,36 @@ class UpdatePreferencesSerializer(serializers.Serializer):
     Valida el cuerpo de PATCH /api/auth/me/.
 
     Todos los campos son opcionales: el cliente envía solo lo que cambia.
+    Además de las preferencias, permite actualizar el nombre de usuario
+    (la unicidad se comprueba en la vista, que conoce al usuario actual).
     """
+    username = serializers.CharField(min_length=3, max_length=150, required=False)
     preferred_currency = serializers.ChoiceField(
         choices=["usd", "eur", "gbp"], required=False
     )
     notify_price_alerts = serializers.BooleanField(required=False)
     notify_market_digest = serializers.BooleanField(required=False)
 
+    def validate_username(self, value: str) -> str:
+        return value.strip()
+
     def validate(self, data: dict) -> dict:
         if not data:
             raise serializers.ValidationError(
-                "Debes enviar al menos una preferencia para actualizar."
+                "Debes enviar al menos un campo para actualizar."
             )
         return data
+
+
+class ChangeEmailRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/change-email/."""
+    new_email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+
+class ChangeEmailConfirmSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/change-email/confirm/."""
+    token = serializers.CharField()
 
 
 class Enable2FASerializer(serializers.Serializer):

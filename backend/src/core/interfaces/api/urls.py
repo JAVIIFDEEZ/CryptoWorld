@@ -54,7 +54,18 @@ urlpatterns = [
         "auth/change-password/",
         views.ChangePasswordView.as_view(),
         name="auth-change-password",
-    ),    
+    ),
+    # ── Auth — Cambio de email (con verificación al nuevo correo) ──
+    path(
+        "auth/change-email/",
+        views.ChangeEmailRequestView.as_view(),
+        name="auth-change-email",
+    ),
+    path(
+        "auth/change-email/confirm/",
+        views.ChangeEmailConfirmView.as_view(),
+        name="auth-change-email-confirm",
+    ),
     path(
         "auth/delete-account/",
         views.DeleteAccountView.as_view(),

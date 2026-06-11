@@ -194,6 +194,32 @@ def send_market_digest(self) -> dict:
 
 
 @shared_task(
+    name="core.tasks.send_email_change_email",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def send_email_change_email(self, user_id: int) -> dict:
+    """
+    Envía el enlace de confirmación de cambio de email a la dirección
+    pendiente (pending_email) del usuario. Despachado con dispatch_task
+    desde ChangeEmailRequestView.
+    """
+    try:
+        from core.application.use_cases.change_email import RequestEmailChangeUseCase
+
+        RequestEmailChangeUseCase.send_confirmation_email(user_id)
+        logger.info("send_email_change_email: enviado para user_id=%d", user_id)
+        return {"status": "sent", "user_id": user_id}
+    except ValueError as exc:
+        logger.warning("send_email_change_email: ValueError user_id=%d — %s", user_id, exc)
+        return {"status": "skipped", "reason": str(exc)}
+    except Exception as exc:
+        logger.error("send_email_change_email error user_id=%d: %s", user_id, exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.send_password_reset_email",
     bind=True,
     max_retries=3,

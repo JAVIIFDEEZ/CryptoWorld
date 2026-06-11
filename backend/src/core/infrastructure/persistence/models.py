@@ -62,6 +62,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="True cuando el usuario confirma su email.",
     )
+    pending_email = models.EmailField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Nueva dirección solicitada por el usuario, a la espera de "
+            "confirmación. Solo sustituye a email cuando el usuario "
+            "verifica el enlace enviado a la nueva dirección."
+        ),
+    )
     totp_secret = models.CharField(
         max_length=64,
         null=True,
