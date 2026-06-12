@@ -108,7 +108,19 @@ function AssetDetailPage() {
             )}
             <div>
               <h1 className="text-2xl font-bold text-white">{asset.name}</h1>
-              <p className="text-slate-400 text-sm">{asset.symbol}</p>
+              <p className="text-slate-400 text-sm">
+                {asset.symbol}
+                {/* Enlace <a> (no <Link>): /cripto/* lo sirve el backend vía
+                    proxy de Vercel, fuera del router de la SPA */}
+                <a
+                  href={`/cripto/${asset.coingecko_id ?? asset.symbol.toLowerCase()}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="ml-3 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Ver ficha técnica pública ↗
+                </a>
+              </p>
             </div>
           </div>
           <div className="text-right">
