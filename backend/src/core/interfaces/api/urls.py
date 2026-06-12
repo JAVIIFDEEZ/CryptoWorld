@@ -86,6 +86,7 @@ urlpatterns = [
     path("assets/", views.AssetListView.as_view(), name="asset-list"),
     path("assets/sparklines/", views.AssetSparklinesView.as_view(), name="asset-sparklines"),
     path("assets/<str:symbol>/info/", views.AssetDetailInfoView.as_view(), name="asset-detail-info"),
+    path("assets/<str:symbol>/confluence/", views.ConfluenceCardView.as_view(), name="asset-confluence"),
     path("assets/<str:symbol>/ohlcv/", views.AssetOhlcvView.as_view(), name="asset-ohlcv"),
 
     # ── Analysis ────────────────────────────────────────────────────

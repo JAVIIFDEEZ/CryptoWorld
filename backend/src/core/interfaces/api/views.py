@@ -989,6 +989,34 @@ class MarketOverviewView(APIView):
         cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
         return Response(data, status=status.HTTP_200_OK)
 
+class ConfluenceCardView(APIView):
+    """
+    GET /api/assets/<symbol>/confluence/ — Ficha de confluencia técnica.
+
+    Agrega tendencia, soportes/resistencias, Fibonacci, resumen de
+    indicadores, veredicto con confianza y narrativa en español.
+    Cacheada 1 h en el caso de uso (compartida con la landing SEO).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, symbol: str):
+        from core.application.use_cases.get_confluence_card import (
+            AssetNotFoundError,
+            ConfluenceDataUnavailableError,
+            GetConfluenceCardUseCase,
+        )
+
+        use_case = GetConfluenceCardUseCase(asset_repo=DjangoCryptoAssetRepository())
+        try:
+            dto = use_case.execute(symbol)
+        except AssetNotFoundError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ConfluenceDataUnavailableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(dto.as_dict(), status=status.HTTP_200_OK)
+
+
 class FxRatesView(APIView):
     """
     GET /api/market/fx/ — Tasas de conversión USD→EUR/GBP.
