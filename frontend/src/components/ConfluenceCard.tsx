@@ -93,7 +93,7 @@ export default function ConfluenceCard({ symbol }: Readonly<{ symbol: string }>)
         <div>
           <h2 className="text-lg font-semibold text-white">Ficha de confluencia técnica</h2>
           <p className="text-xs text-slate-500">
-            Veredicto agregado · gráfico diario · fuente: {card.data_source}
+            Resumen automático · <span className="text-slate-400 font-medium">marco diario (1D)</span> · fuente: {card.data_source}
           </p>
         </div>
         <a
@@ -187,7 +187,11 @@ export default function ConfluenceCard({ symbol }: Readonly<{ symbol: string }>)
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-600 mt-5">
+      <p className="text-[11px] text-slate-500 mt-5">
+        Indicadores calculados sobre velas diarias. Para explorar otros marcos temporales,
+        predicción ML, patrones o backtesting, usa el panel de análisis interactivo más abajo ↓
+      </p>
+      <p className="text-[11px] text-slate-600 mt-1">
         Análisis generado automáticamente con fines informativos. No constituye asesoramiento financiero.
       </p>
     </div>

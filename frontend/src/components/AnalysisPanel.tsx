@@ -290,6 +290,15 @@ export default function AnalysisPanel({ symbol }: Props) {
 
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700">
+      {/* ── Cabecera: diferencia este panel (interactivo, multi-marco)
+             de la ficha de confluencia de arriba (resumen diario fijo) ── */}
+      <div className="px-4 pt-4 pb-1">
+        <h2 className="text-lg font-semibold text-white">Análisis técnico interactivo</h2>
+        <p className="text-xs text-slate-500">
+          Indicadores, predicción ML, patrones y backtesting en el marco temporal que elijas.
+        </p>
+      </div>
+
       {/* ── Pestañas ─────────────────────────────────────────── */}
       <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b border-slate-700 overflow-x-auto">
         {TABS.map((t) => (

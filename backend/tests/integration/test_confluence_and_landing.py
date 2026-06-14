@@ -121,6 +121,18 @@ class TestSeoLanding:
         assert response.status_code == 200
 
     @pytest.mark.integration
+    def test_landing_interlinks_other_assets(self, client, btc_asset, fake_ohlcv):
+        """Interlinking SEO: la landing enlaza a otras criptos del catálogo."""
+        CryptoAsset.objects.create(
+            symbol="ETH", name="Ethereum", current_price=3000,
+            coingecko_id="ethereum", market_cap=400_000_000_000,
+        )
+        html = client.get("/cripto/bitcoin").content.decode("utf-8")
+        assert "Otras criptomonedas analizadas" in html
+        assert "/cripto/ethereum" in html
+        assert "Ethereum (ETH)" in html
+
+    @pytest.mark.integration
     def test_landing_unknown_slug_is_404(self, client, db):
         assert client.get("/cripto/no-existe").status_code == 404
 

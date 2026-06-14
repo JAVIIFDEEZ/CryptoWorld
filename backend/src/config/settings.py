@@ -134,6 +134,9 @@ LANGUAGE_CODE = "es-es"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+# Agrupa miles con el separador del locale (es-ES: "64.307,35") en las
+# plantillas server-side. Da formato numérico consistente a las landings SEO.
+USE_THOUSAND_SEPARATOR = True
 
 # ------------------------------------------------------------------
 # Archivos estáticos

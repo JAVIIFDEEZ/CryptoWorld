@@ -49,6 +49,22 @@ def _public_base_url() -> str:
     return settings.FRONTEND_URL.rstrip("/")
 
 
+def _fmt_usd(value: float) -> str:
+    """Formato es-ES (64.307,35) para los textos generados en Python
+    (meta description, OG): el separador de miles del template no aplica aquí."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    abs_v = abs(v)
+    decimals = 2 if abs_v >= 1 else 4 if abs_v >= 0.01 else 6
+    return f"{v:,.{decimals}f}".replace(",", "@").replace(".", ",").replace("@", ".")
+
+
+def _slug_of(asset: CryptoAsset) -> str:
+    return asset.coingecko_id or asset.symbol.lower()
+
+
 def _resolve_asset(slug: str) -> CryptoAsset:
     """Las landings usan el coingecko_id como slug ('bitcoin'); se acepta
     también el ticker ('btc') como alias para enlaces manuales."""
@@ -84,10 +100,22 @@ def crypto_landing(request, slug: str):
     )
     meta_description = (
         f"Análisis técnico de {card['name']} ({card['symbol']}): precio "
-        f"{card['last_price']} USD, veredicto {verdict_label.lower()} con "
+        f"{_fmt_usd(card['last_price'])} USD, veredicto {verdict_label.lower()} con "
         f"{card['verdict']['confidence_pct']}% de confianza, tendencia "
         f"{trend_label.lower()}, niveles de soporte, resistencia y Fibonacci."
     )
+
+    # Interlinking SEO: enlaces a otras landings (reparte autoridad y
+    # facilita el rastreo). Top por capitalización, excluyendo el actual.
+    other_assets = [
+        {"name": a.name, "symbol": a.symbol, "slug": _slug_of(a)}
+        for a in (
+            CryptoAsset.objects.exclude(pk=asset.pk)
+            .exclude(coingecko_id__isnull=True)
+            .exclude(coingecko_id="")
+            .order_by("-market_cap")[:12]
+        )
+    ]
 
     json_ld = json.dumps(
         {
@@ -118,6 +146,7 @@ def crypto_landing(request, slug: str):
         "trend_tone": trend_tone,
         "app_url": f"{base_url}/assets/{card['symbol']}",
         "base_url": base_url,
+        "other_assets": other_assets,
     }
     return render(request, "landing/crypto_card.html", context)
 

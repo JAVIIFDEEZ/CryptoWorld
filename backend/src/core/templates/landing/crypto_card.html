@@ -1,5 +1,7 @@
-{# landing/crypto_card.html — Ficha técnica pública e indexable de un activo.
-   Renderizada 100% por servidor: todo el contenido es visible sin JS. #}
+{% comment %}
+  landing/crypto_card.html — Ficha técnica pública e indexable de un activo.
+  Renderizada 100% por servidor: todo el contenido es visible sin JS.
+{% endcomment %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -61,6 +63,12 @@
     @media (max-width: 640px) { .cols { grid-template-columns: 1fr; } }
     .analysis p { margin-bottom: 14px; color: #cbd5e1; font-size: 15px; }
     .muted { color: #64748b; font-size: 12px; }
+    .links { display: flex; flex-wrap: wrap; gap: 8px; }
+    .links a {
+      font-size: 13px; padding: 6px 12px; border-radius: 999px;
+      border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
+    }
+    .links a:hover { border-color: #3b82f6; color: #fff; }
     footer { margin-top: 26px; color: #64748b; font-size: 12px; line-height: 1.7; }
   </style>
 </head>
@@ -143,6 +151,17 @@
         </table>
       </section>
     </div>
+
+    {% if other_assets %}
+    <section>
+      <h2>Otras criptomonedas analizadas</h2>
+      <div class="links">
+        {% for o in other_assets %}
+          <a href="{{ base_url }}/cripto/{{ o.slug }}">{{ o.name }} ({{ o.symbol }})</a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
 
     <footer>
       <p>
