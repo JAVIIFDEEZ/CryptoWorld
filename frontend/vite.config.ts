@@ -9,8 +9,13 @@ import path from 'path'
  *   import { authService } from '@/services/authService'
  *
  * El proxy reescribe peticiones a /api/* hacia el backend Django
- * en desarrollo, evitando problemas de CORS.
+ * en desarrollo, evitando problemas de CORS. También proxea las rutas
+ * SEO renderizadas por servidor (/cripto, /sitemap.xml, /robots.txt) para
+ * que en desarrollo se comporten igual que en producción (donde Vercel
+ * las redirige a Railway, ver vercel.json) y no las capture el router SPA.
  */
+const BACKEND_TARGET = 'http://localhost:8000'
+
 export default defineConfig({
   plugins: [react()],
 
@@ -23,12 +28,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Durante desarrollo, redirige /api/* al backend Django
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        secure: false,
-      },
+      // Durante desarrollo, redirige al backend Django
+      '/api': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
+      '/cripto': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
+      '/sitemap.xml': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
+      '/robots.txt': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
     },
   },
 })
