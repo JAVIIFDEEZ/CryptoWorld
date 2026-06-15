@@ -102,6 +102,11 @@ urlpatterns = [
         name="analysis-backtest-robust",
     ),
     path(
+        "analysis/backtest/robust/compare/",
+        views.RobustBacktestCompareView.as_view(),
+        name="analysis-backtest-robust-compare",
+    ),
+    path(
         "analysis/backtest/robust/<str:job_id>/",
         views.RobustBacktestStatusView.as_view(),
         name="analysis-backtest-robust-status",

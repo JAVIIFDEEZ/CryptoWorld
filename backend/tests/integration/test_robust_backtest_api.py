@@ -35,10 +35,15 @@ def celery_eager(monkeypatch):
     task_store_eager_result, activado en settings).
     """
     from core.tasks import run_robust_backtest as task
+    from core.tasks import compare_strategies_robustness as compare_task
 
     monkeypatch.setattr(
         task, "delay",
         lambda *args, **kwargs: task.apply(args=args, kwargs=kwargs),
+    )
+    monkeypatch.setattr(
+        compare_task, "delay",
+        lambda *args, **kwargs: compare_task.apply(args=args, kwargs=kwargs),
     )
     yield
 
@@ -116,3 +121,54 @@ class TestRobustBacktestApi:
         assert launch.status_code == 202
         status = authenticated_client.get(f"/api/analysis/backtest/robust/{launch.data['job_id']}/")
         assert "error" in status.data["result"]
+
+
+class TestPresetAndCache:
+
+    @pytest.mark.unit
+    def test_presets_differ_and_carry_objective(self):
+        from core.application.use_cases.run_robust_backtest import config_for_preset
+        fast = config_for_preset("fast", "sortino")
+        thorough = config_for_preset("thorough", "sortino")
+        assert fast.n_trials < thorough.n_trials
+        assert fast.objective == "sortino" and thorough.objective == "sortino"
+        # preset desconocido cae al balanceado
+        assert config_for_preset("xxx").n_trials == config_for_preset("balanced").n_trials
+
+    @pytest.mark.integration
+    def test_second_run_is_served_from_cache(self, fast_suite):
+        from core.application.use_cases.run_robust_backtest import RunRobustBacktestUseCase
+        uc = RunRobustBacktestUseCase()
+        first = uc.execute(asset_symbol="BTC", strategy="rsi_reversal", preset="fast")
+        second = uc.execute(asset_symbol="BTC", strategy="rsi_reversal", preset="fast")
+        assert "cached" not in first
+        assert second.get("cached") is True
+        assert second["robustness_score"] == first["robustness_score"]
+
+
+class TestStrategyComparison:
+
+    @pytest.mark.integration
+    def test_compare_launch_then_poll_returns_ranking(self, authenticated_client, celery_eager, fast_suite):
+        launch = authenticated_client.post(
+            "/api/analysis/backtest/robust/compare/",
+            {"asset_symbol": "BTC", "interval": "1d", "preset": "fast"},
+            format="json",
+        )
+        assert launch.status_code == 202
+        job_id = launch.data["job_id"]
+
+        status = authenticated_client.get(f"/api/analysis/backtest/robust/{job_id}/")
+        assert status.status_code == 200
+        assert status.data["status"] == "SUCCESS"
+
+        result = status.data["result"]
+        assert "ranking" in result and "best" in result
+        assert len(result["ranking"]) == 5  # las 5 estrategias
+        scores = [r["robustness_score"] for r in result["ranking"] if "robustness_score" in r]
+        assert scores == sorted(scores, reverse=True)  # ordenado por score desc
+
+    @pytest.mark.integration
+    def test_compare_requires_authentication(self, api_client):
+        resp = api_client.post("/api/analysis/backtest/robust/compare/", {"asset_symbol": "BTC"}, format="json")
+        assert resp.status_code == 401

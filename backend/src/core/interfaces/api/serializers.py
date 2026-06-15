@@ -373,6 +373,25 @@ class RobustBacktestRequestSerializer(serializers.Serializer):
         choices=["sharpe", "sortino", "calmar", "total_return"],
         default="sharpe", required=False,
     )
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="balanced", required=False,
+    )
+
+
+class RobustCompareRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/analysis/backtest/robust/compare/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    objective = serializers.ChoiceField(
+        choices=["sharpe", "sortino", "calmar", "total_return"],
+        default="sharpe", required=False,
+    )
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="fast", required=False,
+    )
 
 
 class AddTradeSerializer(serializers.Serializer):

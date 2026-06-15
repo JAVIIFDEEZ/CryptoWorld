@@ -264,6 +264,7 @@ def run_robust_backtest(
     limit: int = 365,
     initial_capital: float = 10000.0,
     objective: str = "sharpe",
+    preset: str = "balanced",
 ) -> dict:
     """
     Ejecuta la suite de robustez completa (walk-forward, Optuna, Monte Carlo,
@@ -285,6 +286,7 @@ def run_robust_backtest(
             limit=limit,
             initial_capital=initial_capital,
             objective=objective,
+            preset=preset,
         )
         logger.info(
             "run_robust_backtest: %s/%s → %s",
@@ -296,4 +298,39 @@ def run_robust_backtest(
             "run_robust_backtest error %s/%s: %s",
             asset_symbol, strategy, exc, exc_info=True,
         )
+        raise
+
+
+@shared_task(
+    name="core.tasks.compare_strategies_robustness",
+    bind=True,
+    max_retries=0,
+)
+def compare_strategies_robustness(
+    self,
+    asset_symbol: str,
+    interval: str = "1d",
+    objective: str = "sharpe",
+    preset: str = "fast",
+) -> dict:
+    """
+    Evalúa la robustez de las 5 estrategias y devuelve el ranking por
+    Robustness Score. Reutiliza la caché por estrategia.
+    """
+    try:
+        from core.application.use_cases.run_robust_backtest import (
+            CompareStrategiesUseCase,
+        )
+
+        result = CompareStrategiesUseCase().execute(
+            asset_symbol=asset_symbol, interval=interval,
+            objective=objective, preset=preset,
+        )
+        logger.info(
+            "compare_strategies_robustness: %s → mejor %s",
+            asset_symbol, result.get("best", {}).get("strategy", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error("compare_strategies_robustness error %s: %s", asset_symbol, exc, exc_info=True)
         raise

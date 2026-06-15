@@ -52,6 +52,7 @@ from core.interfaces.api.serializers import (
     NewsItemSerializer,
     DeleteAccountSerializer,
     RobustBacktestRequestSerializer,
+    RobustCompareRequestSerializer,
     CalculateAnalysisSerializer,
     SignalsRequestSerializer,
     PredictionRequestSerializer,
@@ -1353,6 +1354,39 @@ class RobustBacktestLaunchView(APIView):
             limit=v.get("limit", 365),
             initial_capital=v.get("initial_capital", 10000.0),
             objective=v.get("objective", "sharpe"),
+            preset=v.get("preset", "balanced"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/analysis/backtest/robust/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class RobustBacktestCompareView(APIView):
+    """
+    POST /api/analysis/backtest/robust/compare/ — Lanza la comparación de las
+    5 estrategias como tarea Celery y devuelve un job_id. El resultado se
+    consulta con el mismo endpoint de estado (.../robust/<job_id>/).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = RobustCompareRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import compare_strategies_robustness as task
+
+        v = serializer.validated_data
+        async_result = task.delay(
+            asset_symbol=v["asset_symbol"],
+            interval=v.get("interval", "1d"),
+            objective=v.get("objective", "sharpe"),
+            preset=v.get("preset", "fast"),
         )
         return Response(
             {

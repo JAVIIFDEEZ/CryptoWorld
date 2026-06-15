@@ -11,7 +11,7 @@ con la cadena compartida Binance → KuCoin → CoinGecko.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -44,6 +44,27 @@ class RobustnessConfig:
     seed: int = 42
 
 
+# Presets de cómputo: rapidez vs exhaustividad. El usuario elige según
+# cuánto quiera esperar (la suite son cientos de backtests).
+_PRESETS = {
+    "fast": RobustnessConfig(n_trials=12, wf_splits=2, wf_trials=6, n_perms=30, n_sims=300),
+    "balanced": RobustnessConfig(n_trials=25, wf_splits=3, wf_trials=12, n_perms=80, n_sims=600),
+    "thorough": RobustnessConfig(n_trials=40, wf_splits=4, wf_trials=20, n_perms=150, n_sims=1000),
+}
+DEFAULT_PRESET = "balanced"
+
+# La suite es determinista (semillas fijas); cachear su resultado evita
+# recomputar cientos de backtests en cada clic. TTL alineado con los datos.
+_CACHE_TTL = 3600  # 1 hora
+
+
+def config_for_preset(preset: str, objective: str = "sharpe") -> RobustnessConfig:
+    """Config de cómputo del preset, con el objetivo de optimización elegido."""
+    base = _PRESETS.get(preset, _PRESETS[DEFAULT_PRESET])
+    return replace(base, objective=objective)
+
+
+
 def _stitch_oos_equity(folds: list[dict], initial_capital: float) -> list[float]:
     """Encadena las curvas OOS de cada fold en una sola serie continua."""
     equity = [round(initial_capital, 2)]
@@ -58,6 +79,18 @@ def _stitch_oos_equity(folds: list[dict], initial_capital: float) -> list[float]
             base = point
             equity.append(round(capital, 2))
     return equity
+
+
+def _json_safe(value):
+    """Sustituye inf/nan por None recursivamente: el payload pasa por JSON
+    (DRF/Celery-Redis) y los floats no finitos no son JSON-compliant."""
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def run_robustness_suite(
@@ -153,7 +186,7 @@ def run_robustness_suite(
         k: v for k, v in optimization.items() if k != "trials"
     }
 
-    return {
+    return _json_safe({
         "strategy": strategy,
         "strategy_name": STRATEGIES[strategy]["name"],
         "interval": interval,
@@ -187,11 +220,11 @@ def run_robustness_suite(
         },
         "optimization": optimization_public,
         "charts": charts,
-    }
+    })
 
 
 class RunRobustBacktestUseCase:
-    """Carga el OHLCV y ejecuta la suite de robustez."""
+    """Carga el OHLCV y ejecuta la suite de robustez, con caché de 1 hora."""
 
     def execute(
         self,
@@ -201,11 +234,13 @@ class RunRobustBacktestUseCase:
         limit: int = 365,
         initial_capital: float = 10000.0,
         objective: str = "sharpe",
+        preset: str = DEFAULT_PRESET,
         config: RobustnessConfig | None = None,
     ) -> dict:
         # Import diferido: mantiene run_robustness_suite (dominio puro)
         # importable sin arrastrar la infraestructura/Django.
         from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+        from django.core.cache import cache
 
         symbol = asset_symbol.upper()
 
@@ -214,6 +249,11 @@ class RunRobustBacktestUseCase:
                 "error": f"Estrategia '{strategy}' no reconocida.",
                 "available_strategies": list(STRATEGIES.keys()),
             }
+
+        cache_key = f"robust_bt:{symbol}:{strategy}:{interval}:{objective}:{preset}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return {**cached, "cached": True}
 
         result = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
         if result is None or result.df.empty or len(result.df) < MIN_CANDLES:
@@ -224,13 +264,7 @@ class RunRobustBacktestUseCase:
                 ),
             }
 
-        cfg = config or RobustnessConfig()
-        if objective and objective != cfg.objective:
-            cfg = RobustnessConfig(
-                n_trials=cfg.n_trials, wf_splits=cfg.wf_splits, wf_trials=cfg.wf_trials,
-                n_perms=cfg.n_perms, n_sims=cfg.n_sims, objective=objective, seed=cfg.seed,
-            )
-
+        cfg = config or config_for_preset(preset, objective)
         report = run_robustness_suite(
             result.df, strategy, interval=interval,
             initial_capital=initial_capital, config=cfg,
@@ -238,8 +272,69 @@ class RunRobustBacktestUseCase:
         report["asset_symbol"] = symbol
         report["data_source"] = result.source
         report["candles_count"] = len(result.df)
+        report["preset"] = preset
+        cache.set(cache_key, report, _CACHE_TTL)
         logger.info(
-            "Suite de robustez %s/%s → %s (%d/100)",
-            symbol, strategy, report.get("verdict"), report.get("robustness_score", 0),
+            "Suite de robustez %s/%s [%s] → %s (%d/100)",
+            symbol, strategy, preset, report.get("verdict"), report.get("robustness_score", 0),
         )
         return report
+
+
+class CompareStrategiesUseCase:
+    """
+    Ejecuta la suite de robustez para las 5 estrategias y devuelve un ranking
+    por Robustness Score. Reutiliza la caché por estrategia, así que repetir
+    la comparación es prácticamente instantáneo.
+    """
+
+    def execute(
+        self,
+        asset_symbol: str,
+        interval: str = "1d",
+        objective: str = "sharpe",
+        preset: str = "fast",
+    ) -> dict:
+        symbol = asset_symbol.upper()
+        runner = RunRobustBacktestUseCase()
+        rows = []
+        for strat in STRATEGIES:
+            rep = runner.execute(
+                asset_symbol=symbol, strategy=strat, interval=interval,
+                objective=objective, preset=preset,
+            )
+            if "error" in rep:
+                rows.append({"strategy": strat, "strategy_name": STRATEGIES[strat]["name"], "error": rep["error"]})
+                continue
+            rows.append({
+                "strategy": strat,
+                "strategy_name": rep["strategy_name"],
+                "robustness_score": rep["robustness_score"],
+                "verdict": rep["verdict"],
+                "best_params": rep["best_params"],
+                "sharpe": rep["metrics"]["sharpe"],
+                "max_drawdown_pct": rep["metrics"]["max_drawdown_pct"],
+                "pbo": rep["diagnostics"]["pbo"].get("pbo"),
+                "dsr": rep["diagnostics"]["deflated_sharpe"].get("dsr"),
+                "oos_efficiency": rep["diagnostics"]["walk_forward_anchored"].get("efficiency"),
+            })
+
+        scored = [r for r in rows if "error" not in r]
+        failed = [r for r in rows if "error" in r]
+        scored.sort(key=lambda r: r["robustness_score"], reverse=True)
+
+        if not scored:
+            return {
+                "error": "Ninguna estrategia pudo evaluarse.",
+                "details": failed,
+                "asset_symbol": symbol,
+            }
+
+        return {
+            "asset_symbol": symbol,
+            "interval": interval,
+            "objective": objective,
+            "preset": preset,
+            "ranking": scored + failed,
+            "best": scored[0],
+        }

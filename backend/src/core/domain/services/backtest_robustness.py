@@ -335,12 +335,18 @@ def deflated_sharpe_ratio(returns, trial_returns_list) -> dict:
     """
     r = np.asarray(returns, dtype=float)
     T = r.size
-    if T < 4:
-        return {"dsr": None, "note": "Serie demasiado corta para DSR."}
+    if T < 4 or r.std(ddof=1) == 0:
+        # Sin variación (p. ej. estrategia sin operaciones) no hay Sharpe que deflactar
+        return {"dsr": None, "note": "Serie constante o demasiado corta para DSR."}
 
     sr_hat = _per_period_sharpe(r)
     sk = float(skew(r))
     ku = float(kurtosis(r, fisher=False))  # kurtosis total (3 si normal)
+    # Series casi degeneradas pueden dar skew/kurt no finitos: asumir normal
+    if not np.isfinite(sk):
+        sk = 0.0
+    if not np.isfinite(ku):
+        ku = 3.0
 
     trial_sr = np.array([
         _per_period_sharpe(tr) for tr in trial_returns_list if len(tr) >= 2
