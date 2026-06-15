@@ -45,3 +45,6 @@ nginx/certbot/
 # ── OS ─────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ── Redis (artefacto local de tests) ──────────────────────────────
+dump.rdb
