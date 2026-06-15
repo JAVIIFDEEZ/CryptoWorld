@@ -711,56 +711,94 @@ STRATEGIES = {
     "rsi_reversal": {
         "name": "RSI Reversal",
         "description": "Comprar cuando RSI < 30 (sobreventa), vender cuando RSI > 70 (sobrecompra).",
+        "param_space": [
+            {"name": "window", "type": "int", "low": 7, "high": 21, "default": 14},
+            {"name": "oversold", "type": "int", "low": 20, "high": 35, "default": 30},
+            {"name": "overbought", "type": "int", "low": 65, "high": 80, "default": 70},
+        ],
     },
     "macd_crossover": {
         "name": "MACD Crossover",
         "description": "Comprar cuando MACD cruza por encima de la señal, vender al revés.",
+        "param_space": [
+            {"name": "fast", "type": "int", "low": 8, "high": 16, "default": 12},
+            {"name": "slow", "type": "int", "low": 20, "high": 34, "default": 26},
+            {"name": "signal", "type": "int", "low": 6, "high": 12, "default": 9},
+        ],
     },
     "bollinger_bounce": {
         "name": "Bollinger Bounce",
         "description": "Comprar al tocar banda inferior, vender al tocar banda superior.",
+        "param_space": [
+            {"name": "window", "type": "int", "low": 14, "high": 30, "default": 20},
+            {"name": "dev", "type": "float", "low": 1.5, "high": 3.0, "default": 2.0},
+        ],
     },
     "sma_crossover": {
         "name": "SMA Crossover",
         "description": "Comprar cuando SMA rápida (20) cruza por encima de SMA lenta (50).",
+        "param_space": [
+            {"name": "fast", "type": "int", "low": 10, "high": 30, "default": 20},
+            {"name": "slow", "type": "int", "low": 40, "high": 100, "default": 50},
+        ],
     },
     "ema_trend": {
         "name": "EMA Trend",
         "description": "Comprar cuando precio > EMA(26), vender cuando precio < EMA(26).",
+        "param_space": [
+            {"name": "window", "type": "int", "low": 14, "high": 40, "default": 26},
+        ],
     },
 }
 
 
-def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000.0) -> dict:
+def strategy_param_space(strategy: str) -> list[dict]:
+    """Espacio de parámetros optimizables de una estrategia (rangos + defaults)."""
+    return STRATEGIES[strategy]["param_space"]
+
+
+def strategy_defaults(strategy: str) -> dict:
+    """Valores por defecto de los parámetros (reproducen el comportamiento clásico)."""
+    return {p["name"]: p["default"] for p in STRATEGIES[strategy]["param_space"]}
+
+
+def _merge_params(strategy: str, params: Optional[dict]) -> dict:
+    """Combina los parámetros recibidos con los defaults; ignora claves desconocidas."""
+    merged = strategy_defaults(strategy)
+    if params:
+        for key, value in params.items():
+            if key in merged:
+                merged[key] = value
+    return merged
+
+
+def _generate_signals(df: pd.DataFrame, strategy: str, params: dict) -> np.ndarray:
     """
-    Ejecuta un backtest de una estrategia predefinida sobre datos OHLCV.
-
-    Returns:
-        Dict con métricas de rendimiento y lista de trades.
+    Genera el array de señales (1=compra, -1=venta, 0=hold) de una estrategia
+    según sus parámetros. Con los defaults reproduce exactamente la lógica
+    clásica; solo cambia QUÉ parámetros usa, no el algoritmo.
     """
-    if strategy not in STRATEGIES:
-        return {"error": f"Estrategia '{strategy}' no reconocida. Opciones: {list(STRATEGIES.keys())}"}
-
-    if len(df) < 60:
-        return {"error": "Se necesitan al menos 60 velas para backtesting."}
-
     close = df["close"].values
     n = len(close)
-    signals = np.zeros(n)  # 1 = buy, -1 = sell, 0 = hold
+    signals = np.zeros(n)
 
-    # ── Generar señales según estrategia ───────────────────────────
     if strategy == "rsi_reversal":
-        rsi_series = ta_lib.momentum.RSIIndicator(df["close"], window=14).rsi()
-        rsi_vals = rsi_series.values
-        for i in range(14, n):
+        window = int(params["window"])
+        oversold = float(params["oversold"])
+        overbought = float(params["overbought"])
+        rsi_vals = ta_lib.momentum.RSIIndicator(df["close"], window=window).rsi().values
+        for i in range(window, n):
             if not np.isnan(rsi_vals[i]):
-                if rsi_vals[i] < 30:
+                if rsi_vals[i] < oversold:
                     signals[i] = 1
-                elif rsi_vals[i] > 70:
+                elif rsi_vals[i] > overbought:
                     signals[i] = -1
 
     elif strategy == "macd_crossover":
-        macd_obj = ta_lib.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
+        fast, slow, sign = int(params["fast"]), int(params["slow"]), int(params["signal"])
+        if fast >= slow:
+            return signals  # combinación inválida (rápida ≥ lenta) → sin operaciones
+        macd_obj = ta_lib.trend.MACD(df["close"], window_slow=slow, window_fast=fast, window_sign=sign)
         macd_line = macd_obj.macd().values
         sig_line = macd_obj.macd_signal().values
         for i in range(1, n):
@@ -771,10 +809,12 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
                     signals[i] = -1
 
     elif strategy == "bollinger_bounce":
-        bb = ta_lib.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+        window = int(params["window"])
+        dev = float(params["dev"])
+        bb = ta_lib.volatility.BollingerBands(df["close"], window=window, window_dev=dev)
         upper = bb.bollinger_hband().values
         lower = bb.bollinger_lband().values
-        for i in range(20, n):
+        for i in range(window, n):
             if not np.isnan(upper[i]) and not np.isnan(lower[i]):
                 if close[i] <= lower[i]:
                     signals[i] = 1
@@ -782,23 +822,123 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
                     signals[i] = -1
 
     elif strategy == "sma_crossover":
-        s20 = ta_lib.trend.SMAIndicator(df["close"], window=20).sma_indicator().values
-        s50 = ta_lib.trend.SMAIndicator(df["close"], window=50).sma_indicator().values
+        fast, slow = int(params["fast"]), int(params["slow"])
+        if fast >= slow:
+            return signals
+        s_fast = ta_lib.trend.SMAIndicator(df["close"], window=fast).sma_indicator().values
+        s_slow = ta_lib.trend.SMAIndicator(df["close"], window=slow).sma_indicator().values
         for i in range(1, n):
-            if not np.isnan(s20[i]) and not np.isnan(s50[i]):
-                if s20[i] > s50[i] and s20[i - 1] <= s50[i - 1]:
+            if not np.isnan(s_fast[i]) and not np.isnan(s_slow[i]):
+                if s_fast[i] > s_slow[i] and s_fast[i - 1] <= s_slow[i - 1]:
                     signals[i] = 1
-                elif s20[i] < s50[i] and s20[i - 1] >= s50[i - 1]:
+                elif s_fast[i] < s_slow[i] and s_fast[i - 1] >= s_slow[i - 1]:
                     signals[i] = -1
 
     elif strategy == "ema_trend":
-        ema_vals = ta_lib.trend.EMAIndicator(df["close"], window=26).ema_indicator().values
+        window = int(params["window"])
+        ema_vals = ta_lib.trend.EMAIndicator(df["close"], window=window).ema_indicator().values
         for i in range(1, n):
             if not np.isnan(ema_vals[i]):
                 if close[i] > ema_vals[i] and close[i - 1] <= ema_vals[i - 1]:
                     signals[i] = 1
                 elif close[i] < ema_vals[i] and close[i - 1] >= ema_vals[i - 1]:
                     signals[i] = -1
+
+    return signals
+
+
+def generate_signals(df: pd.DataFrame, strategy: str, params: Optional[dict] = None) -> np.ndarray:
+    """Señales (1/-1/0) de una estrategia con sus parámetros (defaults si None).
+    Público para los detectores de sesgo de la suite de robustez."""
+    return _generate_signals(df, strategy, _merge_params(strategy, params))
+
+
+def strategy_indicator_series(
+    df: pd.DataFrame, strategy: str, params: Optional[dict] = None
+) -> np.ndarray:
+    """
+    Serie del indicador principal que dirige cada estrategia. La usa el
+    detector de inestabilidad recursiva (EMA/RSI son recursivos; SMA no).
+    """
+    p = _merge_params(strategy, params)
+    close = df["close"]
+    if strategy == "rsi_reversal":
+        return ta_lib.momentum.RSIIndicator(close, window=int(p["window"])).rsi().values
+    if strategy == "macd_crossover":
+        return ta_lib.trend.MACD(
+            close, window_slow=int(p["slow"]), window_fast=int(p["fast"]),
+            window_sign=int(p["signal"]),
+        ).macd().values
+    if strategy == "bollinger_bounce":
+        return ta_lib.volatility.BollingerBands(
+            close, window=int(p["window"]), window_dev=float(p["dev"]),
+        ).bollinger_pband().values
+    if strategy == "sma_crossover":
+        return ta_lib.trend.SMAIndicator(close, window=int(p["fast"])).sma_indicator().values
+    if strategy == "ema_trend":
+        return ta_lib.trend.EMAIndicator(close, window=int(p["window"])).ema_indicator().values
+    return np.full(len(df), np.nan)
+
+
+def run_backtest(
+    df: pd.DataFrame,
+    strategy: str,
+    initial_capital: float = 10000.0,
+    params: Optional[dict] = None,
+) -> dict:
+    """
+    Ejecuta un backtest de una estrategia sobre datos OHLCV.
+
+    Salida pública estable (compatibilidad): métricas + las últimas 20
+    operaciones. Sin `params` usa los valores por defecto (comportamiento
+    histórico idéntico). La curva de equity y la serie de retornos
+    completas se obtienen con run_backtest_full().
+    """
+    full = run_backtest_full(df, strategy, initial_capital, params)
+    if "error" in full:
+        return full
+    public = {
+        k: v for k, v in full.items()
+        if k not in ("trades", "equity_curve", "bar_returns", "params", "exposure_pct")
+    }
+    public["trades"] = full["trades"][-20:]  # Últimas 20 operaciones
+    return public
+
+
+def run_backtest_full(
+    df: pd.DataFrame,
+    strategy: str,
+    initial_capital: float = 10000.0,
+    params: Optional[dict] = None,
+) -> dict:
+    """
+    Igual que run_backtest pero devuelve además la curva de equity, la serie
+    de retornos por vela y TODAS las operaciones. Lo consume la suite de
+    robustez (métricas, Monte Carlo, PBO). No cambia el algoritmo del motor.
+    """
+    if strategy not in STRATEGIES:
+        return {"error": f"Estrategia '{strategy}' no reconocida. Opciones: {list(STRATEGIES.keys())}"}
+
+    if len(df) < 60:
+        return {"error": "Se necesitan al menos 60 velas para backtesting."}
+
+    merged = _merge_params(strategy, params)
+    signals = _generate_signals(df, strategy, merged)
+    result = _simulate_and_measure(df, strategy, signals, initial_capital)
+    result["params"] = merged
+    return result
+
+
+def _simulate_and_measure(
+    df: pd.DataFrame, strategy: str, signals: np.ndarray, initial_capital: float
+) -> dict:
+    """
+    Simula las operaciones long-only (todo dentro / todo fuera) a partir del
+    array de señales y calcula las métricas. Devuelve también la curva de
+    equity y los retornos por vela para la capa de análisis de robustez.
+    """
+    close = df["close"].values
+    n = len(close)
 
     # ── Simular trades ─────────────────────────────────────────────
     capital = initial_capital
@@ -854,11 +994,12 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
     losses = [t for t in trades if t["result"] == "LOSS"]
     win_rate = (len(wins) / len(trades) * 100) if trades else 0
 
-    # Max drawdown
-    equity_curve = [initial_capital]
+    # Max drawdown + curva de equity + exposición (fracción de tiempo invertido)
+    equity_curve = [float(initial_capital)]
     temp_capital = initial_capital
     temp_position = 0.0
     temp_in_trade = False
+    in_market_bars = 0
     for i in range(n):
         if signals[i] == 1 and not temp_in_trade:
             temp_position = temp_capital / close[i]
@@ -869,7 +1010,9 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
             temp_position = 0
             temp_in_trade = False
         current_equity = temp_capital + (temp_position * close[i] if temp_in_trade else 0)
-        equity_curve.append(current_equity)
+        equity_curve.append(float(current_equity))
+        if temp_in_trade:
+            in_market_bars += 1
 
     peak = equity_curve[0]
     max_dd = 0
@@ -879,6 +1022,15 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
         dd = (peak - eq) / peak * 100
         if dd > max_dd:
             max_dd = dd
+
+    # Retornos por vela de la propia estrategia (0 cuando está en liquidez).
+    # Base de las métricas de riesgo (Sharpe, Sortino, VaR…).
+    bar_returns = [
+        (equity_curve[i] - equity_curve[i - 1]) / equity_curve[i - 1]
+        if equity_curve[i - 1] else 0.0
+        for i in range(1, len(equity_curve))
+    ]
+    exposure_pct = (in_market_bars / n * 100) if n else 0.0
 
     avg_win = np.mean([t["pnl_pct"] for t in wins]) if wins else 0
     avg_loss = np.mean([abs(t["pnl_pct"]) for t in losses]) if losses else 0
@@ -916,5 +1068,9 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
         "avg_win_pct": round(float(avg_win), 2),
         "avg_loss_pct": round(float(avg_loss), 2),
         "max_drawdown_pct": round(float(max_dd), 2),
-        "trades": trades[-20:],  # Últimas 20 operaciones
+        "exposure_pct": round(float(exposure_pct), 2),
+        # Datos completos para la suite de robustez (run_backtest los recorta):
+        "trades": trades,
+        "equity_curve": equity_curve,
+        "bar_returns": bar_returns,
     }
