@@ -16,9 +16,13 @@ import {
 import {
   robustnessService,
   isReport,
+  isComparison,
   type RobustStrategy,
   type RobustObjective,
+  type RobustPreset,
   type RobustnessReport,
+  type ComparisonReport,
+  type LaunchResponse,
 } from '@/services/robustnessService'
 import { analysisService, type StrategyInfo } from '@/services/analysisService'
 import Gauge from '@/components/ui/Gauge'
@@ -29,6 +33,11 @@ const OBJECTIVES: { value: RobustObjective; label: string }[] = [
   { value: 'sortino', label: 'Sortino' },
   { value: 'calmar', label: 'Calmar' },
   { value: 'total_return', label: 'Retorno total' },
+]
+const PRESETS: { value: RobustPreset; label: string }[] = [
+  { value: 'fast', label: 'Rápido' },
+  { value: 'balanced', label: 'Equilibrado' },
+  { value: 'thorough', label: 'Exhaustivo' },
 ]
 
 const POLL_MS = 2500
@@ -46,10 +55,12 @@ export default function RobustnessPanel({ symbol }: Readonly<{ symbol: string }>
   const [strategy, setStrategy] = useState<RobustStrategy>('rsi_reversal')
   const [timeframe, setTimeframe] = useState('1d')
   const [objective, setObjective] = useState<RobustObjective>('sharpe')
+  const [preset, setPreset] = useState<RobustPreset>('balanced')
   const [strategies, setStrategies] = useState<StrategyInfo[]>([])
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [report, setReport] = useState<RobustnessReport | null>(null)
+  const [comparison, setComparison] = useState<ComparisonReport | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [elapsed, setElapsed] = useState(0)
 
@@ -71,18 +82,17 @@ export default function RobustnessPanel({ symbol }: Readonly<{ symbol: string }>
     window.clearInterval(tickRef.current)
   }
 
-  async function handleRun() {
+  async function run(launch: () => Promise<LaunchResponse>) {
     stopTimers()
     setPhase('running')
     setReport(null)
+    setComparison(null)
     setErrorMsg('')
     setElapsed(0)
     tickRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000)
 
     try {
-      const { job_id } = await robustnessService.launch({
-        asset_symbol: symbol, strategy, interval: timeframe, objective,
-      })
+      const { job_id } = await launch()
       let attempts = 0
       pollRef.current = window.setInterval(async () => {
         attempts += 1
@@ -90,7 +100,10 @@ export default function RobustnessPanel({ symbol }: Readonly<{ symbol: string }>
           const s = await robustnessService.getStatus(job_id)
           if (s.status === 'SUCCESS') {
             stopTimers()
-            if (isReport(s.result)) {
+            if (isComparison(s.result)) {
+              setComparison(s.result)
+              setPhase('done')
+            } else if (isReport(s.result)) {
               setReport(s.result)
               setPhase('done')
             } else {
@@ -118,6 +131,12 @@ export default function RobustnessPanel({ symbol }: Readonly<{ symbol: string }>
       setPhase('error')
     }
   }
+
+  const handleRun = () =>
+    run(() => robustnessService.launch({ asset_symbol: symbol, strategy, interval: timeframe, objective, preset }))
+
+  const handleCompare = () =>
+    run(() => robustnessService.launchComparison({ asset_symbol: symbol, interval: timeframe, objective, preset }))
 
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 mb-6">
@@ -176,13 +195,38 @@ export default function RobustnessPanel({ symbol }: Readonly<{ symbol: string }>
           </select>
         </label>
 
+        <label className="text-[11px] text-slate-400" title="Rapidez vs exhaustividad del análisis">
+          <span className="block mb-1 uppercase">Profundidad</span>
+          <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
+            {PRESETS.map((p) => (
+              <button
+                key={p.value}
+                onClick={() => setPreset(p.value)}
+                disabled={phase === 'running'}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  preset === p.value ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </label>
+
         <div className="flex-1" />
+        <button
+          onClick={handleCompare}
+          disabled={phase === 'running'}
+          className="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:cursor-not-allowed text-slate-100 text-sm font-medium px-4 py-2 rounded-lg transition-colors border border-slate-600"
+        >
+          Comparar las 5
+        </button>
         <button
           onClick={handleRun}
           disabled={phase === 'running'}
           className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
         >
-          {phase === 'running' ? 'Analizando…' : 'Analizar robustez'}
+          {phase === 'running' ? 'Analizando…' : 'Analizar estrategia'}
         </button>
       </div>
 
@@ -207,8 +251,83 @@ export default function RobustnessPanel({ symbol }: Readonly<{ symbol: string }>
           <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-300 text-sm">{errorMsg}</div>
         )}
 
+        {phase === 'done' && comparison && <ComparisonView data={comparison} />}
         {phase === 'done' && report && <RobustnessReportView report={report} />}
       </div>
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Comparación de estrategias
+// ══════════════════════════════════════════════════════════════════
+
+function ComparisonView({ data }: Readonly<{ data: ComparisonReport }>) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-300">
+        Ranking de robustez de las 5 estrategias sobre {data.asset_symbol} (marco {data.interval}).
+        La mejor es <span className="font-semibold text-emerald-400">{data.best.strategy_name}</span>.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-slate-500 border-b border-slate-700 text-xs uppercase">
+              <th className="text-left py-2 px-2">#</th>
+              <th className="text-left py-2 px-2">Estrategia</th>
+              <th className="text-left py-2 px-2 w-40">Score</th>
+              <th className="text-left py-2 px-2">Veredicto</th>
+              <th className="text-right py-2 px-2">Sharpe</th>
+              <th className="text-right py-2 px-2">Max DD</th>
+              <th className="text-right py-2 px-2">PBO</th>
+              <th className="text-right py-2 px-2">WF</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.ranking.map((row, i) => {
+              if (row.error || row.robustness_score == null) {
+                return (
+                  <tr key={row.strategy} className="border-b border-slate-700/40">
+                    <td className="py-2 px-2 text-slate-500">{i + 1}</td>
+                    <td className="py-2 px-2 text-slate-300">{row.strategy_name}</td>
+                    <td colSpan={6} className="py-2 px-2 text-slate-500 text-xs italic">Sin datos suficientes</td>
+                  </tr>
+                )
+              }
+              const sc = row.robustness_score
+              const tone = VERDICT_STYLE[row.verdict ?? 'FRÁGIL']
+              return (
+                <tr key={row.strategy} className={`border-b border-slate-700/40 ${i === 0 ? 'bg-emerald-500/5' : ''}`}>
+                  <td className="py-2 px-2 text-slate-500">{i + 1}</td>
+                  <td className="py-2 px-2 text-slate-200 font-medium">{row.strategy_name}</td>
+                  <td className="py-2 px-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-slate-700 rounded-full h-2 min-w-[60px]">
+                        <div
+                          className={`h-2 rounded-full ${sc >= 70 ? 'bg-emerald-500' : sc >= 45 ? 'bg-amber-500' : 'bg-red-500'}`}
+                          style={{ width: `${sc}%` }}
+                        />
+                      </div>
+                      <span className="font-mono text-xs text-slate-300 w-6 text-right">{sc}</span>
+                    </div>
+                  </td>
+                  <td className="py-2 px-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${tone.chip}`}>{row.verdict}</span>
+                  </td>
+                  <td className="py-2 px-2 text-right font-mono text-slate-300">{row.sharpe?.toFixed(2) ?? '—'}</td>
+                  <td className="py-2 px-2 text-right font-mono text-red-400">-{row.max_drawdown_pct}%</td>
+                  <td className="py-2 px-2 text-right font-mono text-slate-300">{row.pbo != null ? `${Math.round(row.pbo * 100)}%` : '—'}</td>
+                  <td className="py-2 px-2 text-right font-mono text-slate-300">{row.oos_efficiency != null ? row.oos_efficiency.toFixed(2) : '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-slate-600">
+        Score = robustez global (0-100). PBO = probabilidad de sobreajuste (menor mejor).
+        WF = eficiencia walk-forward (cercana a 1 mejor). Análisis con fines informativos.
+      </p>
     </div>
   )
 }

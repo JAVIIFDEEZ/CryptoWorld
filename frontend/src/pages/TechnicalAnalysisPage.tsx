@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import AnalysisPanel from '@/components/AnalysisPanel'
+import RobustnessPanel from '@/components/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function TechnicalAnalysisPage() {
@@ -98,7 +99,10 @@ function TechnicalAnalysisPage() {
       )}
 
       {!isLoadingAssets && assets.length > 0 && (
-        <AnalysisPanel symbol={selectedSymbol} />
+        <>
+          <AnalysisPanel symbol={selectedSymbol} />
+          <RobustnessPanel symbol={selectedSymbol} />
+        </>
       )}
     </section>
   )

@@ -15,12 +15,22 @@ export type RobustStrategy =
 
 export type RobustObjective = 'sharpe' | 'sortino' | 'calmar' | 'total_return'
 
+export type RobustPreset = 'fast' | 'balanced' | 'thorough'
+
 export interface RobustnessRequest {
   asset_symbol: string
   strategy: RobustStrategy
   interval?: string
   initial_capital?: number
   objective?: RobustObjective
+  preset?: RobustPreset
+}
+
+export interface ComparisonRequest {
+  asset_symbol: string
+  interval?: string
+  objective?: RobustObjective
+  preset?: RobustPreset
 }
 
 // ── Respuestas ─────────────────────────────────────────────────────
@@ -85,8 +95,31 @@ export interface RobustnessReport {
   }
 }
 
+export interface ComparisonRow {
+  strategy: string
+  strategy_name: string
+  robustness_score?: number
+  verdict?: Verdict
+  best_params?: Record<string, number>
+  sharpe?: number
+  max_drawdown_pct?: number
+  pbo?: number | null
+  dsr?: number | null
+  oos_efficiency?: number | null
+  error?: string
+}
+
+export interface ComparisonReport {
+  asset_symbol: string
+  interval: string
+  objective: string
+  preset: string
+  ranking: ComparisonRow[]
+  best: ComparisonRow
+}
+
 /** Resultado de un job que pudo terminar con error de negocio (p. ej. pocas velas). */
-export type JobResult = RobustnessReport | { error: string }
+export type JobResult = RobustnessReport | ComparisonReport | { error: string }
 
 export interface StatusResponse {
   job_id: string
@@ -96,15 +129,25 @@ export interface StatusResponse {
 }
 
 export function isReport(result: JobResult | undefined): result is RobustnessReport {
-  return !!result && !('error' in result)
+  return !!result && !('error' in result) && !('ranking' in result)
+}
+
+export function isComparison(result: JobResult | undefined): result is ComparisonReport {
+  return !!result && 'ranking' in result
 }
 
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const robustnessService = {
-  /** Lanza la suite y devuelve el job_id (no bloquea). */
+  /** Lanza la suite para una estrategia y devuelve el job_id (no bloquea). */
   async launch(payload: RobustnessRequest): Promise<LaunchResponse> {
     const { data } = await apiClient.post<LaunchResponse>('/analysis/backtest/robust/', payload)
+    return data
+  },
+
+  /** Lanza la comparación de las 5 estrategias y devuelve el job_id. */
+  async launchComparison(payload: ComparisonRequest): Promise<LaunchResponse> {
+    const { data } = await apiClient.post<LaunchResponse>('/analysis/backtest/robust/compare/', payload)
     return data
   },
 
