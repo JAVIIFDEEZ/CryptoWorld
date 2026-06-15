@@ -51,6 +51,7 @@ from core.interfaces.api.serializers import (
     NewsQuerySerializer,
     NewsItemSerializer,
     DeleteAccountSerializer,
+    RobustBacktestRequestSerializer,
     CalculateAnalysisSerializer,
     SignalsRequestSerializer,
     PredictionRequestSerializer,
@@ -1328,6 +1329,63 @@ class RunBacktestView(APIView):
             )
         )
         return Response(result, status=status.HTTP_200_OK)
+
+
+class RobustBacktestLaunchView(APIView):
+    """
+    POST /api/analysis/backtest/robust/ — Lanza la suite de robustez como
+    tarea Celery (cientos de backtests) y devuelve un job_id sin bloquear.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = RobustBacktestRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import run_robust_backtest as task
+
+        v = serializer.validated_data
+        async_result = task.delay(
+            asset_symbol=v["asset_symbol"],
+            strategy=v["strategy"],
+            interval=v.get("interval", "1d"),
+            limit=v.get("limit", 365),
+            initial_capital=v.get("initial_capital", 10000.0),
+            objective=v.get("objective", "sharpe"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/analysis/backtest/robust/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class RobustBacktestStatusView(APIView):
+    """
+    GET /api/analysis/backtest/robust/<job_id>/ — Estado/resultado del job.
+
+    status: PENDING | STARTED | SUCCESS | FAILURE. Con SUCCESS incluye el
+    informe completo en `result`.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from celery.result import AsyncResult
+        from config.celery import app
+
+        res = AsyncResult(job_id, app=app)
+        payload = {"job_id": job_id, "status": res.state}
+
+        if res.successful():
+            payload["result"] = res.result
+        elif res.failed():
+            payload["error"] = "La suite de robustez falló durante la ejecución."
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class AssetDetailInfoView(APIView):

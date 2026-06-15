@@ -34,6 +34,8 @@ pandas==2.2.2
 numpy==1.26.4
 ta==0.11.0                      # Technical Analysis library (indicadores)
 scikit-learn==1.5.1             # ML para predicción de precio
+scipy==1.13.1                   # Estadística para la suite de robustez (DSR, tests)
+optuna==3.6.1                   # Optimización de hiperparámetros (walk-forward, PBO)
 
 # ── Testing ───────────────────────────────────────────────────────
 pytest==8.2.2

@@ -294,6 +294,12 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True  # Evita CPendingDeprecationWar
 # convierte el registro de usuario en un 500.
 CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "False") == "True"
 
+# Estado STARTED visible al hacer polling de un job (suite de robustez).
+CELERY_TASK_TRACK_STARTED = True
+# En modo eager (tests) guarda el resultado en el backend para que
+# AsyncResult(job_id) lo recupere igual que con un worker real.
+CELERY_TASK_STORE_EAGER_RESULT = True
+
 # Tareas periódicas (celery beat)
 from celery.schedules import crontab  # noqa: E402
 

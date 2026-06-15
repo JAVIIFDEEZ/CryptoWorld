@@ -96,6 +96,16 @@ urlpatterns = [
     path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
     path("analysis/patterns/", views.DetectPatternsView.as_view(), name="analysis-patterns"),
     path("analysis/backtest/", views.RunBacktestView.as_view(), name="analysis-backtest"),
+    path(
+        "analysis/backtest/robust/",
+        views.RobustBacktestLaunchView.as_view(),
+        name="analysis-backtest-robust",
+    ),
+    path(
+        "analysis/backtest/robust/<str:job_id>/",
+        views.RobustBacktestStatusView.as_view(),
+        name="analysis-backtest-robust-status",
+    ),
     path("analysis/strategies/", views.AvailableStrategiesView.as_view(), name="analysis-strategies"),
 
     # ── Market Intelligence ─────────────────────────────────────────

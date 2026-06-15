@@ -245,3 +245,55 @@ def send_password_reset_email(self, email: str) -> dict:
     except Exception as exc:
         logger.error("send_password_reset_email error email=%s: %s", email, exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Suite de robustez de backtest — cientos de backtests, va en background
+# ─────────────────────────────────────────────────────────────────
+
+@shared_task(
+    name="core.tasks.run_robust_backtest",
+    bind=True,
+    max_retries=0,
+)
+def run_robust_backtest(
+    self,
+    asset_symbol: str,
+    strategy: str,
+    interval: str = "1d",
+    limit: int = 365,
+    initial_capital: float = 10000.0,
+    objective: str = "sharpe",
+) -> dict:
+    """
+    Ejecuta la suite de robustez completa (walk-forward, Optuna, Monte Carlo,
+    DSR, PBO y detectores de sesgo) y devuelve el informe con el veredicto.
+
+    Lanzada con .delay() desde RobustBacktestLaunchView; el cliente consulta
+    el resultado con el job_id (AsyncResult). No reintenta: es costosa y un
+    fallo de datos ya se devuelve como payload {"error": ...}.
+    """
+    try:
+        from core.application.use_cases.run_robust_backtest import (
+            RunRobustBacktestUseCase,
+        )
+
+        result = RunRobustBacktestUseCase().execute(
+            asset_symbol=asset_symbol,
+            strategy=strategy,
+            interval=interval,
+            limit=limit,
+            initial_capital=initial_capital,
+            objective=objective,
+        )
+        logger.info(
+            "run_robust_backtest: %s/%s → %s",
+            asset_symbol, strategy, result.get("verdict", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error(
+            "run_robust_backtest error %s/%s: %s",
+            asset_symbol, strategy, exc, exc_info=True,
+        )
+        raise

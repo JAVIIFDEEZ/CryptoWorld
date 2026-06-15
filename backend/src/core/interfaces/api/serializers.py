@@ -355,6 +355,26 @@ class BacktestRequestSerializer(serializers.Serializer):
 
 # ── Portfolio ──────────────────────────────────────────────────────
 
+class RobustBacktestRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/analysis/backtest/robust/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    strategy = serializers.ChoiceField(
+        choices=["rsi_reversal", "macd_crossover", "bollinger_bounce", "sma_crossover", "ema_trend"]
+    )
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    limit = serializers.IntegerField(min_value=250, max_value=1000, default=365, required=False)
+    initial_capital = serializers.FloatField(
+        min_value=100, max_value=1_000_000, default=10000.0, required=False
+    )
+    objective = serializers.ChoiceField(
+        choices=["sharpe", "sortino", "calmar", "total_return"],
+        default="sharpe", required=False,
+    )
+
+
 class AddTradeSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/trades/."""
     asset_symbol = serializers.CharField(max_length=20)
