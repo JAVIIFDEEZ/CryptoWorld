@@ -16,6 +16,7 @@ import DeltaChip from '@/components/ui/DeltaChip'
 import OhlcvChart from '@/components/OhlcvChart'
 import AnalysisPanel from '@/components/AnalysisPanel'
 import ConfluenceCard from '@/components/ConfluenceCard'
+import RobustnessPanel from '@/components/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function AssetDetailPage() {
@@ -162,6 +163,9 @@ function AssetDetailPage() {
 
       {/* Panel de análisis técnico avanzado */}
       <AnalysisPanel symbol={asset.symbol} />
+
+      {/* Suite de robustez de backtest (¿estrategia sobreajustada?) */}
+      <RobustnessPanel symbol={asset.symbol} />
     </div>
   )
 }
