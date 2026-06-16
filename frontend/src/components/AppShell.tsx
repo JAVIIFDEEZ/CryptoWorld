@@ -137,6 +137,11 @@ const IconAnalysis = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
   </svg>
 )
+const IconGenerator = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714a2.25 2.25 0 00.659 1.591L19 14.5M14.25 3.104c.251.023.501.05.75.082M19 14.5l-3.5 3.5m0 0l-3.5-3.5M15.5 18H8.5" />
+  </svg>
+)
 const IconBlockchain = () => (
   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -176,6 +181,12 @@ const navSections: NavSection[] = [
       { path: '/market', label: 'Mercado', shortLabel: 'Market', icon: <IconMarket /> },
       { path: '/analysis', label: 'Análisis Técnico', shortLabel: 'TA', icon: <IconAnalysis /> },
       { path: '/blockchain', label: 'Blockchain', shortLabel: 'Chain', icon: <IconBlockchain /> },
+    ],
+  },
+  {
+    label: 'ESTRATEGIAS',
+    items: [
+      { path: '/strategies', label: 'Generador IA', shortLabel: 'Gen', icon: <IconGenerator /> },
     ],
   },
   {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import AnalysisPanel from '@/components/AnalysisPanel'
 import RobustnessPanel from '@/components/RobustnessPanel'
@@ -102,6 +103,21 @@ function TechnicalAnalysisPage() {
         <>
           <AnalysisPanel symbol={selectedSymbol} />
           <RobustnessPanel symbol={selectedSymbol} />
+
+          {/* Puente al generador genético: descubrir estrategias nuevas */}
+          <Link
+            to="/strategies"
+            className="group flex items-center gap-4 bg-gradient-to-r from-blue-600/10 to-purple-600/10 hover:from-blue-600/20 hover:to-purple-600/20 border border-blue-500/30 rounded-xl p-4 transition-colors"
+          >
+            <span className="text-2xl">🧬</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white">¿No sabes qué estrategia usar?</p>
+              <p className="text-xs text-slate-400">
+                Deja que el algoritmo genético evolucione y valide estrategias robustas sobre {selectedSymbol}.
+              </p>
+            </div>
+            <span className="text-blue-300 group-hover:translate-x-0.5 transition-transform shrink-0">Generar →</span>
+          </Link>
         </>
       )}
     </section>
