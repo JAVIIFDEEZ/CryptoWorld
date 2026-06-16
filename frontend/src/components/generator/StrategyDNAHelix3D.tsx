@@ -12,6 +12,7 @@ import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import Viz3DFrame from './Viz3DFrame'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 import type { StrategySpec, SpecCondition } from '@/services/strategyGeneratorService'
 
 const R = 2.1            // radio de la hélice
@@ -36,6 +37,7 @@ interface Bead {
 
 function Helix({ spec }: Readonly<{ spec: StrategySpec }>) {
   const group = useRef<THREE.Group>(null)
+  const reduced = useReducedMotion()
 
   const beads = useMemo<Bead[]>(() => {
     const items: { c: SpecCondition; side: 'entry' | 'exit' }[] = [
@@ -71,7 +73,7 @@ function Helix({ spec }: Readonly<{ spec: StrategySpec }>) {
   }, [beads])
 
   useFrame((_, delta) => {
-    if (group.current) group.current.rotation.y += delta * 0.35
+    if (group.current && !reduced) group.current.rotation.y += delta * 0.35
   })
 
   return (

@@ -18,6 +18,7 @@ import {
   type GatingChecks,
   type LaunchResponse,
   type SavedStrategy,
+  type SignalEvent,
 } from '@/services/strategyGeneratorService'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -57,6 +58,7 @@ export default function StrategyGeneratorPage() {
 
   const [history, setHistory] = useState<SavedStrategy[]>([])
   const [showHistory, setShowHistory] = useState(false)
+  const [signalEvents, setSignalEvents] = useState<SignalEvent[]>([])
 
   const pollRef = useRef<number>(0)
   const tickRef = useRef<number>(0)
@@ -66,6 +68,7 @@ export default function StrategyGeneratorPage() {
       .then((data) => { setAssets(data); if (data.length) setSymbol(data[0].symbol) })
       .catch(() => { /* lista vacía */ })
       .finally(() => setLoadingAssets(false))
+    strategyGeneratorService.listSignalEvents(15).then(setSignalEvents).catch(() => { /* sin eventos */ })
   }, [])
 
   useEffect(() => () => { window.clearInterval(pollRef.current); window.clearInterval(tickRef.current) }, [])
@@ -233,6 +236,9 @@ export default function StrategyGeneratorPage() {
 
         {showHistory && <HistoryStrip items={history} />}
       </div>
+
+      {/* Señales recientes de estrategias monitorizadas */}
+      {signalEvents.length > 0 && <SignalFeed events={signalEvents} />}
 
       {/* Estados */}
       {phase === 'idle' && <IdleHint symbol={symbol} />}
@@ -558,6 +564,32 @@ const SIGNAL_STYLE: Record<string, string> = {
   BUY: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   SELL: 'bg-red-500/15 text-red-400 border-red-500/30',
   HOLD: 'bg-slate-700/40 text-slate-400 border-slate-600/40',
+}
+
+function SignalFeed({ events }: Readonly<{ events: SignalEvent[] }>) {
+  return (
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+        </span>
+        <h3 className="text-sm font-semibold text-white">Señales recientes</h3>
+        <span className="text-[11px] text-slate-500">de tus estrategias monitorizadas</span>
+      </div>
+      <div className="space-y-1.5">
+        {events.map((e) => (
+          <div key={e.id} className="flex items-center gap-3 text-xs py-1.5 border-b border-slate-700/40 last:border-0">
+            <span className={`font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[e.signal]}`}>{e.signal}</span>
+            <span className="text-slate-200 font-medium">{e.asset_symbol}</span>
+            <span className="text-slate-400 font-mono truncate flex-1">{e.name}</span>
+            {e.price != null && <span className="text-slate-300 font-mono shrink-0">${e.price.toLocaleString()}</span>}
+            <span className="text-slate-500 shrink-0">{new Date(e.created_at).toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function HistoryCard({ s }: Readonly<{ s: SavedStrategy }>) {

@@ -239,6 +239,17 @@ export interface SignalState {
   error?: string
 }
 
+export interface SignalEvent {
+  id: number
+  strategy_id: number
+  asset_symbol: string | null
+  name: string
+  signal: 'BUY' | 'SELL'
+  price: number | null
+  notified: boolean
+  created_at: string
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const strategyGeneratorService = {
@@ -282,5 +293,11 @@ export const strategyGeneratorService = {
   async getSignal(strategyId: number): Promise<SignalState> {
     const { data } = await apiClient.get<SignalState>(`/strategies/${strategyId}/signal/`)
     return data
+  },
+
+  /** Historial reciente de señales disparadas por las estrategias monitorizadas. */
+  async listSignalEvents(limit = 30): Promise<SignalEvent[]> {
+    const { data } = await apiClient.get<{ count: number; results: SignalEvent[] }>('/strategies/signals/recent/', { params: { limit } })
+    return data.results
   },
 }

@@ -9,6 +9,7 @@
 import { Suspense, type ReactNode } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 interface Props {
   children: ReactNode
@@ -28,6 +29,7 @@ export default function Viz3DFrame({
   autoRotate = true,
   height = 420,
 }: Readonly<Props>) {
+  const reduced = useReducedMotion()
   return (
     <div
       className="relative rounded-xl overflow-hidden border border-slate-700/70 bg-[radial-gradient(ellipse_at_center,#0b1426_0%,#070b14_70%)]"
@@ -41,7 +43,7 @@ export default function Viz3DFrame({
         <OrbitControls
           enablePan={false}
           enableZoom={zoom}
-          autoRotate={autoRotate}
+          autoRotate={autoRotate && !reduced}
           autoRotateSpeed={0.6}
           minDistance={5}
           maxDistance={20}

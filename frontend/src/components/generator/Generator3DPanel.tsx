@@ -54,10 +54,12 @@ export default function Generator3DPanel({ candidates, history, winnerSpec }: Re
         <p className="text-xs text-slate-500">{active.hint}</p>
       </div>
 
-      <div className="flex gap-1 px-4 pt-3 flex-wrap">
+      <div className="flex gap-1 px-4 pt-3 flex-wrap" role="tablist" aria-label="Visualizaciones del generador">
         {TABS.map((t) => (
           <button
             key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               tab === t.id ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-slate-200'
