@@ -929,13 +929,18 @@ def run_backtest_full(
     return result
 
 
-def _simulate_and_measure(
-    df: pd.DataFrame, strategy: str, signals: np.ndarray, initial_capital: float
+def backtest_signals(
+    df: pd.DataFrame, signals: np.ndarray, initial_capital: float = 10000.0
 ) -> dict:
     """
-    Simula las operaciones long-only (todo dentro / todo fuera) a partir del
-    array de señales y calcula las métricas. Devuelve también la curva de
-    equity y los retornos por vela para la capa de análisis de robustez.
+    Backtest long-only (todo dentro / todo fuera) de un array de señales
+    arbitrario (1=compra, -1=venta, 0=hold). Reutilizable por el generador
+    de estrategias (señales compiladas de un StrategySpec componible), no
+    solo por las 5 estrategias del catálogo.
+
+    Devuelve métricas + curva de equity + retornos por vela + todas las
+    operaciones. Las etiquetas de estrategia son genéricas; _simulate_and_measure
+    las sobrescribe con las del catálogo.
     """
     close = df["close"].values
     n = len(close)
@@ -1050,12 +1055,10 @@ def _simulate_and_measure(
             start_date = datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
             end_date = datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
-    strategy_info = STRATEGIES[strategy]
-
     return {
-        "strategy": strategy_info["name"],
-        "strategy_key": strategy,
-        "description": strategy_info["description"],
+        "strategy": "Personalizada",
+        "strategy_key": None,
+        "description": "Estrategia compuesta",
         "initial_capital": initial_capital,
         "final_capital": round(float(final_capital), 2),
         "total_return_pct": round(float(total_return), 2),
@@ -1074,3 +1077,16 @@ def _simulate_and_measure(
         "equity_curve": equity_curve,
         "bar_returns": bar_returns,
     }
+
+
+def _simulate_and_measure(
+    df: pd.DataFrame, strategy: str, signals: np.ndarray, initial_capital: float
+) -> dict:
+    """Backtest de una de las 5 estrategias del catálogo: añade nombre y
+    descripción a la salida genérica de backtest_signals (compatibilidad)."""
+    result = backtest_signals(df, signals, initial_capital)
+    info = STRATEGIES[strategy]
+    result["strategy"] = info["name"]
+    result["strategy_key"] = strategy
+    result["description"] = info["description"]
+    return result
