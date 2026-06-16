@@ -134,6 +134,44 @@ class TestStrategyGeneratorApi:
         assert "error" in status.data["result"]
 
 
+class TestSavedStrategiesList:
+
+    @pytest.mark.integration
+    def test_requires_authentication(self, api_client):
+        assert api_client.get("/api/strategies/").status_code == 401
+
+    @pytest.mark.integration
+    def test_lists_only_passed_filtered_by_symbol(self, authenticated_client, db):
+        from core.infrastructure.persistence.models import CryptoAsset, StrategyDefinition
+
+        btc = CryptoAsset.objects.create(symbol="BTC", name="Bitcoin")
+        eth = CryptoAsset.objects.create(symbol="ETH", name="Ethereum")
+        spec = {"entry": {"combine": "AND", "conditions": []}, "exit": {"combine": "AND", "conditions": []}}
+        StrategyDefinition.objects.create(asset=btc, name="BTC robusta", spec=spec, spec_hash="a", rank=1, passed_gating=True, status="validated")
+        StrategyDefinition.objects.create(asset=eth, name="ETH robusta", spec=spec, spec_hash="b", rank=1, passed_gating=True, status="validated")
+        StrategyDefinition.objects.create(asset=btc, name="BTC descartada", spec=spec, spec_hash="c", rank=0, passed_gating=False, status="rejected")
+
+        resp = authenticated_client.get("/api/strategies/?asset_symbol=BTC")
+        assert resp.status_code == 200
+        names = [r["name"] for r in resp.data["results"]]
+        assert names == ["BTC robusta"]  # solo la que pasó el gating y es de BTC
+
+    @pytest.mark.integration
+    def test_returns_full_payload(self, authenticated_client, db):
+        from core.infrastructure.persistence.models import CryptoAsset, StrategyDefinition
+
+        sol = CryptoAsset.objects.create(symbol="SOL", name="Solana")
+        StrategyDefinition.objects.create(
+            asset=sol, name="SOL robusta", spec={"entry": {}, "exit": {}}, spec_hash="z",
+            rank=1, fitness=2.1, passed_gating=True,
+            robustness_metrics={"pbo": 0.2}, holdout_metrics={"return_pct": 10.0}, status="validated",
+        )
+        resp = authenticated_client.get("/api/strategies/")
+        row = resp.data["results"][0]
+        for key in ("id", "spec", "spec_hash", "fitness", "robustness_metrics", "holdout_metrics", "created_at"):
+            assert key in row
+
+
 class TestPresets:
 
     @pytest.mark.unit

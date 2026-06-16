@@ -165,6 +165,25 @@ def generate_strategies(
     for rank, f in enumerate(passed, start=1):
         f["rank"] = rank
 
+    # Coordenadas de robustez de CADA candidata evaluada (pase o no el gating):
+    # alimentan el grafico 3D "universo de robustez" con la nube completa de
+    # puntos, no solo las supervivientes.
+    def _coords(f: dict) -> dict:
+        m = f["gating"]["metrics"]
+        return {
+            "spec_hash": f["spec_hash"],
+            "description": f["description"],
+            "fitness": f["fitness"],
+            "passed_gating": f["passed_gating"],
+            "pbo": m.get("pbo"),
+            "wf_efficiency": m.get("wf_efficiency"),
+            "oos_sharpe": m.get("mean_oos_sharpe"),
+            "sharpe": m.get("sharpe"),
+            "n_trades": m.get("n_trades"),
+            "total_return_pct": m.get("total_return_pct"),
+            "max_drawdown_pct": m.get("max_drawdown_pct"),
+        }
+
     report = {
         "interval": interval,
         "initial_capital": initial_capital,
@@ -194,11 +213,10 @@ def generate_strategies(
             "rejected": len(rejected),
         },
         "ranking": passed,
+        "candidates": [_coords(f) for f in finalists],
         "rejected": [
             {
-                "spec_hash": f["spec_hash"],
-                "description": f["description"],
-                "fitness": f["fitness"],
+                **_coords(f),
                 "failed_checks": [k for k, v in f["gating"]["checks"].items() if not v],
             }
             for f in rejected

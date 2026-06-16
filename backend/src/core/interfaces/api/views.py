@@ -1480,6 +1480,54 @@ class StrategyGenerateStatusView(APIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
+class SavedStrategiesListView(APIView):
+    """
+    GET /api/strategies/ — Historial de estrategias generadas que pasaron el
+    gating de robustez (StrategyDefinition), las más recientes primero.
+
+    Filtros opcionales: ?asset_symbol=BTC, ?interval=1d, ?limit=50.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.persistence.models import StrategyDefinition
+
+        qs = StrategyDefinition.objects.select_related("asset").filter(passed_gating=True)
+        symbol = request.query_params.get("asset_symbol")
+        interval = request.query_params.get("interval")
+        if symbol:
+            qs = qs.filter(asset__symbol=symbol.upper())
+        if interval:
+            qs = qs.filter(interval=interval)
+
+        try:
+            limit = min(int(request.query_params.get("limit", 50)), 200)
+        except (TypeError, ValueError):
+            limit = 50
+
+        qs = qs.order_by("-created_at")[:limit]
+        items = [
+            {
+                "id": s.id,
+                "asset_symbol": s.asset.symbol if s.asset else None,
+                "name": s.name,
+                "spec": s.spec,
+                "spec_hash": s.spec_hash,
+                "interval": s.interval,
+                "rank": s.rank,
+                "fitness": s.fitness,
+                "robustness_metrics": s.robustness_metrics,
+                "gating_checks": s.gating_checks,
+                "holdout_metrics": s.holdout_metrics,
+                "status": s.status,
+                "generated_at": s.generated_at.isoformat() if s.generated_at else None,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in qs
+        ]
+        return Response({"count": len(items), "results": items}, status=status.HTTP_200_OK)
+
+
 class AssetDetailInfoView(APIView):
     """
     GET /api/assets/<symbol>/info/ — Información de proyecto de un activo.

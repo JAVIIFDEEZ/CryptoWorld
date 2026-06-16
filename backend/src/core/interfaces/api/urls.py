@@ -124,6 +124,11 @@ urlpatterns = [
         views.StrategyGenerateStatusView.as_view(),
         name="strategies-generate-status",
     ),
+    path(
+        "strategies/",
+        views.SavedStrategiesListView.as_view(),
+        name="strategies-saved-list",
+    ),
 
     # ── Market Intelligence ─────────────────────────────────────────
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
