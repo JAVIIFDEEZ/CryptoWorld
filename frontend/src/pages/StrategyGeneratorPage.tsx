@@ -20,6 +20,7 @@ import {
   type SavedStrategy,
 } from '@/services/strategyGeneratorService'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
+import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 const INTERVALS = ['1d', '4h', '1h', '1w']
@@ -321,7 +322,9 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
             Ordenadas por fitness (Sharpe OOS penalizado). El holdout es rendimiento en datos jamás vistos.
           </p>
           <div className="space-y-3">
-            {report.ranking.map((f) => <FinalistCard key={f.spec_hash} f={f} />)}
+            {report.ranking.map((f) => (
+              <FinalistCard key={f.spec_hash} f={f} assetSymbol={report.asset_symbol} interval={report.interval} />
+            ))}
           </div>
         </div>
       ) : (
@@ -406,7 +409,7 @@ const CHECK_LABELS: Record<keyof GatingChecks, string> = {
   mc_p5_positive: 'Monte Carlo p5',
 }
 
-function FinalistCard({ f }: Readonly<{ f: Finalist }>) {
+function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; assetSymbol: string; interval: string }>) {
   const [open, setOpen] = useState(false)
   const m = f.gating.metrics
   const h = f.holdout_validation
@@ -477,6 +480,9 @@ function FinalistCard({ f }: Readonly<{ f: Finalist }>) {
               ['Velas', `${h.candles}`],
             ]} />
           </div>
+
+          {/* Análisis profundo de robustez (suite completa + multi-activo) */}
+          <SpecRobustnessPanel spec={f.spec} assetSymbol={assetSymbol} interval={interval} />
         </div>
       )}
     </div>
@@ -540,24 +546,73 @@ function HistoryStrip({ items }: Readonly<{ items: SavedStrategy[] }>) {
   }
   return (
     <div className="px-4 pb-4 border-t border-slate-700/50 pt-3">
-      <p className="text-[10px] uppercase text-slate-500 mb-2">Estrategias robustas guardadas</p>
+      <p className="text-[10px] uppercase text-slate-500 mb-2">Estrategias robustas guardadas · actívalas para recibir su señal</p>
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {items.map((s) => (
-          <div key={s.id} className="shrink-0 w-60 bg-slate-900/60 rounded-lg border border-slate-700/60 p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] text-emerald-300 font-semibold">#{s.rank} · {s.asset_symbol}</span>
-              <span className="text-[10px] text-slate-500">{new Date(s.created_at).toLocaleDateString()}</span>
-            </div>
-            <p className="text-[11px] text-slate-300 font-mono line-clamp-2 leading-snug h-8">{s.name}</p>
-            <div className="flex justify-between text-[10px] text-slate-500 mt-2">
-              <span>fitness <span className="text-blue-300">{s.fitness?.toFixed(2) ?? '—'}</span></span>
-              <span>holdout <span className={(s.holdout_metrics?.return_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                {s.holdout_metrics?.return_pct ?? '—'}%
-              </span></span>
-            </div>
-          </div>
-        ))}
+        {items.map((s) => <HistoryCard key={s.id} s={s} />)}
       </div>
+    </div>
+  )
+}
+
+const SIGNAL_STYLE: Record<string, string> = {
+  BUY: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  SELL: 'bg-red-500/15 text-red-400 border-red-500/30',
+  HOLD: 'bg-slate-700/40 text-slate-400 border-slate-600/40',
+}
+
+function HistoryCard({ s }: Readonly<{ s: SavedStrategy }>) {
+  const [monitored, setMonitored] = useState(s.is_monitored)
+  const [signal, setSignal] = useState<string>(s.last_signal || 'HOLD')
+  const [busy, setBusy] = useState(false)
+
+  async function toggle() {
+    setBusy(true)
+    try {
+      const r = await strategyGeneratorService.setMonitor(s.id, !monitored)
+      setMonitored(r.is_monitored)
+      if (r.is_monitored) {
+        const sig = await strategyGeneratorService.getSignal(s.id)
+        if (!sig.error) setSignal(sig.signal)
+      }
+    } catch { /* ignora */ } finally { setBusy(false) }
+  }
+
+  async function refreshSignal() {
+    setBusy(true)
+    try {
+      const sig = await strategyGeneratorService.getSignal(s.id)
+      if (!sig.error) setSignal(sig.signal)
+    } catch { /* ignora */ } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="shrink-0 w-64 bg-slate-900/60 rounded-lg border border-slate-700/60 p-3">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] text-emerald-300 font-semibold">#{s.rank} · {s.asset_symbol}</span>
+        <button onClick={refreshSignal} disabled={busy} title="Recalcular señal actual"
+          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[signal] ?? SIGNAL_STYLE.HOLD}`}>
+          {signal}
+        </button>
+      </div>
+      <p className="text-[11px] text-slate-300 font-mono line-clamp-2 leading-snug h-8">{s.name}</p>
+      <div className="flex justify-between text-[10px] text-slate-500 mt-2">
+        <span>fitness <span className="text-blue-300">{s.fitness?.toFixed(2) ?? '—'}</span></span>
+        <span>holdout <span className={(s.holdout_metrics?.return_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+          {s.holdout_metrics?.return_pct ?? '—'}%
+        </span></span>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={busy}
+        className={`mt-2 w-full text-[11px] font-medium rounded-md py-1.5 border transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 ${
+          monitored
+            ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30'
+            : 'bg-slate-800 text-slate-400 border-slate-600 hover:text-slate-200'
+        }`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${monitored ? 'bg-blue-400 animate-pulse' : 'bg-slate-600'}`} />
+        {monitored ? 'Monitorizando' : 'Activar señal'}
+      </button>
     </div>
   )
 }

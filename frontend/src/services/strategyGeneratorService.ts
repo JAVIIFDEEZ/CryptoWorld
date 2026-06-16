@@ -164,8 +164,79 @@ export interface SavedStrategy {
   gating_checks: GatingChecks | null
   holdout_metrics: HoldoutMetrics | null
   status: string
+  is_monitored: boolean
+  last_signal: string
+  last_signal_at: string | null
   generated_at: string | null
   created_at: string
+}
+
+// ── Análisis profundo de robustez (suite completa + multi-activo) ──
+
+export interface CrossAssetRow {
+  symbol: string
+  ok: boolean
+  oos_sharpe?: number
+  sharpe?: number
+  total_return_pct?: number
+  max_drawdown_pct?: number
+  n_trades?: number
+  note?: string
+}
+
+export interface SpecRobustnessReport {
+  spec: StrategySpec
+  description: string
+  asset_symbol: string
+  interval: string
+  data_source: string
+  candles_count: number
+  robustness_score: number
+  verdict: 'ROBUSTA' | 'FRÁGIL' | 'SOBREAJUSTADA'
+  explanation: string
+  reasons: string[]
+  strengths: string[]
+  component_scores: Record<string, number>
+  metrics: { sharpe: number; sortino: number; calmar: number; max_drawdown_pct: number; profit_factor: number | null; exposure_pct: number }
+  diagnostics: {
+    deflated_sharpe: { dsr: number | null }
+    pbo: { pbo: number | null }
+    walk_forward_anchored: { efficiency: number | null; mean_oos_sharpe: number | null }
+    monte_carlo: { prob_profit_pct: number | null; return_pct: { p5: number | null; p50: number | null } }
+    permutation: { p_value: number | null; significant: boolean }
+    lookahead: { is_leaky: boolean }
+  }
+  cross_asset: {
+    n_assets: number
+    n_positive_oos: number
+    consistency_score: number
+    results: CrossAssetRow[]
+  }
+}
+
+export type RobustnessJobResult = SpecRobustnessReport | { error: string }
+
+export interface RobustnessStatusResponse {
+  job_id: string
+  status: JobStatus
+  result?: RobustnessJobResult
+}
+
+export function isSpecRobustnessReport(r: RobustnessJobResult | undefined): r is SpecRobustnessReport {
+  return !!r && !('error' in r) && 'robustness_score' in r
+}
+
+export interface SignalState {
+  strategy_id: number
+  asset_symbol: string
+  interval: string
+  description: string
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  entry_active: boolean
+  exit_active: boolean
+  conditions: { side: 'entry' | 'exit'; desc: string; active: boolean }[]
+  as_of_ts: number | null
+  error?: string
 }
 
 // ── Servicio ───────────────────────────────────────────────────────
@@ -187,5 +258,29 @@ export const strategyGeneratorService = {
   async listSaved(params?: { asset_symbol?: string; interval?: string; limit?: number }): Promise<SavedStrategy[]> {
     const { data } = await apiClient.get<{ count: number; results: SavedStrategy[] }>('/strategies/', { params })
     return data.results
+  },
+
+  /** Lanza el análisis profundo de robustez de un spec (suite + multi-activo). */
+  async launchRobustness(payload: { spec?: StrategySpec; strategy_id?: number; asset_symbol: string; interval?: string; preset?: GenPreset }): Promise<LaunchResponse> {
+    const { data } = await apiClient.post<LaunchResponse>('/strategies/robustness/', payload)
+    return data
+  },
+
+  /** Consulta el estado/resultado del análisis profundo. */
+  async getRobustnessStatus(jobId: string): Promise<RobustnessStatusResponse> {
+    const { data } = await apiClient.get<RobustnessStatusResponse>(`/strategies/robustness/${jobId}/`)
+    return data
+  },
+
+  /** Activa/desactiva la monitorización en vivo de una estrategia guardada. */
+  async setMonitor(strategyId: number, active: boolean): Promise<{ strategy_id: number; is_monitored: boolean }> {
+    const { data } = await apiClient.post(`/strategies/${strategyId}/monitor/`, { active })
+    return data
+  },
+
+  /** Señal actual (BUY/SELL/HOLD) de una estrategia guardada. */
+  async getSignal(strategyId: number): Promise<SignalState> {
+    const { data } = await apiClient.get<SignalState>(`/strategies/${strategyId}/signal/`)
+    return data
   },
 }
