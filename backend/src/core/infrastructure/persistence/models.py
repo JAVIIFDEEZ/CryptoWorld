@@ -474,3 +474,58 @@ class UserWatchlist(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user.email} ★ {self.asset.symbol}"
+
+
+class StrategyDefinition(models.Model):
+    """
+    Estrategia generada por el algoritmo genético (Módulo 2) que ha superado el
+    gating de robustez (Módulo 1).
+
+    `spec` guarda el StrategySpec componible (Módulo 0) tal cual — JSON
+    autocontenido que el compilador puede re-ejecutar. Junto a él se persisten
+    las métricas de robustez de la zona de evolución, los checks del gating, el
+    rendimiento en el tramo de validación final (holdout, datos jamás vistos) y
+    la posición en el ranking de la generación.
+    """
+
+    STATUS_CHOICES = [
+        ("candidate", "Candidata"),
+        ("validated", "Validada"),     # pasó el gating de robustez
+        ("rejected", "Descartada"),
+        ("archived", "Archivada"),
+    ]
+
+    asset = models.ForeignKey(
+        CryptoAsset,
+        on_delete=models.CASCADE,
+        related_name="strategy_definitions",
+        null=True,
+        blank=True,
+    )
+    name = models.CharField(max_length=255)
+    spec = models.JSONField()                       # StrategySpec componible (Módulo 0)
+    spec_hash = models.CharField(max_length=64, db_index=True)
+    interval = models.CharField(max_length=10, default="1d")
+    rank = models.PositiveSmallIntegerField(default=0)
+    fitness = models.FloatField(null=True, blank=True)
+    passed_gating = models.BooleanField(default=False)
+    robustness_metrics = models.JSONField(null=True, blank=True)   # PBO, Sharpe, MC, eficiencia…
+    gating_checks = models.JSONField(null=True, blank=True)        # qué umbrales se cumplieron
+    holdout_metrics = models.JSONField(null=True, blank=True)      # rendimiento en validación final
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="candidate")
+    generated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "strategy_definitions"
+        verbose_name = "Estrategia Generada"
+        verbose_name_plural = "Estrategias Generadas"
+        ordering = ["rank", "-fitness"]
+        indexes = [
+            models.Index(fields=["asset", "interval", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        sym = self.asset.symbol if self.asset else "—"
+        return f"#{self.rank} {sym} {self.name[:40]} ({self.status})"

@@ -18,6 +18,7 @@ from core.infrastructure.persistence.models import (  # noqa: F401
     PortfolioAsset,
     AnalysisExecution,
     UserWatchlist,
+    StrategyDefinition,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "PortfolioAsset",
     "AnalysisExecution",
     "UserWatchlist",
+    "StrategyDefinition",
 ]
