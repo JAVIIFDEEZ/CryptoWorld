@@ -1340,6 +1340,8 @@ class RobustBacktestLaunchView(APIView):
     tarea Celery (cientos de backtests) y devuelve un job_id sin bloquear.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "robust_backtest"
 
     def post(self, request):
         serializer = RobustBacktestRequestSerializer(data=request.data)
@@ -1431,6 +1433,8 @@ class StrategyGenerateLaunchView(APIView):
     devuelve un job_id sin bloquear.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "strategy_generate"
 
     def post(self, request):
         serializer = StrategyGenerateRequestSerializer(data=request.data)
@@ -1490,6 +1494,8 @@ class SpecRobustnessLaunchView(APIView):
     Cuerpo: spec (objeto) o strategy_id (de una guardada) + asset_symbol.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "strategy_robustness"
 
     def post(self, request):
         serializer = SpecRobustnessRequestSerializer(data=request.data)
@@ -1631,6 +1637,43 @@ class StrategySignalView(APIView):
         result = StrategySignalUseCase().execute(strategy_id)
         code = status.HTTP_404_NOT_FOUND if result.get("error") == "Estrategia no encontrada." else status.HTTP_200_OK
         return Response(result, status=code)
+
+
+class RecentSignalEventsView(APIView):
+    """
+    GET /api/strategies/signals/recent/ — Historial reciente de señales disparadas
+    por las estrategias monitorizadas del usuario (las más recientes primero).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.persistence.models import StrategySignalEvent
+
+        try:
+            limit = min(int(request.query_params.get("limit", 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+
+        qs = (
+            StrategySignalEvent.objects
+            .select_related("strategy", "strategy__asset")
+            .filter(owner=request.user)
+            .order_by("-created_at")[:limit]
+        )
+        events = [
+            {
+                "id": e.id,
+                "strategy_id": e.strategy_id,
+                "asset_symbol": e.strategy.asset.symbol if e.strategy.asset else None,
+                "name": e.strategy.name,
+                "signal": e.signal,
+                "price": e.price,
+                "notified": e.notified,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in qs
+        ]
+        return Response({"count": len(events), "results": events}, status=status.HTTP_200_OK)
 
 
 class AssetDetailInfoView(APIView):

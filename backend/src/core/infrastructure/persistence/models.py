@@ -538,3 +538,39 @@ class StrategyDefinition(models.Model):
     def __str__(self) -> str:
         sym = self.asset.symbol if self.asset else "—"
         return f"#{self.rank} {sym} {self.name[:40]} ({self.status})"
+
+
+class StrategySignalEvent(models.Model):
+    """
+    Registro de un cambio de señal de una estrategia monitorizada.
+
+    La tarea periódica crea un evento cada vez que la señal de una estrategia
+    activa pasa a compra o venta. Es el historial consultable in-app de lo que
+    han "disparado" las estrategias del usuario (no solo la última señal).
+    """
+
+    SIGNAL_CHOICES = [("BUY", "Compra"), ("SELL", "Venta")]
+
+    strategy = models.ForeignKey(
+        StrategyDefinition, on_delete=models.CASCADE, related_name="signal_events",
+    )
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="strategy_signal_events",
+        null=True, blank=True,
+    )
+    signal = models.CharField(max_length=8, choices=SIGNAL_CHOICES)
+    price = models.FloatField(null=True, blank=True)   # precio de cierre al disparar
+    notified = models.BooleanField(default=False)      # si se envió el email
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "strategy_signal_events"
+        verbose_name = "Evento de Señal"
+        verbose_name_plural = "Eventos de Señal"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.signal} · {self.strategy_id} @ {self.created_at:%Y-%m-%d %H:%M}"

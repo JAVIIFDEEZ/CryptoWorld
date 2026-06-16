@@ -58,7 +58,7 @@ class EvaluateMonitoredStrategiesUseCase:
     def execute(self) -> dict:
         from django.utils import timezone
         from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
-        from core.infrastructure.persistence.models import StrategyDefinition
+        from core.infrastructure.persistence.models import StrategyDefinition, StrategySignalEvent
 
         monitored = StrategyDefinition.objects.select_related("asset", "owner").filter(is_monitored=True)
         evaluated = 0
@@ -78,7 +78,12 @@ class EvaluateMonitoredStrategiesUseCase:
             obj.save(update_fields=["last_signal", "last_signal_at", "updated_at"])
 
             if new_signal != previous and new_signal in ("BUY", "SELL"):
-                if self._notify(obj, new_signal):
+                price = float(res.df["close"].iloc[-1])
+                sent = self._notify(obj, new_signal)
+                StrategySignalEvent.objects.create(
+                    strategy=obj, owner=obj.owner, signal=new_signal, price=price, notified=sent,
+                )
+                if sent:
                     notified += 1
 
         logger.info("monitor_strategies: %d evaluadas, %d notificadas", evaluated, notified)

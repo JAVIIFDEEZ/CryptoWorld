@@ -225,8 +225,18 @@ class RunSpecRobustnessUseCase:
         cross_assets: list | None = None,
     ) -> dict:
         from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+        from django.core.cache import cache
+        from core.domain.services.strategy_spec import spec_hash
 
         symbol = asset_symbol.upper()
+
+        # La suite es determinista para (spec, activo, marco, preset): cachear
+        # evita recomputar cientos de backtests si se reabre el mismo análisis.
+        cache_key = f"spec_robust:{spec_hash(spec)}:{symbol}:{interval}:{preset}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return {**cached, "cached": True}
+
         main = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
         if main is None or main.df.empty or len(main.df) < MIN_CANDLES:
             return {"error": f"Datos insuficientes para {symbol} (se necesitan ≥{MIN_CANDLES} velas)."}
@@ -255,4 +265,5 @@ class RunSpecRobustnessUseCase:
             symbol, preset, report.get("verdict"), report.get("robustness_score", 0),
             report["cross_asset"]["consistency_score"] * 100,
         )
+        cache.set(cache_key, report, 3600)  # 1 hora, alineado con la suite clásica
         return report

@@ -148,9 +148,51 @@ class TestMonitoring:
         assert len(mail.outbox) == 1
         s.refresh_from_db()
         assert s.last_signal == "BUY"
+        # Se registró el evento de señal con precio
+        assert s.signal_events.count() == 1
+        ev = s.signal_events.first()
+        assert ev.signal == "BUY" and ev.price is not None and ev.owner_id == test_user.id
 
-        # Segunda evaluación: la señal no cambia → no se vuelve a notificar
+        # Segunda evaluación: la señal no cambia → no se vuelve a notificar ni registrar
         mail.outbox.clear()
         again = EvaluateMonitoredStrategiesUseCase().execute()
         assert again["notified"] == 0
         assert len(mail.outbox) == 0
+        assert s.signal_events.count() == 1
+
+
+class TestSignalFeed:
+
+    @pytest.mark.integration
+    def test_recent_events_only_for_owner(self, authenticated_client, test_user, db):
+        from core.infrastructure.persistence.models import CryptoAsset, StrategyDefinition, StrategySignalEvent
+        from django.contrib.auth import get_user_model
+
+        other = get_user_model().objects.create_user(email="o@x.com", username="other", password="x")
+        btc = CryptoAsset.objects.create(symbol="BTC", name="Bitcoin")
+        s = StrategyDefinition.objects.create(asset=btc, name="S", spec=_ALWAYS_BUY, spec_hash="m1", passed_gating=True)
+        StrategySignalEvent.objects.create(strategy=s, owner=test_user, signal="BUY", price=100.0)
+        StrategySignalEvent.objects.create(strategy=s, owner=other, signal="SELL", price=90.0)
+
+        resp = authenticated_client.get("/api/strategies/signals/recent/")
+        assert resp.status_code == 200
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["signal"] == "BUY"
+        assert resp.data["results"][0]["asset_symbol"] == "BTC"
+
+    @pytest.mark.integration
+    def test_recent_events_requires_auth(self, api_client):
+        assert api_client.get("/api/strategies/signals/recent/").status_code == 401
+
+
+class TestRobustnessCache:
+
+    @pytest.mark.integration
+    def test_second_run_served_from_cache(self, fast_suite, db):
+        from core.application.use_cases.run_spec_robustness import RunSpecRobustnessUseCase
+        uc = RunSpecRobustnessUseCase()
+        first = uc.execute(spec=seed_specs()[0], asset_symbol="BTC", preset="fast")
+        second = uc.execute(spec=seed_specs()[0], asset_symbol="BTC", preset="fast")
+        assert "cached" not in first
+        assert second.get("cached") is True
+        assert second["robustness_score"] == first["robustness_score"]

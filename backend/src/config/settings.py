@@ -176,6 +176,11 @@ REST_FRAMEWORK = {
         "auth_resend_verification": "5/hour",
         "auth_change_email": "5/hour",
         "auth_2fa": "10/min",
+        # Endpoints costosos (lanzan cientos de backtests en Celery): se limitan
+        # por usuario/IP para proteger el worker. El contador vive en Redis.
+        "robust_backtest": "30/hour",
+        "strategy_generate": "10/hour",
+        "strategy_robustness": "40/hour",
     },
 }
 
