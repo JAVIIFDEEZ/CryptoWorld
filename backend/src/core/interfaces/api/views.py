@@ -53,6 +53,7 @@ from core.interfaces.api.serializers import (
     DeleteAccountSerializer,
     RobustBacktestRequestSerializer,
     RobustCompareRequestSerializer,
+    StrategyGenerateRequestSerializer,
     CalculateAnalysisSerializer,
     SignalsRequestSerializer,
     PredictionRequestSerializer,
@@ -1418,6 +1419,63 @@ class RobustBacktestStatusView(APIView):
             payload["result"] = res.result
         elif res.failed():
             payload["error"] = "La suite de robustez falló durante la ejecución."
+
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class StrategyGenerateLaunchView(APIView):
+    """
+    POST /api/strategies/generate/ — Lanza el generador genético de estrategias
+    como tarea Celery (evolución + gating de robustez, cientos de backtests) y
+    devuelve un job_id sin bloquear.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = StrategyGenerateRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import generate_strategies as task
+
+        v = serializer.validated_data
+        async_result = task.delay(
+            asset_symbol=v["asset_symbol"],
+            interval=v.get("interval", "1d"),
+            limit=v.get("limit", 730),
+            initial_capital=v.get("initial_capital", 10000.0),
+            preset=v.get("preset", "balanced"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/strategies/generate/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class StrategyGenerateStatusView(APIView):
+    """
+    GET /api/strategies/generate/<job_id>/ — Estado/resultado del generador.
+
+    status: PENDING | STARTED | SUCCESS | FAILURE. Con SUCCESS incluye el
+    informe completo con el ranking de finalistas en `result`.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from celery.result import AsyncResult
+        from config.celery import app
+
+        res = AsyncResult(job_id, app=app)
+        payload = {"job_id": job_id, "status": res.state}
+
+        if res.successful():
+            payload["result"] = res.result
+        elif res.failed():
+            payload["error"] = "El generador de estrategias falló durante la ejecución."
 
         return Response(payload, status=status.HTTP_200_OK)
 

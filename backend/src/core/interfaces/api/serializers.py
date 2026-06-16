@@ -394,6 +394,22 @@ class RobustCompareRequestSerializer(serializers.Serializer):
     )
 
 
+class StrategyGenerateRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/strategies/generate/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    limit = serializers.IntegerField(min_value=300, max_value=2000, default=730, required=False)
+    initial_capital = serializers.FloatField(
+        min_value=100, max_value=1_000_000, default=10000.0, required=False
+    )
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="balanced", required=False,
+    )
+
+
 class AddTradeSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/trades/."""
     asset_symbol = serializers.CharField(max_length=20)

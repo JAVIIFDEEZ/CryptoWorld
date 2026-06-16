@@ -334,3 +334,53 @@ def compare_strategies_robustness(
     except Exception as exc:
         logger.error("compare_strategies_robustness error %s: %s", asset_symbol, exc, exc_info=True)
         raise
+
+
+# ─────────────────────────────────────────────────────────────────
+# Generador genético de estrategias — evolución + gating, va en background
+# ─────────────────────────────────────────────────────────────────
+
+@shared_task(
+    name="core.tasks.generate_strategies",
+    bind=True,
+    max_retries=0,
+)
+def generate_strategies(
+    self,
+    asset_symbol: str,
+    interval: str = "1d",
+    limit: int = 730,
+    initial_capital: float = 10000.0,
+    preset: str = "balanced",
+) -> dict:
+    """
+    Genera estrategias por algoritmo genético: evoluciona StrategySpecs con
+    fitness robustez-aware (Sharpe OOS walk-forward), pasa los finalistas por el
+    gating de robustez (PBO, lookahead, Monte Carlo, eficiencia) y los re-evalúa
+    en el tramo de validación final intacto. Persiste el ranking como
+    StrategyDefinition.
+
+    Lanzada con .delay() desde StrategyGenerateLaunchView; el cliente consulta el
+    resultado con el job_id (AsyncResult). No reintenta: es costosa y un fallo de
+    datos ya se devuelve como payload {"error": ...}.
+    """
+    try:
+        from core.application.use_cases.generate_strategies import (
+            GenerateStrategiesUseCase,
+        )
+
+        result = GenerateStrategiesUseCase().execute(
+            asset_symbol=asset_symbol,
+            interval=interval,
+            limit=limit,
+            initial_capital=initial_capital,
+            preset=preset,
+        )
+        logger.info(
+            "generate_strategies: %s → %s finalistas robustos",
+            asset_symbol, result.get("summary", {}).get("passed_gating", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error("generate_strategies error %s: %s", asset_symbol, exc, exc_info=True)
+        raise

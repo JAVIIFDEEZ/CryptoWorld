@@ -113,6 +113,18 @@ urlpatterns = [
     ),
     path("analysis/strategies/", views.AvailableStrategiesView.as_view(), name="analysis-strategies"),
 
+    # ── Generador genético de estrategias (Módulo 2) ────────────────
+    path(
+        "strategies/generate/",
+        views.StrategyGenerateLaunchView.as_view(),
+        name="strategies-generate",
+    ),
+    path(
+        "strategies/generate/<str:job_id>/",
+        views.StrategyGenerateStatusView.as_view(),
+        name="strategies-generate-status",
+    ),
+
     # ── Market Intelligence ─────────────────────────────────────────
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),
     path("market/fx/", views.FxRatesView.as_view(), name="market-fx"),
