@@ -384,3 +384,65 @@ def generate_strategies(
     except Exception as exc:
         logger.error("generate_strategies error %s: %s", asset_symbol, exc, exc_info=True)
         raise
+
+
+@shared_task(
+    name="core.tasks.analyze_spec_robustness",
+    bind=True,
+    max_retries=0,
+)
+def analyze_spec_robustness(
+    self,
+    spec: dict,
+    asset_symbol: str,
+    interval: str = "1d",
+    limit: int = 365,
+    preset: str = "balanced",
+) -> dict:
+    """
+    Análisis profundo de robustez de un StrategySpec generado: suite completa
+    (PBO, DSR, Monte Carlo, permutación, lookahead) sobre el activo principal +
+    validación cruzada en varios activos. Lanzada con .delay() desde
+    SpecRobustnessLaunchView; el resultado se consulta con el job_id.
+    """
+    try:
+        from core.application.use_cases.run_spec_robustness import RunSpecRobustnessUseCase
+
+        result = RunSpecRobustnessUseCase().execute(
+            spec=spec, asset_symbol=asset_symbol, interval=interval, limit=limit, preset=preset,
+        )
+        logger.info(
+            "analyze_spec_robustness: %s → %s",
+            asset_symbol, result.get("verdict", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error("analyze_spec_robustness error %s: %s", asset_symbol, exc, exc_info=True)
+        raise
+
+
+@shared_task(
+    name="core.tasks.evaluate_monitored_strategies",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+)
+def evaluate_monitored_strategies(self) -> dict:
+    """
+    Reevalúa las estrategias generadas activas y notifica los cambios de señal a
+    sus dueños. Programada por celery beat (cada 15 min).
+    """
+    try:
+        from core.application.use_cases.monitor_strategies import (
+            EvaluateMonitoredStrategiesUseCase,
+        )
+
+        result = EvaluateMonitoredStrategiesUseCase().execute()
+        logger.info(
+            "evaluate_monitored_strategies: %d evaluadas, %d notificadas",
+            result["evaluated"], result["notified"],
+        )
+        return result
+    except Exception as exc:
+        logger.error("evaluate_monitored_strategies error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)

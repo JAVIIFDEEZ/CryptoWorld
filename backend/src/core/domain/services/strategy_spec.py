@@ -273,6 +273,43 @@ def compile_signals(df: pd.DataFrame, spec: dict) -> np.ndarray:
     return signals
 
 
+def signal_state(df: pd.DataFrame, spec: dict) -> dict:
+    """
+    Estado de la estrategia en la ÚLTIMA vela: la señal actual (BUY/SELL/HOLD) y
+    qué condiciones de entrada/salida están activas ahora mismo. Sirve para
+    "activar" una estrategia generada y mostrar/notificar su señal en vivo.
+    Causal: solo usa información disponible al cierre de la última vela.
+    """
+    if df is None or len(df) == 0:
+        return {"signal": "HOLD", "entry_active": False, "exit_active": False, "conditions": []}
+
+    cache: dict = {}
+    def last(arr) -> bool:
+        return bool(np.asarray(arr)[-1])
+
+    conditions = []
+    entry_bools = []
+    for c in spec["entry"]["conditions"]:
+        b = _condition_bool(df, c, cache)
+        entry_bools.append(b)
+        conditions.append({"side": "entry", "desc": _describe_condition(c), "active": last(b)})
+    exit_bools = []
+    for c in spec["exit"]["conditions"]:
+        b = _condition_bool(df, c, cache)
+        exit_bools.append(b)
+        conditions.append({"side": "exit", "desc": _describe_condition(c), "active": last(b)})
+
+    entry_active = last(_combine(entry_bools, spec["entry"]["combine"]))
+    exit_active = last(_combine(exit_bools, spec["exit"]["combine"]))
+    signal = "SELL" if exit_active else ("BUY" if entry_active else "HOLD")
+    return {
+        "signal": signal,
+        "entry_active": entry_active,
+        "exit_active": exit_active,
+        "conditions": conditions,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Identidad y descripción legible
 # ═══════════════════════════════════════════════════════════════════

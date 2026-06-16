@@ -410,6 +410,29 @@ class StrategyGenerateRequestSerializer(serializers.Serializer):
     )
 
 
+class SpecRobustnessRequestSerializer(serializers.Serializer):
+    """Valida POST /api/strategies/robustness/ — análisis profundo de un spec.
+
+    Se puede pasar el spec directamente, o un strategy_id de una estrategia
+    guardada (StrategyDefinition) de la que se recupera el spec."""
+    spec = serializers.JSONField(required=False)
+    strategy_id = serializers.IntegerField(required=False)
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    limit = serializers.IntegerField(min_value=250, max_value=2000, default=365, required=False)
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="balanced", required=False,
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("spec") and not attrs.get("strategy_id"):
+            raise serializers.ValidationError("Indica 'spec' o 'strategy_id'.")
+        return attrs
+
+
 class AddTradeSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/trades/."""
     asset_symbol = serializers.CharField(max_length=20)

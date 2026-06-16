@@ -54,6 +54,7 @@ from core.interfaces.api.serializers import (
     RobustBacktestRequestSerializer,
     RobustCompareRequestSerializer,
     StrategyGenerateRequestSerializer,
+    SpecRobustnessRequestSerializer,
     CalculateAnalysisSerializer,
     SignalsRequestSerializer,
     PredictionRequestSerializer,
@@ -1480,6 +1481,70 @@ class StrategyGenerateStatusView(APIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
+class SpecRobustnessLaunchView(APIView):
+    """
+    POST /api/strategies/robustness/ — Análisis profundo de robustez de una
+    estrategia generada (su StrategySpec). Suite completa + validación cruzada
+    multi-activo, como tarea Celery; devuelve un job_id.
+
+    Cuerpo: spec (objeto) o strategy_id (de una guardada) + asset_symbol.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = SpecRobustnessRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        spec = v.get("spec")
+        if spec is None:
+            from core.infrastructure.persistence.models import StrategyDefinition
+            obj = StrategyDefinition.objects.filter(id=v["strategy_id"]).first()
+            if obj is None:
+                return Response({"error": "Estrategia no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+            spec = obj.spec
+
+        from core.domain.services.strategy_spec import validate_spec
+        if not validate_spec(spec):
+            return Response({"error": "El spec no es una estrategia válida."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import analyze_spec_robustness as task
+
+        async_result = task.delay(
+            spec=spec,
+            asset_symbol=v["asset_symbol"],
+            interval=v.get("interval", "1d"),
+            limit=v.get("limit", 365),
+            preset=v.get("preset", "balanced"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/strategies/robustness/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class SpecRobustnessStatusView(APIView):
+    """GET /api/strategies/robustness/<job_id>/ — Estado/resultado del análisis."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from celery.result import AsyncResult
+        from config.celery import app
+
+        res = AsyncResult(job_id, app=app)
+        payload = {"job_id": job_id, "status": res.state}
+        if res.successful():
+            payload["result"] = res.result
+        elif res.failed():
+            payload["error"] = "El análisis de robustez falló durante la ejecución."
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class SavedStrategiesListView(APIView):
     """
     GET /api/strategies/ — Historial de estrategias generadas que pasaron el
@@ -1520,12 +1585,52 @@ class SavedStrategiesListView(APIView):
                 "gating_checks": s.gating_checks,
                 "holdout_metrics": s.holdout_metrics,
                 "status": s.status,
+                "is_monitored": s.is_monitored,
+                "last_signal": s.last_signal,
+                "last_signal_at": s.last_signal_at.isoformat() if s.last_signal_at else None,
                 "generated_at": s.generated_at.isoformat() if s.generated_at else None,
                 "created_at": s.created_at.isoformat(),
             }
             for s in qs
         ]
         return Response({"count": len(items), "results": items}, status=status.HTTP_200_OK)
+
+
+class StrategyMonitorView(APIView):
+    """
+    POST /api/strategies/<id>/monitor/ — Activa o desactiva la monitorización en
+    vivo de una estrategia generada. Body: {"active": true|false}. Al activar,
+    el usuario pasa a ser su dueño y recibirá notificaciones de cambio de señal.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, strategy_id: int):
+        from core.infrastructure.persistence.models import StrategyDefinition
+
+        obj = StrategyDefinition.objects.filter(id=strategy_id).first()
+        if obj is None:
+            return Response({"error": "Estrategia no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        active = bool(request.data.get("active", True))
+        obj.is_monitored = active
+        obj.owner = request.user if active else None
+        obj.save(update_fields=["is_monitored", "owner", "updated_at"])
+        return Response({"strategy_id": obj.id, "is_monitored": obj.is_monitored}, status=status.HTTP_200_OK)
+
+
+class StrategySignalView(APIView):
+    """
+    GET /api/strategies/<id>/signal/ — Señal actual (BUY/SELL/HOLD) de la
+    estrategia sobre los datos más recientes, con el estado de cada condición.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, strategy_id: int):
+        from core.application.use_cases.monitor_strategies import StrategySignalUseCase
+
+        result = StrategySignalUseCase().execute(strategy_id)
+        code = status.HTTP_404_NOT_FOUND if result.get("error") == "Estrategia no encontrada." else status.HTTP_200_OK
+        return Response(result, status=code)
 
 
 class AssetDetailInfoView(APIView):

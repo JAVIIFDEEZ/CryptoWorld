@@ -513,6 +513,15 @@ class StrategyDefinition(models.Model):
     gating_checks = models.JSONField(null=True, blank=True)        # qué umbrales se cumplieron
     holdout_metrics = models.JSONField(null=True, blank=True)      # rendimiento en validación final
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="candidate")
+    # Monitorización en vivo: una estrategia "activada" se reevalúa periódicamente
+    # y notifica a su dueño cuando su señal cambia a compra o venta.
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="monitored_strategies",
+        null=True, blank=True,
+    )
+    is_monitored = models.BooleanField(default=False, db_index=True)
+    last_signal = models.CharField(max_length=8, default="HOLD")   # BUY | SELL | HOLD
+    last_signal_at = models.DateTimeField(null=True, blank=True)
     generated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

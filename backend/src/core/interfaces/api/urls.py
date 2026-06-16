@@ -125,9 +125,29 @@ urlpatterns = [
         name="strategies-generate-status",
     ),
     path(
+        "strategies/robustness/",
+        views.SpecRobustnessLaunchView.as_view(),
+        name="strategies-robustness",
+    ),
+    path(
+        "strategies/robustness/<str:job_id>/",
+        views.SpecRobustnessStatusView.as_view(),
+        name="strategies-robustness-status",
+    ),
+    path(
         "strategies/",
         views.SavedStrategiesListView.as_view(),
         name="strategies-saved-list",
+    ),
+    path(
+        "strategies/<int:strategy_id>/monitor/",
+        views.StrategyMonitorView.as_view(),
+        name="strategies-monitor",
+    ),
+    path(
+        "strategies/<int:strategy_id>/signal/",
+        views.StrategySignalView.as_view(),
+        name="strategies-signal",
     ),
 
     # ── Market Intelligence ─────────────────────────────────────────

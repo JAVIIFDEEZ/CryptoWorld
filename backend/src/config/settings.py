@@ -324,5 +324,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.send_market_digest",
         "schedule": crontab(day_of_week=1, hour=8, minute=0),
     },
+    # Señales en vivo de estrategias generadas monitorizadas (cada 15 min)
+    "evaluate-monitored-strategies": {
+        "task": "core.tasks.evaluate_monitored_strategies",
+        "schedule": 900.0,  # segundos — cada 15 min
+    },
 }
 

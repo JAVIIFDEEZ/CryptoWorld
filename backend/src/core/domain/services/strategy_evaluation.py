@@ -118,18 +118,73 @@ def evaluate_fitness(
     }
 
 
-def _neighborhood_matrix(df, spec: dict, k: int, rng: np.random.Generator):
-    """Matriz (T, k) de retornos por vela de k vecinos del spec (PBO/CSCV)."""
-    columns = []
-    base = _segment_backtest(df, spec)["bar_returns"]
-    columns.append(base)
+def _neighborhood_returns(df, spec: dict, k: int, rng: np.random.Generator) -> list:
+    """Lista de series de retorno por vela del spec y de k−1 vecinos jitter,
+    recortadas a longitud común. Base del PBO (matriz) y del Deflated Sharpe
+    (lista de trials)."""
+    columns = [_segment_backtest(df, spec)["bar_returns"]]
     for _ in range(k - 1):
         neighbor = jitter_params(spec, rng)
         columns.append(_segment_backtest(df, neighbor)["bar_returns"])
     length = min(len(c) for c in columns)
     if length < 8 or len(columns) < 2:
+        return []
+    return [list(c[:length]) for c in columns]
+
+
+def _neighborhood_matrix(df, spec: dict, k: int, rng: np.random.Generator):
+    """Matriz (T, k) de retornos por vela de k vecinos del spec (PBO/CSCV)."""
+    columns = _neighborhood_returns(df, spec, k, rng)
+    if not columns:
         return None
-    return np.column_stack([c[:length] for c in columns])
+    return np.column_stack(columns)
+
+
+def spec_permutation_test(
+    df,
+    spec: dict,
+    observed_sharpe: float,
+    n_perms: int = 120,
+    ppy: float = 365.0,
+    seed: int = 42,
+) -> dict:
+    """
+    Test de permutación para un spec fijo: baraja los retornos de la serie de
+    precios (destruye la estructura temporal), recompila las señales del spec y
+    recalcula el Sharpe. Si el edge es real, el Sharpe observado supera al de la
+    mayoría de permutaciones (p-valor bajo). Mismo método que el de las 5
+    estrategias, pero compilando el spec componible en vez de una estrategia con
+    nombre.
+    """
+    close = df["close"].values.astype(float)
+    if close.size < 30 or np.any(close <= 0):
+        return {"p_value": None, "observed_sharpe": round(float(observed_sharpe), 3),
+                "n_perms": 0, "significant": False,
+                "note": "Serie insuficiente para el test de permutación."}
+
+    log_ret = np.diff(np.log(close))
+    rng = np.random.default_rng(seed)
+    count_ge = 0
+    for _ in range(n_perms):
+        perm = rng.permutation(log_ret)
+        prices = close[0] * np.exp(np.concatenate([[0.0], np.cumsum(perm)]))
+        pdf = df.copy()
+        pdf["open"] = prices
+        pdf["high"] = prices * 1.001
+        pdf["low"] = prices * 0.999
+        pdf["close"] = prices
+        bt = backtest_signals(pdf, compile_signals(pdf, spec))
+        s = metrics.sharpe_ratio(bt["bar_returns"], ppy)
+        if s >= observed_sharpe:
+            count_ge += 1
+
+    p_value = (count_ge + 1) / (n_perms + 1)
+    return {
+        "p_value": round(float(p_value), 4),
+        "observed_sharpe": round(float(observed_sharpe), 3),
+        "n_perms": n_perms,
+        "significant": bool(p_value < 0.05),
+    }
 
 
 def gate_spec(
