@@ -22,6 +22,7 @@ import {
   type StrategyInfo,
 } from '@/services/analysisService'
 import InfoTooltip from '@/components/ui/InfoTooltip'
+import IndicatorsRadar from '@/components/analysis/IndicatorsRadar'
 
 // ── Tipos locales ────────────────────────────────────────────────
 
@@ -498,6 +499,9 @@ function SignalsTab({ data }: { data: SignalsResult | null }) {
           </p>
         </div>
       </div>
+
+      {/* Radar de consenso */}
+      <IndicatorsRadar indicators={indicators} />
 
       {/* Tabla de indicadores */}
       <div>
