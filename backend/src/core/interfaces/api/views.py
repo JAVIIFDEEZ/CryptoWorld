@@ -1329,6 +1329,10 @@ class RunBacktestView(APIView):
                 interval=v.get("interval", "1h"),
                 limit=v.get("limit", 500),
                 initial_capital=v.get("initial_capital", 10000.0),
+                commission_bps=v.get("commission_bps", 0.0),
+                slippage_bps=v.get("slippage_bps", 0.0),
+                stop_loss_pct=v.get("stop_loss_pct"),
+                take_profit_pct=v.get("take_profit_pct"),
             )
         )
         return Response(result, status=status.HTTP_200_OK)

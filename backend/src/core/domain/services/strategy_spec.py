@@ -157,9 +157,40 @@ def _random_block(rng: np.random.Generator) -> dict:
     }
 
 
+# Rangos de la gestión de riesgo (fracciones): stop-loss, take-profit, trailing.
+RISK_RANGES = {
+    "stop_loss_pct": (0.02, 0.15),
+    "take_profit_pct": (0.03, 0.30),
+    "trailing_stop_pct": (0.03, 0.20),
+}
+
+
+def _random_risk(rng: np.random.Generator) -> dict | None:
+    """Bloque de riesgo aleatorio (o None). Combina stop-loss/take-profit o
+    trailing, para que el GA pueda evolucionar gestión de riesgo, no solo señales."""
+    roll = rng.random()
+    if roll < 0.4:
+        return None  # sin gestión de riesgo
+    risk: dict = {}
+    if roll < 0.7:  # stop-loss (+ a veces take-profit)
+        lo, hi = RISK_RANGES["stop_loss_pct"]
+        risk["stop_loss_pct"] = round(float(rng.uniform(lo, hi)), 3)
+        if rng.random() < 0.6:
+            lo, hi = RISK_RANGES["take_profit_pct"]
+            risk["take_profit_pct"] = round(float(rng.uniform(lo, hi)), 3)
+    else:  # trailing-stop
+        lo, hi = RISK_RANGES["trailing_stop_pct"]
+        risk["trailing_stop_pct"] = round(float(rng.uniform(lo, hi)), 3)
+    return risk
+
+
 def random_spec(rng: np.random.Generator) -> dict:
-    """Genera un StrategySpec aleatorio legal."""
-    return {"entry": _random_block(rng), "exit": _random_block(rng)}
+    """Genera un StrategySpec aleatorio legal (con gestión de riesgo opcional)."""
+    spec = {"entry": _random_block(rng), "exit": _random_block(rng)}
+    risk = _random_risk(rng)
+    if risk:
+        spec["risk"] = risk
+    return spec
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -211,11 +242,40 @@ def _validate_block(block: dict) -> bool:
     return all(_validate_condition(c) for c in conds)
 
 
+def _validate_risk(risk) -> bool:
+    if risk is None:
+        return True
+    if not isinstance(risk, dict) or not risk:
+        return False
+    if set(risk) - set(RISK_RANGES):
+        return False
+    for name, value in risk.items():
+        lo, hi = RISK_RANGES[name]
+        if not isinstance(value, (int, float)) or not (lo - 1e-9 <= value <= hi + 1e-9):
+            return False
+    return True
+
+
 def validate_spec(spec: dict) -> bool:
     """True si el spec es estructuralmente legal y todos sus bloques válidos."""
     if not isinstance(spec, dict) or "entry" not in spec or "exit" not in spec:
         return False
+    if not _validate_risk(spec.get("risk")):
+        return False
     return _validate_block(spec["entry"]) and _validate_block(spec["exit"])
+
+
+def spec_risk(spec: dict):
+    """RiskModel del spec (o None si no define gestión de riesgo)."""
+    from core.domain.services.backtest_execution import RiskModel
+    risk = spec.get("risk")
+    if not risk:
+        return None
+    return RiskModel(
+        stop_loss_pct=risk.get("stop_loss_pct"),
+        take_profit_pct=risk.get("take_profit_pct"),
+        trailing_stop_pct=risk.get("trailing_stop_pct"),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -333,12 +393,26 @@ def _describe_condition(c: dict) -> str:
     return f"{_describe_indicator(c['a'])} {arrow} {_describe_indicator(c['b'])}"
 
 
+def _describe_risk(risk: dict | None) -> str:
+    if not risk:
+        return ""
+    parts = []
+    if risk.get("stop_loss_pct") is not None:
+        parts.append(f"SL {round(risk['stop_loss_pct'] * 100, 1)}%")
+    if risk.get("take_profit_pct") is not None:
+        parts.append(f"TP {round(risk['take_profit_pct'] * 100, 1)}%")
+    if risk.get("trailing_stop_pct") is not None:
+        parts.append(f"trailing {round(risk['trailing_stop_pct'] * 100, 1)}%")
+    return f" [{' · '.join(parts)}]" if parts else ""
+
+
 def describe_spec(spec: dict) -> str:
     """Descripción en español legible de la lógica de la estrategia."""
     def block(b):
         sep = " Y " if b["combine"] == "AND" else " O "
         return sep.join(_describe_condition(c) for c in b["conditions"])
-    return f"ENTRAR si {block(spec['entry'])}; SALIR si {block(spec['exit'])}"
+    return (f"ENTRAR si {block(spec['entry'])}; SALIR si {block(spec['exit'])}"
+            f"{_describe_risk(spec.get('risk'))}")
 
 
 def max_warmup(spec: dict) -> int:
@@ -388,6 +462,12 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
                 for leg in (c["a"], c["b"]):
                     for k, v in leg["params"].items():
                         leg["params"][k] = _jitter_value(leg["indicator"], k, v, rng)
+    # Perturbar también la gestión de riesgo (±10% del rango)
+    if out.get("risk"):
+        for name, value in out["risk"].items():
+            lo, hi = RISK_RANGES[name]
+            span = (hi - lo) * 0.1
+            out["risk"][name] = round(float(min(hi, max(lo, value + rng.uniform(-span, span)))), 3)
     return out
 
 

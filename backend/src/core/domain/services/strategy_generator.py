@@ -28,6 +28,7 @@ from core.domain.services.strategy_spec import (
     OSCILLATORS,
     THRESHOLD_OPS,
     _MAX_CONDITIONS,
+    _random_risk,
     jitter_params,
     random_condition,
     random_spec,
@@ -137,6 +138,20 @@ def _mutate_remove_condition(spec: dict, rng: np.random.Generator) -> dict:
     return out
 
 
+def _mutate_risk(spec: dict, rng: np.random.Generator) -> dict:
+    """Evoluciona la gestión de riesgo: añade, quita o perturba stop/objetivo."""
+    out = copy.deepcopy(spec)
+    if out.get("risk") and rng.random() < 0.35:
+        out.pop("risk")                      # quitar la gestión de riesgo
+    else:
+        new_risk = _random_risk(rng)         # reemplazar por una nueva (o None)
+        if new_risk:
+            out["risk"] = new_risk
+        else:
+            out.pop("risk", None)
+    return out
+
+
 _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_condition_params,
     _mutate_threshold,
@@ -145,6 +160,7 @@ _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_replace_condition,
     _mutate_add_condition,
     _mutate_remove_condition,
+    _mutate_risk,
 ]
 
 

@@ -24,6 +24,8 @@ _PUBLIC_KEYS = {
     "total_return_pct", "buy_hold_return_pct", "start_date", "end_date",
     "candles_count", "total_trades", "win_rate_pct", "avg_win_pct",
     "avg_loss_pct", "max_drawdown_pct", "trades",
+    # Realismo de ejecución (motor v2): costes, rotación y motivos de salida
+    "total_commission_pct", "turnover", "exit_reasons",
 }
 
 

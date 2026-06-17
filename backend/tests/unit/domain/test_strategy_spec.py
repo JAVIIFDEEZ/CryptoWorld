@@ -145,3 +145,45 @@ class TestSpecHashAndSeeds:
             for _ in range(10):
                 neighbor = ss.jitter_params(spec, rng)
                 assert ss.validate_spec(neighbor)
+
+
+class TestRiskGenes:
+    """Genes de gestión de riesgo (stop-loss / take-profit / trailing)."""
+
+    @pytest.mark.unit
+    def test_random_specs_with_risk_are_valid_and_compilable(self):
+        rng = np.random.default_rng(3)
+        df = _df()
+        found_risk = 0
+        for _ in range(120):
+            spec = ss.random_spec(rng)
+            assert ss.validate_spec(spec)
+            ss.compile_signals(df, spec)  # no rompe con risk presente
+            if spec.get("risk"):
+                found_risk += 1
+        assert found_risk > 0  # el generador produce gestión de riesgo a veces
+
+    @pytest.mark.unit
+    def test_spec_risk_builds_riskmodel(self):
+        spec = {
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "lt", "threshold": 30.0}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "gt", "threshold": 70.0}]},
+            "risk": {"stop_loss_pct": 0.05, "take_profit_pct": 0.12},
+        }
+        assert ss.validate_spec(spec)
+        rm = ss.spec_risk(spec)
+        assert rm is not None and rm.stop_loss_pct == 0.05 and rm.take_profit_pct == 0.12
+        assert "SL 5.0%" in ss.describe_spec(spec)
+
+    @pytest.mark.unit
+    def test_out_of_range_risk_rejected(self):
+        spec = {
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "lt", "threshold": 30.0}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "gt", "threshold": 70.0}]},
+            "risk": {"stop_loss_pct": 0.9},  # fuera de rango
+        }
+        assert not ss.validate_spec(spec)

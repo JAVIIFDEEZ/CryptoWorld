@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from core.domain.services import backtest_metrics as metrics
+from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_evaluation import (
     GatingThresholds,
     evaluate_fitness,
@@ -51,6 +52,8 @@ class GenerationConfig:
     holdout_fraction: float = 0.2      # tramo de validación final reservado
     top_k: int = 5                     # nº de finalistas robustos a reportar
     max_gating_attempts: int = 12      # tope de candidatos a pasar por el gating (coste)
+    commission_bps: float = 10.0       # comisión por lado (realismo de costes)
+    slippage_bps: float = 5.0          # deslizamiento por lado
     ga: GAConfig = GAConfig()
     gating: GatingThresholds = GatingThresholds()
 
@@ -115,13 +118,14 @@ def generate_strategies(
     """
     cfg = config or GenerationConfig()
     ppy = metrics.annualization_factor(interval)
+    costs = CostModel(commission_bps=cfg.commission_bps, slippage_bps=cfg.slippage_bps)
 
     # ── PASO 5: partición anti data-snooping ──────────────────────────
     df_evo, df_holdout, split = _partition(df, cfg.holdout_fraction)
 
     # ── PASO 3: fitness robustez-aware SOLO sobre la zona de evolución ──
     def fitness_fn(spec: dict) -> float:
-        return evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy)["fitness"]
+        return evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy, costs=costs)["fitness"]
 
     ga_result = evolve(fitness_fn, cfg.ga)
 
@@ -135,8 +139,8 @@ def generate_strategies(
             break
         attempts += 1
         spec = cand["spec"]
-        gate = gate_spec(df_evo, spec, cfg.gating, ppy=ppy)
-        holdout = holdout_performance(df_holdout, spec, ppy=ppy)
+        gate = gate_spec(df_evo, spec, cfg.gating, ppy=ppy, costs=costs)
+        holdout = holdout_performance(df_holdout, spec, ppy=ppy, costs=costs)
         finalists.append({
             "spec": spec,
             "spec_hash": spec_hash(spec),

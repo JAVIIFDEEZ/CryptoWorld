@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 import ta as ta_lib
 
+from core.domain.services.backtest_execution import CostModel, RiskModel, simulate
+
 logger = logging.getLogger(__name__)
 
 
@@ -885,16 +887,19 @@ def run_backtest(
     strategy: str,
     initial_capital: float = 10000.0,
     params: Optional[dict] = None,
+    costs: "CostModel | None" = None,
+    risk: "RiskModel | None" = None,
 ) -> dict:
     """
     Ejecuta un backtest de una estrategia sobre datos OHLCV.
 
     Salida pública estable (compatibilidad): métricas + las últimas 20
-    operaciones. Sin `params` usa los valores por defecto (comportamiento
-    histórico idéntico). La curva de equity y la serie de retornos
-    completas se obtienen con run_backtest_full().
+    operaciones. Sin `params`/costes usa los valores por defecto (comportamiento
+    histórico idéntico). `costs` aplica comisión+deslizamiento y `risk` aplica
+    stop-loss/take-profit. La curva de equity completa se obtiene con
+    run_backtest_full().
     """
-    full = run_backtest_full(df, strategy, initial_capital, params)
+    full = run_backtest_full(df, strategy, initial_capital, params, costs=costs, risk=risk)
     if "error" in full:
         return full
     public = {
@@ -910,11 +915,14 @@ def run_backtest_full(
     strategy: str,
     initial_capital: float = 10000.0,
     params: Optional[dict] = None,
+    costs: "CostModel | None" = None,
+    risk: "RiskModel | None" = None,
 ) -> dict:
     """
     Igual que run_backtest pero devuelve además la curva de equity, la serie
     de retornos por vela y TODAS las operaciones. Lo consume la suite de
-    robustez (métricas, Monte Carlo, PBO). No cambia el algoritmo del motor.
+    robustez (métricas, Monte Carlo, PBO). Con costes/riesgo None es idéntico
+    al motor histórico (la suite de robustez lo usa así).
     """
     if strategy not in STRATEGIES:
         return {"error": f"Estrategia '{strategy}' no reconocida. Opciones: {list(STRATEGIES.keys())}"}
@@ -924,13 +932,17 @@ def run_backtest_full(
 
     merged = _merge_params(strategy, params)
     signals = _generate_signals(df, strategy, merged)
-    result = _simulate_and_measure(df, strategy, signals, initial_capital)
+    result = _simulate_and_measure(df, strategy, signals, initial_capital, costs=costs, risk=risk)
     result["params"] = merged
     return result
 
 
 def backtest_signals(
-    df: pd.DataFrame, signals: np.ndarray, initial_capital: float = 10000.0
+    df: pd.DataFrame,
+    signals: np.ndarray,
+    initial_capital: float = 10000.0,
+    costs: "CostModel | None" = None,
+    risk: "RiskModel | None" = None,
 ) -> dict:
     """
     Backtest long-only (todo dentro / todo fuera) de un array de señales
@@ -938,86 +950,28 @@ def backtest_signals(
     de estrategias (señales compiladas de un StrategySpec componible), no
     solo por las 5 estrategias del catálogo.
 
-    Devuelve métricas + curva de equity + retornos por vela + todas las
-    operaciones. Las etiquetas de estrategia son genéricas; _simulate_and_measure
-    las sobrescribe con las del catálogo.
+    `costs` aplica comisión + deslizamiento (None = sin costes, comportamiento
+    histórico); `risk` aplica stop-loss/take-profit/trailing intrabar. Devuelve
+    métricas + curva de equity + retornos por vela + todas las operaciones (con
+    su motivo de salida) + costes pagados.
     """
     close = df["close"].values
+    high = df["high"].values if "high" in df.columns else close
+    low = df["low"].values if "low" in df.columns else close
     n = len(close)
 
-    # ── Simular trades ─────────────────────────────────────────────
-    capital = initial_capital
-    position = 0.0  # cantidad de asset
-    trades = []
-    in_trade = False
-    entry_price = 0.0
-    entry_idx = 0
-
-    for i in range(n):
-        if signals[i] == 1 and not in_trade:
-            # Comprar
-            position = capital / close[i]
-            entry_price = close[i]
-            entry_idx = i
-            in_trade = True
-            capital = 0
-
-        elif signals[i] == -1 and in_trade:
-            # Vender
-            capital = position * close[i]
-            pnl_pct = ((close[i] - entry_price) / entry_price) * 100
-            trades.append({
-                "entry_index": int(entry_idx),
-                "exit_index": int(i),
-                "entry_price": round(float(entry_price), 4),
-                "exit_price": round(float(close[i]), 4),
-                "pnl_pct": round(float(pnl_pct), 2),
-                "result": "WIN" if pnl_pct > 0 else "LOSS",
-            })
-            position = 0
-            in_trade = False
-
-    # Si aún tenemos posición abierta, cerrar al último precio
-    if in_trade:
-        capital = position * close[-1]
-        pnl_pct = ((close[-1] - entry_price) / entry_price) * 100
-        trades.append({
-            "entry_index": int(entry_idx),
-            "exit_index": int(n - 1),
-            "entry_price": round(float(entry_price), 4),
-            "exit_price": round(float(close[-1]), 4),
-            "pnl_pct": round(float(pnl_pct), 2),
-            "result": "WIN" if pnl_pct > 0 else "LOSS",
-        })
+    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk)
+    trades = sim["trades"]
+    equity_curve = sim["equity_curve"]
+    final_capital = sim["final_capital"]
 
     # ── Métricas ───────────────────────────────────────────────────
-    final_capital = capital or (position * close[-1])
     total_return = ((final_capital - initial_capital) / initial_capital) * 100
     buy_hold_return = ((close[-1] - close[0]) / close[0]) * 100
 
     wins = [t for t in trades if t["result"] == "WIN"]
     losses = [t for t in trades if t["result"] == "LOSS"]
     win_rate = (len(wins) / len(trades) * 100) if trades else 0
-
-    # Max drawdown + curva de equity + exposición (fracción de tiempo invertido)
-    equity_curve = [float(initial_capital)]
-    temp_capital = initial_capital
-    temp_position = 0.0
-    temp_in_trade = False
-    in_market_bars = 0
-    for i in range(n):
-        if signals[i] == 1 and not temp_in_trade:
-            temp_position = temp_capital / close[i]
-            temp_capital = 0
-            temp_in_trade = True
-        elif signals[i] == -1 and temp_in_trade:
-            temp_capital = temp_position * close[i]
-            temp_position = 0
-            temp_in_trade = False
-        current_equity = temp_capital + (temp_position * close[i] if temp_in_trade else 0)
-        equity_curve.append(float(current_equity))
-        if temp_in_trade:
-            in_market_bars += 1
 
     peak = equity_curve[0]
     max_dd = 0
@@ -1035,7 +989,7 @@ def backtest_signals(
         if equity_curve[i - 1] else 0.0
         for i in range(1, len(equity_curve))
     ]
-    exposure_pct = (in_market_bars / n * 100) if n else 0.0
+    exposure_pct = (sim["in_market_bars"] / n * 100) if n else 0.0
 
     avg_win = np.mean([t["pnl_pct"] for t in wins]) if wins else 0
     avg_loss = np.mean([abs(t["pnl_pct"]) for t in losses]) if losses else 0
@@ -1072,6 +1026,9 @@ def backtest_signals(
         "avg_loss_pct": round(float(avg_loss), 2),
         "max_drawdown_pct": round(float(max_dd), 2),
         "exposure_pct": round(float(exposure_pct), 2),
+        "total_commission_pct": sim["total_commission_pct"],
+        "turnover": sim["turnover"],
+        "exit_reasons": _exit_reason_counts(trades),
         # Datos completos para la suite de robustez (run_backtest los recorta):
         "trades": trades,
         "equity_curve": equity_curve,
@@ -1079,12 +1036,22 @@ def backtest_signals(
     }
 
 
+def _exit_reason_counts(trades: list[dict]) -> dict:
+    """Recuento de operaciones por motivo de salida (señal, stop, objetivo…)."""
+    counts: dict[str, int] = {}
+    for t in trades:
+        reason = t.get("exit_reason", "signal")
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
 def _simulate_and_measure(
-    df: pd.DataFrame, strategy: str, signals: np.ndarray, initial_capital: float
+    df: pd.DataFrame, strategy: str, signals: np.ndarray, initial_capital: float,
+    costs: "CostModel | None" = None, risk: "RiskModel | None" = None,
 ) -> dict:
     """Backtest de una de las 5 estrategias del catálogo: añade nombre y
     descripción a la salida genérica de backtest_signals (compatibilidad)."""
-    result = backtest_signals(df, signals, initial_capital)
+    result = backtest_signals(df, signals, initial_capital, costs=costs, risk=risk)
     info = STRATEGIES[strategy]
     result["strategy"] = info["name"]
     result["strategy_key"] = strategy

@@ -75,6 +75,11 @@ class BacktestRequestDTO:
     interval: str = "1h"
     limit: int = 500
     initial_capital: float = 10000.0
+    # Realismo de ejecución (motor v2)
+    commission_bps: float = 0.0
+    slippage_bps: float = 0.0
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
 
 
 @dataclass(frozen=True)

@@ -351,6 +351,11 @@ class BacktestRequestSerializer(serializers.Serializer):
     )
     limit = serializers.IntegerField(min_value=60, max_value=1000, default=500, required=False)
     initial_capital = serializers.FloatField(min_value=100, max_value=1000000, default=10000, required=False)
+    # Realismo de ejecución (opcional): costes y gestión de riesgo
+    commission_bps = serializers.FloatField(min_value=0, max_value=100, default=0, required=False)
+    slippage_bps = serializers.FloatField(min_value=0, max_value=100, default=0, required=False)
+    stop_loss_pct = serializers.FloatField(min_value=0.005, max_value=0.5, required=False, allow_null=True)
+    take_profit_pct = serializers.FloatField(min_value=0.005, max_value=1.0, required=False, allow_null=True)
 
 
 # ── Portfolio ──────────────────────────────────────────────────────

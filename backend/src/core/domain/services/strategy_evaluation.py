@@ -25,8 +25,14 @@ import numpy as np
 from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
-from core.domain.services.strategy_spec import compile_signals, jitter_params
+from core.domain.services.backtest_execution import CostModel
+from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk
 from core.domain.services.technical_analysis_service import backtest_signals
+
+# Costes por defecto del generador: comisión 10 bps + deslizamiento 5 bps por lado
+# (≈ taker de exchange cripto). Hace el fitness CONSCIENTE de costes: las
+# estrategias que operan demasiado pierden su edge en comisiones y mueren solas.
+DEFAULT_COSTS = CostModel(commission_bps=10.0, slippage_bps=5.0)
 
 
 @dataclass(frozen=True)
@@ -41,12 +47,17 @@ class GatingThresholds:
     mc_sims: int = 400
 
 
-def _segment_backtest(df, spec: dict) -> dict:
-    """Compila el spec y lo backtestea sobre un segmento de datos."""
-    return backtest_signals(df, compile_signals(df, spec))
+def _segment_backtest(df, spec: dict, costs: CostModel | None = None) -> dict:
+    """Compila el spec y lo backtestea (con costes y su gestión de riesgo)."""
+    return backtest_signals(
+        df, compile_signals(df, spec),
+        costs=costs if costs is not None else DEFAULT_COSTS,
+        risk=spec_risk(spec),
+    )
 
 
-def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_train: int = 60) -> dict:
+def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_train: int = 60,
+                     costs: CostModel | None = None) -> dict:
     """
     Walk-forward del spec FIJO (sin re-optimizar: el GA ya hace la búsqueda).
     Backtestea cada tramo OOS de forma independiente y agrega el Sharpe IS/OOS
@@ -63,8 +74,8 @@ def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_
             test = df.iloc[test_start:test_end]
             if len(train) < min_train or len(test) < 20:
                 continue
-            bt_is = _segment_backtest(train, spec)
-            bt_oos = _segment_backtest(test, spec)
+            bt_is = _segment_backtest(train, spec, costs)
+            bt_oos = _segment_backtest(test, spec, costs)
             is_sharpes.append(metrics.sharpe_ratio(bt_is["bar_returns"], ppy))
             oos_sharpes.append(metrics.sharpe_ratio(bt_oos["bar_returns"], ppy))
             oos_returns.extend(bt_oos["bar_returns"])
@@ -90,20 +101,24 @@ def evaluate_fitness(
     ppy: float = 365.0,
     min_trades: int = 8,
     target_trades: int = 25,
+    costs: CostModel | None = None,
 ) -> dict:
     """
-    Fitness robustez-aware (NO retorno in-sample): Sharpe OOS del walk-forward,
-    penalizando el sobreajuste (gap Sharpe IS−OOS) y el bajo nº de operaciones.
+    Fitness robustez-aware (NO retorno in-sample): Sharpe OOS del walk-forward
+    NETO de costes, penalizando el sobreajuste (gap Sharpe IS−OOS), el bajo nº de
+    operaciones y la rotación excesiva (que en datos reales sangra en comisiones).
     """
-    full = _segment_backtest(df, spec)
+    full = _segment_backtest(df, spec, costs)
     n_trades = full["total_trades"]
-    wf = walk_forward_oos(df, spec, n_splits, ppy)
+    wf = walk_forward_oos(df, spec, n_splits, ppy, costs=costs)
 
     mean_oos = wf["mean_oos_sharpe"]
     overfit_gap = max(0.0, wf["mean_is_sharpe"] - mean_oos)
     trade_penalty = 0.0 if n_trades >= target_trades else (target_trades - n_trades) / target_trades
+    # Penalización suave de rotación excesiva (complementa a los costes ya aplicados)
+    turnover_penalty = max(0.0, full["turnover"] - 30.0) * 0.02
 
-    fitness = mean_oos - 0.5 * overfit_gap - 1.0 * trade_penalty
+    fitness = mean_oos - 0.5 * overfit_gap - 1.0 * trade_penalty - turnover_penalty
     if n_trades < min_trades or wf["n_folds"] == 0:
         fitness -= 3.0  # estrategias degeneradas (casi sin operar) mueren
 
@@ -115,6 +130,8 @@ def evaluate_fitness(
         "overfit_gap": round(float(overfit_gap), 4),
         "n_trades": n_trades,
         "total_return_pct": full["total_return_pct"],
+        "turnover": full["turnover"],
+        "cost_drag_pct": full["total_commission_pct"],
     }
 
 
@@ -193,18 +210,20 @@ def gate_spec(
     thresholds: GatingThresholds | None = None,
     ppy: float = 365.0,
     seed: int = 42,
+    costs: CostModel | None = None,
 ) -> dict:
     """
     Gating de robustez de una finalista (Módulo 1). Pasa si: sin lookahead,
     nº de trades ≥ mínimo, eficiencia walk-forward ≥ umbral, PBO ≤ umbral y
     percentil 5 de Monte Carlo > umbral. Devuelve checks + métricas completas.
+    Todas las cifras son NETAS de costes y aplican la gestión de riesgo del spec.
     """
     th = thresholds or GatingThresholds()
     rng = np.random.default_rng(seed)
 
-    full = _segment_backtest(df, spec)
+    full = _segment_backtest(df, spec, costs)
     n_trades = full["total_trades"]
-    wf = walk_forward_oos(df, spec, th.wf_splits, ppy)
+    wf = walk_forward_oos(df, spec, th.wf_splits, ppy, costs=costs)
 
     lookahead = bias.detect_lookahead_bias(df, lambda d: compile_signals(d, spec), seed=seed)
 
@@ -237,6 +256,9 @@ def gate_spec(
             "wf_efficiency": wf["efficiency"],
             "mean_oos_sharpe": wf["mean_oos_sharpe"],
             "pbo": pbo.get("pbo"),
+            "turnover": full["turnover"],
+            "cost_drag_pct": full["total_commission_pct"],
+            "exit_reasons": full["exit_reasons"],
             "monte_carlo": {
                 "prob_profit_pct": mc.get("prob_profit_pct"),
                 "return_p5_pct": mc_p5,
@@ -247,14 +269,15 @@ def gate_spec(
     }
 
 
-def holdout_performance(df_holdout, spec: dict, ppy: float = 365.0) -> dict:
-    """Rendimiento de la finalista en el tramo de validación final intacto."""
-    bt = _segment_backtest(df_holdout, spec)
+def holdout_performance(df_holdout, spec: dict, ppy: float = 365.0, costs: CostModel | None = None) -> dict:
+    """Rendimiento de la finalista en el tramo de validación final intacto (neto de costes)."""
+    bt = _segment_backtest(df_holdout, spec, costs)
     return {
         "return_pct": bt["total_return_pct"],
         "sharpe": round(metrics.sharpe_ratio(bt["bar_returns"], ppy), 3),
         "max_drawdown_pct": bt["max_drawdown_pct"],
         "n_trades": bt["total_trades"],
         "win_rate_pct": bt["win_rate_pct"],
+        "turnover": bt["turnover"],
         "candles": len(df_holdout),
     }

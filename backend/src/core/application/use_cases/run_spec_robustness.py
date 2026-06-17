@@ -29,12 +29,15 @@ from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
 from core.domain.services.backtest_report import build_robustness_report
 from core.domain.services.strategy_evaluation import (
+    DEFAULT_COSTS,
     _neighborhood_returns,
     holdout_performance,
     spec_permutation_test,
     walk_forward_oos,
 )
-from core.domain.services.strategy_spec import compile_signals, describe_spec, spec_hash, validate_spec
+from core.domain.services.strategy_spec import (
+    compile_signals, describe_spec, spec_hash, spec_risk, validate_spec,
+)
 from core.domain.services.technical_analysis_service import backtest_signals
 
 logger = logging.getLogger(__name__)
@@ -96,7 +99,8 @@ def run_spec_robustness_suite(
     ppy = metrics.annualization_factor(interval)
     rng = np.random.default_rng(cfg.seed)
 
-    full = backtest_signals(df, compile_signals(df, spec), initial_capital)
+    full = backtest_signals(df, compile_signals(df, spec), initial_capital,
+                            costs=DEFAULT_COSTS, risk=spec_risk(spec))
     base_metrics = metrics.compute_metrics(full, ppy)
     observed_sharpe = metrics.sharpe_ratio(full["bar_returns"], ppy)
 
