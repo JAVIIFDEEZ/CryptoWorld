@@ -14,10 +14,14 @@
  * Si el usuario ya está autenticado, redirige a /dashboard.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { marketService } from '@/services/marketService'
+import { isWebGLAvailable } from '@/lib/webgl'
+import { useReducedMotion } from '@/lib/useReducedMotion'
+
+const HeroParticles3D = lazy(() => import('@/components/landing/HeroParticles3D'))
 
 // ── Tipos ──────────────────────────────────────────────────────────
 
@@ -225,11 +229,23 @@ export default function LandingPage() {
   const fearLabel = getFearLabel(fearGreed)
   const fearColor = getFearColor(fearGreed)
 
+  // Fondo 3D solo si hay WebGL y el usuario no pidió menos movimiento.
+  const reducedMotion = useReducedMotion()
+  const show3D = useMemo(() => isWebGLAvailable() && !reducedMotion, [reducedMotion])
+
   return (
     <div className="min-h-screen bg-[#070b14] text-white overflow-x-hidden">
 
       {/* ── Fondo animado ── */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        {/* Galaxia de partículas 3D (WebGL, lazy) tras los orbes */}
+        {show3D && (
+          <div className="absolute inset-0 opacity-70">
+            <Suspense fallback={null}>
+              <HeroParticles3D />
+            </Suspense>
+          </div>
+        )}
         {/* Orbes de color */}
         <div className="absolute -top-32 -left-32 w-[500px] h-[500px] bg-blue-600/[0.12] rounded-full blur-3xl animate-pulse" />
         <div
