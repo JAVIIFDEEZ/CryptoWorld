@@ -19,6 +19,7 @@ import {
   type MultiChainSymbol,
   type MultiChainStatItem,
 } from '../services/blockchainService'
+import MultiChainComparePanel from '@/components/blockchain/MultiChainComparePanel'
 
 // ────────────────────────── Gráfico SVG simple ────────────────────
 
@@ -235,6 +236,11 @@ export default function BlockchainPage() {
               {s}
             </button>
           ))}
+        </div>
+
+        {/* ── Comparador multi-cadena (3D/2D) ── */}
+        <div className="mb-6">
+          <MultiChainComparePanel />
         </div>
 
         {/* ── Snapshot Blockchair ── */}
