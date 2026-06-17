@@ -117,6 +117,7 @@ export interface BacktestTrade {
   exit_price: number
   pnl_pct: number
   result: string
+  exit_reason?: string
 }
 
 export interface BacktestResult {
@@ -137,8 +138,20 @@ export interface BacktestResult {
   avg_win_pct: number
   avg_loss_pct: number
   max_drawdown_pct: number
+  total_commission_pct?: number
+  turnover?: number
+  exit_reasons?: Record<string, number>
+  commission_bps?: number
+  slippage_bps?: number
   trades: BacktestTrade[]
   error?: string
+}
+
+export interface BacktestOptions {
+  commission_bps?: number
+  slippage_bps?: number
+  stop_loss_pct?: number | null
+  take_profit_pct?: number | null
 }
 
 export interface StrategyInfo {
@@ -210,6 +223,7 @@ export const analysisService = {
     interval: IntervalType = '1h',
     limit = 1000,
     initialCapital = 10000,
+    options: BacktestOptions = {},
   ): Promise<BacktestResult> {
     const { data } = await apiClient.post<BacktestResult>('/analysis/backtest/', {
       asset_symbol: assetSymbol,
@@ -217,6 +231,7 @@ export const analysisService = {
       interval,
       limit,
       initial_capital: initialCapital,
+      ...options,
     })
     return data
   },

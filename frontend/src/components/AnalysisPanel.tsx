@@ -210,6 +210,11 @@ export default function AnalysisPanel({ symbol }: Props) {
   const [strategies, setStrategies] = useState<StrategyInfo[]>([])
   const [selStrategy, setSelStrategy] = useState('')
   const [btResult, setBtResult]     = useState<BacktestResult | null>(null)
+  const [showBtAdv, setShowBtAdv]   = useState(false)
+  const [commissionBps, setCommissionBps] = useState(10)
+  const [slippageBps, setSlippageBps]     = useState(5)
+  const [stopLossPct, setStopLossPct]     = useState('')   // % (vacío = sin stop)
+  const [takeProfitPct, setTakeProfitPct] = useState('')
 
   // ── Loaders ────────────────────────────────────────────────────
 
@@ -268,7 +273,14 @@ export default function AnalysisPanel({ symbol }: Props) {
     if (!selStrategy) { await loadStrategies(); return }
     setLoading(true); setError(null)
     try {
-      const res = await analysisService.backtest(symbol, selStrategy, interval)
+      const sl = Number.parseFloat(stopLossPct)
+      const tp = Number.parseFloat(takeProfitPct)
+      const res = await analysisService.backtest(symbol, selStrategy, interval, 1000, 10000, {
+        commission_bps: commissionBps,
+        slippage_bps: slippageBps,
+        stop_loss_pct: Number.isFinite(sl) && sl > 0 ? sl / 100 : null,
+        take_profit_pct: Number.isFinite(tp) && tp > 0 ? tp / 100 : null,
+      })
       if (res.error) { setError(res.error); setBtResult(null) }
       else setBtResult(res)
     } catch { setError('Error al ejecutar backtest.') }
@@ -387,6 +399,13 @@ export default function AnalysisPanel({ symbol }: Props) {
                 <option key={s.key} value={s.key}>{s.name}</option>
               ))}
             </select>
+            <button
+              onClick={() => setShowBtAdv((v) => !v)}
+              className={`text-[10px] px-2 py-1 rounded border transition-colors ${showBtAdv ? 'border-blue-500/50 text-blue-300' : 'border-slate-700 text-slate-400 hover:text-slate-200'}`}
+              title="Costes de transacción y gestión de riesgo"
+            >
+              ⚙ Realismo
+            </button>
           </div>
         )}
 
@@ -401,6 +420,16 @@ export default function AnalysisPanel({ symbol }: Props) {
           {loading ? 'Analizando...' : 'Ejecutar análisis'}
         </button>
       </div>
+
+      {/* ── Realismo del backtest: costes + gestión de riesgo ── */}
+      {tab === 'backtest' && showBtAdv && (
+        <div className="px-4 py-3 border-b border-slate-700/60 bg-slate-900/30 flex flex-wrap gap-4">
+          <NumField label="Comisión (bps)" value={commissionBps} onChange={setCommissionBps} title="Por operación, cada lado. 10 bps = 0,1%" />
+          <NumField label="Slippage (bps)" value={slippageBps} onChange={setSlippageBps} title="Deslizamiento de precio por lado" />
+          <TextField label="Stop-loss %" value={stopLossPct} onChange={setStopLossPct} placeholder="—" />
+          <TextField label="Take-profit %" value={takeProfitPct} onChange={setTakeProfitPct} placeholder="—" />
+        </div>
+      )}
 
       {/* ── Contenido ────────────────────────────────────────── */}
       <div className="p-4 min-h-[200px]">
@@ -956,6 +985,26 @@ function BacktestTab({ data, strategies, selected }: { data: BacktestResult | nu
         <MetricCard label="Avg Win / Avg Loss" value={`${data.avg_win_pct.toFixed(1)}% / ${data.avg_loss_pct.toFixed(1)}%`} color="text-slate-300" />
       </div>
 
+      {/* Realismo de ejecución: coste, rotación y motivos de salida */}
+      {(data.total_commission_pct != null || data.turnover != null || data.exit_reasons) && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MetricCard label="Coste en comisiones" value={`-${(data.total_commission_pct ?? 0).toFixed(2)}%`} color="text-amber-400" />
+          <MetricCard label="Rotación (×capital)" value={`${(data.turnover ?? 0).toFixed(1)}×`} color="text-slate-300" />
+          {data.exit_reasons && (
+            <div className="col-span-2 bg-slate-900/40 rounded-lg p-3">
+              <p className="text-[10px] text-slate-500 uppercase mb-1.5">Motivos de salida</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(data.exit_reasons).map(([reason, count]) => (
+                  <span key={reason} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
+                    {EXIT_REASON_LABEL[reason] ?? reason}: {count}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Últimas trades */}
       {data.trades.length > 0 && (
         <div>
@@ -1004,6 +1053,37 @@ function MetricCard({ label, value, color }: { label: string; value: string; col
       <p className="text-[10px] text-slate-500 uppercase">{label}</p>
       <p className={`text-sm font-bold font-mono ${color}`}>{value}</p>
     </div>
+  )
+}
+
+const EXIT_REASON_LABEL: Record<string, string> = {
+  signal: 'Señal', stop_loss: 'Stop-loss', take_profit: 'Take-profit',
+  trailing_stop: 'Trailing', end_of_data: 'Fin de datos',
+}
+
+function NumField({ label, value, onChange, title }: { label: string; value: number; onChange: (n: number) => void; title?: string }) {
+  return (
+    <label className="text-[10px] text-slate-400" title={title}>
+      <span className="block mb-1 uppercase">{label}</span>
+      <input
+        type="number" min={0} value={value}
+        onChange={(e) => onChange(Math.max(0, Number.parseFloat(e.target.value) || 0))}
+        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 w-24 focus:ring-1 focus:ring-blue-500 outline-none"
+      />
+    </label>
+  )
+}
+
+function TextField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (s: string) => void; placeholder?: string }) {
+  return (
+    <label className="text-[10px] text-slate-400">
+      <span className="block mb-1 uppercase">{label}</span>
+      <input
+        type="number" min={0} step="0.5" value={value} placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 w-24 focus:ring-1 focus:ring-blue-500 outline-none"
+      />
+    </label>
   )
 }
 

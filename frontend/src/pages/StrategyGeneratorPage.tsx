@@ -473,9 +473,11 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
               ['Sharpe', m.sharpe.toFixed(2)],
               ['Sharpe OOS', m.mean_oos_sharpe.toFixed(2)],
               ['Eficiencia WF', m.wf_efficiency.toFixed(2)],
-              ['Retorno', `${m.total_return_pct}%`],
+              ['Retorno (neto)', `${m.total_return_pct}%`],
               ['Max DD', `-${m.max_drawdown_pct}%`],
               ['Trades', `${m.n_trades}`],
+              ['Coste comisiones', `-${(m.cost_drag_pct ?? 0).toFixed(2)}%`],
+              ['Rotación', `${(m.turnover ?? 0).toFixed(1)}×`],
             ]} />
             <MetricBlock title="Validación final (intacta)" accent="purple" rows={[
               ['Retorno', `${h.return_pct >= 0 ? '+' : ''}${h.return_pct}%`],

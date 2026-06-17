@@ -65,6 +65,9 @@ export interface GatingMetrics {
   wf_efficiency: number
   mean_oos_sharpe: number
   pbo: number | null
+  turnover?: number
+  cost_drag_pct?: number
+  exit_reasons?: Record<string, number>
   monte_carlo: { prob_profit_pct: number | null; return_p5_pct: number | null; return_p50_pct: number | null }
   lookahead_leaky: boolean
 }
@@ -75,6 +78,7 @@ export interface HoldoutMetrics {
   max_drawdown_pct: number
   n_trades: number
   win_rate_pct: number
+  turnover?: number
   candles: number
 }
 
