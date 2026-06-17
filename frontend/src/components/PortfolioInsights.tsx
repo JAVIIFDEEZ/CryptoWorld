@@ -18,6 +18,7 @@ import {
 } from 'recharts'
 import type { Position } from '../services/portfolioService'
 import AnimatedNumber from './ui/AnimatedNumber'
+import PortfolioVizPanel from './portfolio/PortfolioVizPanel'
 
 // Paleta cualitativa para segmentos del donut (consistente con el tema oscuro).
 const PALETTE = [
@@ -144,6 +145,7 @@ export default function PortfolioInsights({
   const curvePositive = lastCurve >= 0
 
   return (
+    <>
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 cw-fade-in-up">
       {/* ── Donut de distribución ── */}
       <ChartCard
@@ -239,5 +241,9 @@ export default function PortfolioInsights({
         )}
       </ChartCard>
     </div>
+
+    {/* Correlación y riesgo/retorno (3D/2D) */}
+    <PortfolioVizPanel positions={openPositions} />
+    </>
   )
 }
