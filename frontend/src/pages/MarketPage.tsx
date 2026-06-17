@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { lazy, useEffect, useMemo, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService } from '@/services/marketService'
@@ -8,6 +8,11 @@ import DeltaChip from '@/components/ui/DeltaChip'
 import StatCard from '@/components/ui/StatCard'
 import Sparkline from '@/components/ui/Sparkline'
 import { SkeletonRow } from '@/components/ui/Skeleton'
+import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
+import MarketTreemap2D from '@/components/market/MarketTreemap2D'
+import { buildMarketBodies } from '@/components/market/marketViz'
+
+const MarketUniverse3D = lazy(() => import('@/components/market/MarketUniverse3D'))
 
 type SortField = 'symbol' | 'price' | 'change' | 'volume' | 'marketCap'
 type SortDirection = 'asc' | 'desc'
@@ -125,6 +130,9 @@ function MarketPage() {
   const bearishCount = assets.length - bullishCount
   const displayedAssets = (search.trim() || showAll) ? filteredAndSorted : filteredAndSorted.slice(0, INITIAL_LIMIT)
 
+  const marketBodies = useMemo(() => buildMarketBodies(assets, sparks, 30), [assets, sparks])
+  const goToAsset = useCallback((sym: string) => navigate(`/assets/${sym}`), [navigate])
+
   return (
     <section className="space-y-6">
       <header>
@@ -139,6 +147,16 @@ function MarketPage() {
         <StatCard label="Alcistas (24h)" value={String(bullishCount)} animateValue={bullishCount} format={(n) => String(Math.round(n))} tone="positive" />
         <StatCard label="Bajistas (24h)" value={String(bearishCount)} animateValue={bearishCount} format={(n) => String(Math.round(n))} tone="negative" />
       </div>
+
+      {/* Universo de mercado: galaxia 3D (tamaño=cap, color=cambio) con treemap 2D */}
+      {!isLoading && !error && marketBodies.length > 0 && (
+        <Viz3DSwitch
+          title="Universo de mercado"
+          hint="Top 30 por capitalización · tamaño = market cap · color = variación 24h"
+          threeD={<MarketUniverse3D bodies={marketBodies} onSelect={goToAsset} />}
+          twoD={<MarketTreemap2D bodies={marketBodies} onSelect={goToAsset} />}
+        />
+      )}
 
       {/* Sección: Mi seguimiento */}
       {!isLoading && !error && !search.trim() && assets.some((a) => watchlist.has(a.symbol)) && (

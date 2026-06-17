@@ -11,7 +11,7 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
-import Viz3DFrame from './Viz3DFrame'
+import Viz3DFrame from '@/components/viz3d/Viz3DFrame'
 import type { GenerationHistoryPoint } from '@/services/strategyGeneratorService'
 
 const WIDTH = 9 // ancho total del terreno

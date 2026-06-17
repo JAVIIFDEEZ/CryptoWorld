@@ -12,7 +12,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
-import Viz3DFrame from './Viz3DFrame'
+import Viz3DFrame from '@/components/viz3d/Viz3DFrame'
 import type { Candidate } from '@/services/strategyGeneratorService'
 
 const SPAN = 4 // semieje del cubo de la escena
