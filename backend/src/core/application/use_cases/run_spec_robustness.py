@@ -36,7 +36,7 @@ from core.domain.services.strategy_evaluation import (
     walk_forward_oos,
 )
 from core.domain.services.strategy_spec import (
-    compile_signals, describe_spec, spec_hash, spec_risk, validate_spec,
+    compile_signals, describe_spec, spec_hash, spec_risk, spec_sizing, validate_spec,
 )
 from core.domain.services.technical_analysis_service import backtest_signals
 
@@ -100,7 +100,7 @@ def run_spec_robustness_suite(
     rng = np.random.default_rng(cfg.seed)
 
     full = backtest_signals(df, compile_signals(df, spec), initial_capital,
-                            costs=DEFAULT_COSTS, risk=spec_risk(spec))
+                            costs=DEFAULT_COSTS, risk=spec_risk(spec), sizing=spec_sizing(spec))
     base_metrics = metrics.compute_metrics(full, ppy)
     observed_sharpe = metrics.sharpe_ratio(full["bar_returns"], ppy)
 

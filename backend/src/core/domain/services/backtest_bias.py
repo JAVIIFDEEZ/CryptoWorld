@@ -41,7 +41,12 @@ def detect_lookahead_bias(df, signal_fn, sample_size: int = 40, warmup: int = 20
     leaks = 0
     leaking_indices = []
     for i in sample:
-        truncated = np.asarray(signal_fn(df.iloc[: i + 1]), dtype=float)
+        try:
+            truncated = np.asarray(signal_fn(df.iloc[: i + 1]), dtype=float)
+        except Exception:
+            # Algunos indicadores (p. ej. ADX de la librería ta) fallan en
+            # ventanas demasiado cortas; ese punto no es evaluable, se omite.
+            continue
         if truncated.size <= i:
             continue
         checked += 1

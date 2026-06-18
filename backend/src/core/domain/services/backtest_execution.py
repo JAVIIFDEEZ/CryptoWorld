@@ -50,7 +50,39 @@ class RiskModel:
         return any(v is not None for v in (self.stop_loss_pct, self.take_profit_pct, self.trailing_stop_pct))
 
 
+@dataclass(frozen=True)
+class SizingModel:
+    """
+    Dimensionamiento de la posición al entrar.
+      · "full":     invierte todo el capital disponible (comportamiento histórico).
+      · "fraction": invierte una fracción fija del equity (0<fraction≤1).
+      · "risk":     dimensiona para arriesgar `risk_pct` del equity si salta el
+                    stop-loss (notional = risk_pct·equity / stop_loss_pct), con
+                    apalancamiento máximo 1× (nunca más que el capital).
+    """
+    mode: str = "full"          # "full" | "fraction" | "risk"
+    fraction: float = 1.0       # para "fraction"
+    risk_pct: float = 0.02      # para "risk": fracción del equity arriesgada
+
+    @property
+    def active(self) -> bool:
+        return self.mode != "full"
+
+
 NO_COSTS = CostModel()
+DEFAULT_SIZING = SizingModel()
+
+
+def _position_notional(equity: float, sizing: SizingModel, risk: RiskModel | None) -> float:
+    """Nocional a invertir en la entrada según el modelo de sizing (capado al equity)."""
+    if sizing.mode == "fraction":
+        notional = equity * sizing.fraction
+    elif sizing.mode == "risk" and risk is not None and risk.stop_loss_pct:
+        notional = sizing.risk_pct * equity / risk.stop_loss_pct
+    else:  # "full"
+        notional = equity
+    return max(0.0, min(notional, equity))
+
 
 
 def simulate(
@@ -61,13 +93,16 @@ def simulate(
     initial_capital: float = 10_000.0,
     costs: CostModel | None = None,
     risk: RiskModel | None = None,
+    sizing: SizingModel | None = None,
 ) -> dict:
     """
-    Simula la estrategia long-only (todo dentro / todo fuera) sobre arrays de
-    precio y señales. Devuelve trades (con motivo de salida), curva de equity,
-    retornos por vela y costes pagados.
+    Simula la estrategia long-only sobre arrays de precio y señales. Con sizing
+    "full" la posición ocupa todo el capital (todo dentro/todo fuera, idéntico al
+    motor histórico); con "fraction"/"risk" mantiene parte en liquidez. Devuelve
+    trades (con motivo de salida), curva de equity, retornos por vela y costes.
     """
     costs = costs or NO_COSTS
+    sizing = sizing or DEFAULT_SIZING
     cr, sr = costs.commission_rate, costs.slippage_rate
     use_risk = risk is not None and risk.active
     n = len(close)
@@ -89,7 +124,7 @@ def simulate(
     def do_buy(i: int) -> None:
         nonlocal capital, position, in_trade, entry_price, entry_idx, entry_capital, high_water
         nonlocal total_commission, gross_traded
-        notional = capital
+        notional = _position_notional(capital, sizing, risk)   # equity == capital (flat)
         fee = notional * cr
         invested = notional - fee
         fill = close[i] * (1.0 + sr)
@@ -98,7 +133,7 @@ def simulate(
         entry_idx = i
         entry_capital = notional
         high_water = float(close[i])
-        capital = 0.0
+        capital -= notional               # el resto queda en liquidez (sizing parcial)
         in_trade = True
         total_commission += fee
         gross_traded += notional
@@ -119,7 +154,7 @@ def simulate(
             "result": "WIN" if pnl_pct > 0 else "LOSS",
             "exit_reason": reason,
         })
-        capital = proceeds
+        capital += proceeds               # devuelve los ingresos a la liquidez
         position = 0.0
         in_trade = False
         total_commission += fee

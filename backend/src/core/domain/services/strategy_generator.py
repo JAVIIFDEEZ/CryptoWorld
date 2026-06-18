@@ -29,6 +29,7 @@ from core.domain.services.strategy_spec import (
     THRESHOLD_OPS,
     _MAX_CONDITIONS,
     _random_risk,
+    _random_sizing,
     jitter_params,
     random_condition,
     random_spec,
@@ -152,6 +153,17 @@ def _mutate_risk(spec: dict, rng: np.random.Generator) -> dict:
     return out
 
 
+def _mutate_sizing(spec: dict, rng: np.random.Generator) -> dict:
+    """Evoluciona el dimensionamiento: cuánto capital arriesgar por operación."""
+    out = copy.deepcopy(spec)
+    new_sizing = _random_sizing(rng)
+    if new_sizing:
+        out["sizing"] = new_sizing
+    else:
+        out.pop("sizing", None)              # volver a invertir todo
+    return out
+
+
 _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_condition_params,
     _mutate_threshold,
@@ -161,6 +173,7 @@ _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_add_condition,
     _mutate_remove_condition,
     _mutate_risk,
+    _mutate_sizing,
 ]
 
 

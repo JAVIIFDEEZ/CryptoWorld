@@ -26,7 +26,7 @@ from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
 from core.domain.services.backtest_execution import CostModel
-from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk
+from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk, spec_sizing
 from core.domain.services.technical_analysis_service import backtest_signals
 
 # Costes por defecto del generador: comisión 10 bps + deslizamiento 5 bps por lado
@@ -48,11 +48,12 @@ class GatingThresholds:
 
 
 def _segment_backtest(df, spec: dict, costs: CostModel | None = None) -> dict:
-    """Compila el spec y lo backtestea (con costes y su gestión de riesgo)."""
+    """Compila el spec y lo backtestea (con costes, gestión de riesgo y sizing)."""
     return backtest_signals(
         df, compile_signals(df, spec),
         costs=costs if costs is not None else DEFAULT_COSTS,
         risk=spec_risk(spec),
+        sizing=spec_sizing(spec),
     )
 
 

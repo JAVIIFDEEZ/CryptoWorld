@@ -184,12 +184,33 @@ def _random_risk(rng: np.random.Generator) -> dict | None:
     return risk
 
 
+# Rangos del dimensionamiento de posición.
+SIZING_FRACTION_RANGE = (0.25, 1.0)
+SIZING_RISK_PCT_RANGE = (0.01, 0.05)
+
+
+def _random_sizing(rng: np.random.Generator) -> dict | None:
+    """Bloque de sizing aleatorio (o None = invierte todo). El GA puede evolucionar
+    cuánto capital arriesgar por operación, no solo cuándo entrar/salir."""
+    roll = rng.random()
+    if roll < 0.5:
+        return None  # "full": invierte todo (comportamiento por defecto)
+    if roll < 0.8:
+        lo, hi = SIZING_FRACTION_RANGE
+        return {"mode": "fraction", "fraction": round(float(rng.uniform(lo, hi)), 3)}
+    lo, hi = SIZING_RISK_PCT_RANGE
+    return {"mode": "risk", "risk_pct": round(float(rng.uniform(lo, hi)), 4)}
+
+
 def random_spec(rng: np.random.Generator) -> dict:
-    """Genera un StrategySpec aleatorio legal (con gestión de riesgo opcional)."""
+    """Genera un StrategySpec aleatorio legal (riesgo y sizing opcionales)."""
     spec = {"entry": _random_block(rng), "exit": _random_block(rng)}
     risk = _random_risk(rng)
     if risk:
         spec["risk"] = risk
+    sizing = _random_sizing(rng)
+    if sizing:
+        spec["sizing"] = sizing
     return spec
 
 
@@ -256,11 +277,28 @@ def _validate_risk(risk) -> bool:
     return True
 
 
+def _validate_sizing(sizing) -> bool:
+    if sizing is None:
+        return True
+    if not isinstance(sizing, dict):
+        return False
+    mode = sizing.get("mode")
+    if mode == "fraction":
+        f = sizing.get("fraction")
+        lo, hi = SIZING_FRACTION_RANGE
+        return isinstance(f, (int, float)) and lo - 1e-9 <= f <= hi + 1e-9
+    if mode == "risk":
+        r = sizing.get("risk_pct")
+        lo, hi = SIZING_RISK_PCT_RANGE
+        return isinstance(r, (int, float)) and lo - 1e-9 <= r <= hi + 1e-9
+    return mode == "full"
+
+
 def validate_spec(spec: dict) -> bool:
     """True si el spec es estructuralmente legal y todos sus bloques válidos."""
     if not isinstance(spec, dict) or "entry" not in spec or "exit" not in spec:
         return False
-    if not _validate_risk(spec.get("risk")):
+    if not _validate_risk(spec.get("risk")) or not _validate_sizing(spec.get("sizing")):
         return False
     return _validate_block(spec["entry"]) and _validate_block(spec["exit"])
 
@@ -275,6 +313,19 @@ def spec_risk(spec: dict):
         stop_loss_pct=risk.get("stop_loss_pct"),
         take_profit_pct=risk.get("take_profit_pct"),
         trailing_stop_pct=risk.get("trailing_stop_pct"),
+    )
+
+
+def spec_sizing(spec: dict):
+    """SizingModel del spec (o None = invierte todo el capital)."""
+    from core.domain.services.backtest_execution import SizingModel
+    sizing = spec.get("sizing")
+    if not sizing or sizing.get("mode", "full") == "full":
+        return None
+    return SizingModel(
+        mode=sizing["mode"],
+        fraction=sizing.get("fraction", 1.0),
+        risk_pct=sizing.get("risk_pct", 0.02),
     )
 
 
@@ -406,13 +457,21 @@ def _describe_risk(risk: dict | None) -> str:
     return f" [{' · '.join(parts)}]" if parts else ""
 
 
+def _describe_sizing(sizing: dict | None) -> str:
+    if not sizing or sizing.get("mode", "full") == "full":
+        return ""
+    if sizing["mode"] == "fraction":
+        return f" [tamaño {round(sizing['fraction'] * 100)}% del capital]"
+    return f" [riesgo {round(sizing['risk_pct'] * 100, 1)}% por trade]"
+
+
 def describe_spec(spec: dict) -> str:
     """Descripción en español legible de la lógica de la estrategia."""
     def block(b):
         sep = " Y " if b["combine"] == "AND" else " O "
         return sep.join(_describe_condition(c) for c in b["conditions"])
     return (f"ENTRAR si {block(spec['entry'])}; SALIR si {block(spec['exit'])}"
-            f"{_describe_risk(spec.get('risk'))}")
+            f"{_describe_risk(spec.get('risk'))}{_describe_sizing(spec.get('sizing'))}")
 
 
 def max_warmup(spec: dict) -> int:
@@ -468,6 +527,16 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
             lo, hi = RISK_RANGES[name]
             span = (hi - lo) * 0.1
             out["risk"][name] = round(float(min(hi, max(lo, value + rng.uniform(-span, span)))), 3)
+    # Perturbar el dimensionamiento de posición
+    sizing = out.get("sizing")
+    if sizing and sizing.get("mode") == "fraction":
+        lo, hi = SIZING_FRACTION_RANGE
+        span = (hi - lo) * 0.1
+        sizing["fraction"] = round(float(min(hi, max(lo, sizing["fraction"] + rng.uniform(-span, span)))), 3)
+    elif sizing and sizing.get("mode") == "risk":
+        lo, hi = SIZING_RISK_PCT_RANGE
+        span = (hi - lo) * 0.1
+        sizing["risk_pct"] = round(float(min(hi, max(lo, sizing["risk_pct"] + rng.uniform(-span, span)))), 4)
     return out
 
 

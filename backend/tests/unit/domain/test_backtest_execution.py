@@ -132,3 +132,40 @@ class TestRunBacktestIntegration:
         assert costed["total_return_pct"] <= free["total_return_pct"]
         assert costed["total_commission_pct"] > 0
         assert "turnover" in costed and "exit_reasons" in costed
+
+
+class TestSizing:
+    """Dimensionamiento de posición (fraction / risk), con 'full' como base."""
+
+    @pytest.mark.unit
+    def test_full_equals_no_sizing(self):
+        from core.domain.services.backtest_execution import SizingModel
+        close = [100, 120, 110, 130]
+        signals = np.array([1, 0, -1, 0])
+        base = backtest_signals(_df(close), signals)
+        full = backtest_signals(_df(close), signals, sizing=SizingModel(mode="full"))
+        assert base["total_return_pct"] == pytest.approx(full["total_return_pct"], abs=1e-6)
+
+    @pytest.mark.unit
+    def test_fraction_dampens_return_and_drawdown(self):
+        from core.domain.services.backtest_execution import SizingModel
+        close = [100, 150, 90, 140]   # gran sube/baja
+        signals = np.array([1, 0, 0, -1])
+        full = backtest_signals(_df(close), signals)
+        half = backtest_signals(_df(close), signals, sizing=SizingModel(mode="fraction", fraction=0.5))
+        # Invertir la mitad reduce tanto la ganancia como el drawdown
+        assert abs(half["total_return_pct"]) < abs(full["total_return_pct"])
+        assert half["max_drawdown_pct"] <= full["max_drawdown_pct"] + 1e-6
+
+    @pytest.mark.unit
+    def test_risk_sizing_caps_at_capital(self):
+        from core.domain.services.backtest_execution import SizingModel, RiskModel
+        close = [100, 110]
+        signals = np.array([1, -1])
+        bt = backtest_signals(
+            _df(close), signals,
+            sizing=SizingModel(mode="risk", risk_pct=0.02),
+            risk=RiskModel(stop_loss_pct=0.05),
+        )
+        # notional = 2%/5% = 40% del capital → exposición parcial, retorno positivo pero menor
+        assert 0 < bt["total_return_pct"] < 10

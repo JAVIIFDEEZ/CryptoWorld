@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import ta as ta_lib
 
-from core.domain.services.backtest_execution import CostModel, RiskModel, simulate
+from core.domain.services.backtest_execution import CostModel, RiskModel, SizingModel, simulate
 
 logger = logging.getLogger(__name__)
 
@@ -943,6 +943,7 @@ def backtest_signals(
     initial_capital: float = 10000.0,
     costs: "CostModel | None" = None,
     risk: "RiskModel | None" = None,
+    sizing: "SizingModel | None" = None,
 ) -> dict:
     """
     Backtest long-only (todo dentro / todo fuera) de un array de señales
@@ -960,7 +961,7 @@ def backtest_signals(
     low = df["low"].values if "low" in df.columns else close
     n = len(close)
 
-    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk)
+    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk, sizing=sizing)
     trades = sim["trades"]
     equity_curve = sim["equity_curve"]
     final_capital = sim["final_capital"]
