@@ -695,6 +695,27 @@ function ConfidenceRing({ value }: { value: number }) {
   )
 }
 
+const VERDICT_STYLE: Record<string, { chip: string; label: string }> = {
+  EDGE: { chip: 'bg-green-500/15 text-green-300 border-green-500/30', label: 'Ventaja detectada' },
+  WEAK: { chip: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30', label: 'Señal débil' },
+  NO_EDGE: { chip: 'bg-red-500/15 text-red-300 border-red-500/30', label: 'Sin ventaja fiable' },
+}
+
+function PredictionVerdict({ data }: { data: PredictionResult }) {
+  const v = VERDICT_STYLE[data.verdict ?? 'NO_EDGE']
+  return (
+    <div className={`rounded-lg border p-3 ${v.chip}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-bold uppercase tracking-wide">{v.label}</span>
+        {data.n_oos !== undefined && (
+          <span className="text-[11px] opacity-80">· {data.n_oos} muestras OOS en {data.n_splits} tramos</span>
+        )}
+      </div>
+      {data.verdict_text && <p className="text-[11px] mt-1 text-slate-300">{data.verdict_text}</p>}
+    </div>
+  )
+}
+
 function PredictTab({ data }: { data: PredictionResult | null }) {
   const [showHow, setShowHow] = useState(false)
 
@@ -746,11 +767,11 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
                 <p className="text-[10px] text-slate-500 uppercase">Confianza del modelo</p>
                 <p className="text-sm font-bold font-mono text-white">{(data.confidence * 100).toFixed(1)}%</p>
               </div>
-              {data.cv_accuracy !== undefined && (
+              {data.oos_accuracy !== undefined && (
                 <div>
-                  <p className="text-[10px] text-slate-500 uppercase">Precisión CV (5-fold)</p>
+                  <p className="text-[10px] text-slate-500 uppercase">Precisión OOS (walk-forward)</p>
                   <p className="text-sm font-bold font-mono text-white">
-                    {(data.cv_accuracy * 100).toFixed(1)}%
+                    {(data.oos_accuracy * 100).toFixed(1)}%
                     {data.cv_std !== undefined && (
                       <span className="text-slate-500 font-normal ml-1">± {(data.cv_std * 100).toFixed(1)}%</span>
                     )}
@@ -767,6 +788,21 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
           </div>
         </div>
       </div>
+
+      {/* Veredicto honesto: ¿hay edge fuera de muestra? */}
+      {data.verdict && <PredictionVerdict data={data} />}
+
+      {/* Métricas fuera de muestra (lo que realmente importa) */}
+      {data.oos_accuracy !== undefined && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <MetricCard label="Edge sobre el azar" value={`${(data.edge ?? 0) >= 0 ? '+' : ''}${((data.edge ?? 0) * 100).toFixed(1)}%`}
+            color={(data.edge ?? 0) >= 0.04 ? 'text-green-400' : (data.edge ?? 0) >= 0.01 ? 'text-yellow-400' : 'text-red-400'} />
+          <MetricCard label="Línea base (mayoría)" value={`${((data.baseline_accuracy ?? 0) * 100).toFixed(1)}%`} color="text-slate-300" />
+          <MetricCard label="AUC" value={data.auc != null ? data.auc.toFixed(3) : '—'}
+            color={(data.auc ?? 0) >= 0.55 ? 'text-green-400' : 'text-slate-300'} />
+          <MetricCard label="F1 (subida)" value={data.f1_up != null ? data.f1_up.toFixed(2) : '—'} color="text-slate-300" />
+        </div>
+      )}
 
       {/* ¿Cómo funciona? — colapsable */}
       <div className="border border-slate-700 rounded-lg overflow-hidden">
@@ -785,7 +821,7 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
             <p><span className="text-slate-300 font-medium">Algoritmo:</span> Random Forest — ensemble de árboles de decisión. Combina múltiples modelos débiles para reducir overfitting y mejorar la generalización.</p>
             <p><span className="text-slate-300 font-medium">Features:</span> Indicadores técnicos calculados sobre las últimas N velas: RSI, MACD, Bollinger, ATR, ADX, EMA, volumen relativo y variaciones de precio.</p>
             <p><span className="text-slate-300 font-medium">Target:</span> Variable binaria — ¿sube o baja el precio en las próximas {data.horizon} velas?</p>
-            <p><span className="text-slate-300 font-medium">Validación CV:</span> Cross-validation de 5 folds sobre el histórico disponible. La precisión ± std es la métrica más fiable (evita data leakage). La confianza refleja el % de votos del ensemble en la predicción actual.</p>
+            <p><span className="text-slate-300 font-medium">Validación walk-forward:</span> se entrena en el pasado y se valida en el futuro (TimeSeriesSplit), nunca al revés — así la precisión OOS es honesta, sin fuga del futuro. El <span className="text-slate-300">edge</span> es la ventaja sobre predecir siempre la clase mayoritaria: si es ~0, no hay señal real aunque la precisión parezca alta.</p>
           </div>
         )}
       </div>

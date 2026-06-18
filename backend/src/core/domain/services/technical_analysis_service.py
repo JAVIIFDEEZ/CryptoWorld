@@ -566,142 +566,168 @@ def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
 # 4. PREDICCIÓN ML
 # ═══════════════════════════════════════════════════════════════════
 
-def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
-    """
-    Predice la dirección del precio usando Random Forest.
-
-    Usa indicadores técnicos como features.
-    Target: 1 si precio sube en 'horizon' velas, 0 si baja.
-
-    Args:
-        df: DataFrame OHLCV con al menos 100 filas.
-        horizon: Número de velas futuras para la predicción.
-
-    Returns:
-        Dict con prediction, confidence, features_importance, etc.
-    """
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import cross_val_score
-
-    if len(df) < 100:
-        return {
-            "prediction": "INSUFFICIENT_DATA",
-            "confidence": 0,
-            "horizon": horizon,
-            "message": "Se necesitan al menos 100 velas para entrenar el modelo.",
-        }
-
-    # ── Construir features ─────────────────────────────────────────
+def _build_prediction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Construye las features (todas causales) para el clasificador de dirección."""
     feat = pd.DataFrame(index=df.index)
-    feat["rsi_14"] = ta_lib.momentum.RSIIndicator(df["close"], window=14).rsi()
-    feat["rsi_7"] = ta_lib.momentum.RSIIndicator(df["close"], window=7).rsi()
+    close = df["close"]
+    feat["rsi_14"] = ta_lib.momentum.RSIIndicator(close, window=14).rsi()
+    feat["rsi_7"] = ta_lib.momentum.RSIIndicator(close, window=7).rsi()
 
-    macd_obj = ta_lib.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
-    feat["macd"] = macd_obj.macd()
-    feat["macd_signal"] = macd_obj.macd_signal()
+    macd_obj = ta_lib.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
     feat["macd_hist"] = macd_obj.macd_diff()
 
-    feat["sma_20"] = ta_lib.trend.SMAIndicator(df["close"], window=20).sma_indicator()
-    feat["sma_50"] = ta_lib.trend.SMAIndicator(df["close"], window=50).sma_indicator()
-    feat["ema_12"] = ta_lib.trend.EMAIndicator(df["close"], window=12).ema_indicator()
-    feat["ema_26"] = ta_lib.trend.EMAIndicator(df["close"], window=26).ema_indicator()
+    sma_20 = ta_lib.trend.SMAIndicator(close, window=20).sma_indicator()
+    sma_50 = ta_lib.trend.SMAIndicator(close, window=50).sma_indicator()
+    # Normalizados (distancia relativa): el nivel absoluto del precio no generaliza.
+    feat["price_vs_sma20"] = close / sma_20 - 1.0
+    feat["price_vs_sma50"] = close / sma_50 - 1.0
+    feat["sma20_vs_sma50"] = sma_20 / sma_50 - 1.0
 
-    bb = ta_lib.volatility.BollingerBands(df["close"], window=20, window_dev=2)
-    feat["bb_upper"] = bb.bollinger_hband()
-    feat["bb_middle"] = bb.bollinger_mavg()
-    feat["bb_lower"] = bb.bollinger_lband()
+    bb = ta_lib.volatility.BollingerBands(close, window=20, window_dev=2)
     feat["bb_width"] = bb.bollinger_wband()
+    rng = (bb.bollinger_hband() - bb.bollinger_lband())
+    feat["bb_position"] = (close - bb.bollinger_lband()) / rng.replace(0, np.nan)
 
-    adx_obj = ta_lib.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    feat["adx"] = adx_obj.adx()
+    feat["adx"] = ta_lib.trend.ADXIndicator(df["high"], df["low"], close, window=14).adx()
+    feat["stoch_k"] = ta_lib.momentum.StochasticOscillator(df["high"], df["low"], close).stoch()
 
-    # vol_change: si el volumen es todo cero (datos CoinGecko sin volumen real)
-    # pct_change() produciría NaN en cada fila y dropna() eliminaría todo el DataFrame.
-    # En ese caso se sustituye por 0.0 (neutro) para no perder los demás features.
+    # Momentum y volatilidad de los retornos (causales)
+    ret = close.pct_change()
+    feat["ret_1"] = ret
+    feat["ret_3"] = close.pct_change(3)
+    feat["ret_10"] = close.pct_change(10)
+    feat["volatility_10"] = ret.rolling(10).std()
+    feat["high_low_ratio"] = (df["high"] - df["low"]) / close
+
     volume_series = df["volume"]
     if volume_series.sum() == 0:
         feat["vol_change"] = 0.0
     else:
-        feat["vol_change"] = (
-            volume_series.pct_change()
-            .fillna(0)
-            .replace([np.inf, -np.inf], 0)
+        feat["vol_change"] = volume_series.pct_change().replace([np.inf, -np.inf], 0)
+    return feat
+
+
+def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
+    """
+    Predice la dirección del precio a `horizon` velas con un Random Forest,
+    evaluado de forma HONESTA mediante validación walk-forward (TimeSeriesSplit):
+    respeta el orden temporal (entrena en el pasado, valida en el futuro), nunca
+    al revés. Reporta la precisión fuera de muestra frente a una línea base
+    (clase mayoritaria) y el EDGE (ventaja sobre el azar) — la única cifra que
+    indica si hay señal real — además de precisión/recall/F1 y AUC.
+
+    Target: 1 si el precio sube en `horizon` velas, 0 si no.
+    """
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+
+    if len(df) < 100:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "Se necesitan al menos 100 velas para entrenar el modelo."}
+
+    feat_all = _build_prediction_features(df)
+    feature_cols = list(feat_all.columns)
+    target = (df["close"].shift(-horizon) > df["close"]).astype(int)
+
+    # Conjunto de entrenamiento: features válidas + target válido (no las últimas
+    # `horizon` velas, cuyo futuro aún no se ha observado).
+    data = feat_all.copy()
+    data["target"] = target
+    data = data.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(data) < 80:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "Datos insuficientes tras calcular indicadores."}
+
+    X = data[feature_cols].values
+    y = data["target"].values
+    if len(set(y)) < 2:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "Una sola clase en el objetivo; no hay nada que predecir."}
+
+    def _make_model() -> "RandomForestClassifier":
+        return RandomForestClassifier(
+            n_estimators=200, max_depth=6, min_samples_leaf=8,
+            class_weight="balanced", random_state=42, n_jobs=-1,
         )
-    feat["price_change_1"] = df["close"].pct_change(1)
-    feat["price_change_5"] = df["close"].pct_change(5)
-    feat["high_low_ratio"] = (df["high"] - df["low"]) / df["close"]
 
-    # ── Target: ¿sube el precio en N velas? ────────────────────────
-    feat["target"] = (df["close"].shift(-horizon) > df["close"]).astype(int)
+    # ── Evaluación walk-forward (out-of-sample, respeta el tiempo) ──
+    n_splits = max(3, min(6, len(X) // 40))
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    oos_true, oos_pred, oos_proba, fold_acc = [], [], [], []
+    for tr, te in tscv.split(X):
+        if len(set(y[tr])) < 2:
+            continue
+        m = _make_model().fit(X[tr], y[tr])
+        p = m.predict(X[te])
+        oos_pred.extend(p)
+        oos_true.extend(y[te])
+        oos_proba.extend(m.predict_proba(X[te])[:, 1])
+        fold_acc.append(accuracy_score(y[te], p))
 
-    # Limpiar NaN
-    feat = feat.dropna()
+    if not oos_true:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "No se pudo validar el modelo en datos fuera de muestra."}
 
-    if len(feat) < 60:
-        return {
-            "prediction": "INSUFFICIENT_DATA",
-            "confidence": 0,
-            "horizon": horizon,
-            "message": "Datos insuficientes tras calcular indicadores.",
-        }
+    oos_true = np.asarray(oos_true)
+    oos_pred = np.asarray(oos_pred)
+    oos_accuracy = float(accuracy_score(oos_true, oos_pred))
+    up_rate = float(oos_true.mean())
+    baseline = max(up_rate, 1.0 - up_rate)        # acierto de predecir siempre la clase mayoritaria
+    edge = oos_accuracy - baseline
+    try:
+        auc = float(roc_auc_score(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
+    except ValueError:
+        auc = None
 
-    feature_cols = [c for c in feat.columns if c != "target"]
-    X = feat[feature_cols].values
-    y = feat["target"].values
-
-    # Separar train (todo menos últimas 'horizon' filas) y predict (última fila)
-    X_train = X[:-horizon]
-    y_train = y[:-horizon]
-    X_latest = X[-1:].copy()
-
-    if len(X_train) < 50:
-        return {
-            "prediction": "INSUFFICIENT_DATA",
-            "confidence": 0,
-            "horizon": horizon,
-            "message": "Datos de entrenamiento insuficientes.",
-        }
-
-    # ── Entrenar modelo ────────────────────────────────────────────
-    model = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=8,
-        min_samples_split=10,
-        random_state=42,
-        n_jobs=-1,
-    )
-    model.fit(X_train, y_train)
-
-    # Cross-validation para evaluar fiabilidad
-    cv_scores = cross_val_score(model, X_train, y_train, cv=max(2, min(5, len(X_train) // 10)), scoring="accuracy")
-
-    # Predicción
+    # ── Modelo final entrenado con TODO el histórico → predicción de la vela actual ──
+    model = _make_model().fit(X, y)
+    latest = feat_all.replace([np.inf, -np.inf], np.nan).dropna()
+    X_latest = latest.iloc[-1:][feature_cols].values
     proba = model.predict_proba(X_latest)[0]
-    pred_class = model.predict(X_latest)[0]
+    pred_class = int(model.predict(X_latest)[0])
 
-    # Feature importance
-    importances = model.feature_importances_
-    top_features = sorted(
-        zip(feature_cols, importances),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:8]
+    top_features = sorted(zip(feature_cols, model.feature_importances_),
+                          key=lambda x: x[1], reverse=True)[:8]
 
-    prediction = "ALCISTA" if pred_class == 1 else "BAJISTA"
-    confidence = float(max(proba))
+    # Veredicto honesto: ¿hay edge fuera de muestra?
+    if edge >= 0.04 and oos_accuracy > 0.5:
+        verdict = "EDGE"
+        verdict_text = f"El modelo acierta el {oos_accuracy:.0%} fuera de muestra, {edge:+.0%} sobre el azar."
+    elif edge >= 0.01:
+        verdict = "WEAK"
+        verdict_text = f"Edge marginal ({edge:+.0%} sobre el azar): señal débil, tómatela con cautela."
+    else:
+        verdict = "NO_EDGE"
+        verdict_text = "Sin ventaja fiable sobre el azar: la predicción es prácticamente una moneda al aire."
 
     return {
-        "prediction": prediction,
-        "confidence": round(confidence, 4),
+        "prediction": "ALCISTA" if pred_class == 1 else "BAJISTA",
+        "confidence": round(float(max(proba)), 4),
+        "prob_up": round(float(proba[1]), 4),
         "horizon": horizon,
-        "model": "RandomForest",
-        "cv_accuracy": round(float(cv_scores.mean()), 4),
-        "cv_std": round(float(cv_scores.std()), 4),
+        "model": "RandomForest (walk-forward)",
+        # cv_accuracy se mantiene por compatibilidad, ahora es la precisión OOS honesta.
+        "cv_accuracy": round(oos_accuracy, 4),
+        "cv_std": round(float(np.std(fold_acc)) if fold_acc else 0.0, 4),
+        "oos_accuracy": round(oos_accuracy, 4),
+        "baseline_accuracy": round(baseline, 4),
+        "edge": round(edge, 4),
+        "precision_up": round(float(precision_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
+        "recall_up": round(float(recall_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
+        "f1_up": round(float(f1_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
+        "auc": round(auc, 4) if auc is not None else None,
+        "n_oos": int(len(oos_true)),
+        "n_train": int(len(X)),
+        "n_splits": int(n_splits),
+        "up_rate": round(up_rate, 4),
+        "verdict": verdict,
+        "verdict_text": verdict_text,
         "features_importance": [
-            {"feature": name, "importance": round(float(imp), 4)}
-            for name, imp in top_features
+            {"feature": name, "importance": round(float(imp), 4)} for name, imp in top_features
         ],
-        "disclaimer": "Predicción estadística basada en indicadores técnicos. No constituye consejo financiero.",
+        "disclaimer": "Predicción estadística evaluada fuera de muestra (walk-forward). "
+                      "No constituye consejo financiero.",
     }
 
 

@@ -80,10 +80,24 @@ export interface FeatureImportance {
 export interface PredictionResult {
   prediction: string
   confidence: number
+  prob_up?: number
   horizon: number
   model?: string
   cv_accuracy?: number
   cv_std?: number
+  oos_accuracy?: number
+  baseline_accuracy?: number
+  edge?: number
+  precision_up?: number
+  recall_up?: number
+  f1_up?: number
+  auc?: number | null
+  n_oos?: number
+  n_train?: number
+  n_splits?: number
+  up_rate?: number
+  verdict?: 'EDGE' | 'WEAK' | 'NO_EDGE'
+  verdict_text?: string
   features_importance?: FeatureImportance[]
   disclaimer?: string
   asset_symbol?: string
