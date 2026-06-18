@@ -19,6 +19,15 @@ export interface GenerateRequest {
   limit?: number
   initial_capital?: number
   preset?: GenPreset
+  optimizer?: 'single' | 'nsga'
+}
+
+export interface ParetoPoint {
+  spec_hash: string
+  description: string
+  oos_sharpe: number
+  max_drawdown_pct: number
+  overfit_gap: number
 }
 
 // ── Respuestas ─────────────────────────────────────────────────────
@@ -132,7 +141,9 @@ export interface GenerationReport {
   }
   ga_config: Record<string, number>
   gating_thresholds: Record<string, number>
+  optimizer?: 'single' | 'nsga'
   ga_evolution: { history: GenerationHistoryPoint[]; evaluations: number; best_fitness: number }
+  pareto_frontier?: ParetoPoint[]
   summary: { candidates_gated: number; passed_gating: number; rejected: number }
   ranking: Finalist[]
   candidates: Candidate[]

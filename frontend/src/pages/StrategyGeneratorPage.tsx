@@ -22,6 +22,7 @@ import {
 } from '@/services/strategyGeneratorService'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
+import ParetoFrontier from '@/components/generator/ParetoFrontier'
 import Skeleton from '@/components/ui/Skeleton'
 
 const INTERVALS = ['1d', '4h', '1h', '1w']
@@ -49,6 +50,7 @@ export default function StrategyGeneratorPage() {
   const [symbol, setSymbol] = useState('BTC')
   const [interval, setIntervalTf] = useState('1d')
   const [preset, setPreset] = useState<GenPreset>('balanced')
+  const [optimizer, setOptimizer] = useState<'single' | 'nsga'>('single')
   const [loadingAssets, setLoadingAssets] = useState(true)
 
   const [phase, setPhase] = useState<Phase>('idle')
@@ -94,7 +96,7 @@ export default function StrategyGeneratorPage() {
 
     try {
       const { job_id }: LaunchResponse = await strategyGeneratorService.launch({
-        asset_symbol: symbol, interval, preset,
+        asset_symbol: symbol, interval, preset, optimizer,
       })
       let attempts = 0
       pollRef.current = window.setInterval(async () => {
@@ -216,6 +218,24 @@ export default function StrategyGeneratorPage() {
             </div>
           </label>
 
+          <label className="text-[11px] text-slate-400" title="Único: un fitness escalar. Pareto: multi-objetivo (NSGA-II), compromiso retorno/riesgo">
+            <span className="block mb-1 uppercase">Optimizador</span>
+            <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
+              {([['single', 'Único'], ['nsga', 'Pareto']] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setOptimizer(value)}
+                  disabled={phase === 'running'}
+                  className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                    optimizer === value ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </label>
+
           <div className="flex-1" />
 
           <button
@@ -320,6 +340,10 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
         history={report.ga_evolution.history}
         winnerSpec={winner?.spec ?? null}
       />
+
+      {report.optimizer === 'nsga' && report.pareto_frontier && report.pareto_frontier.length > 0 && (
+        <ParetoFrontier points={report.pareto_frontier} />
+      )}
 
       {report.ranking.length > 0 ? (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
