@@ -77,6 +77,20 @@ def _macd_line(df, p):
 def _macd_signal(df, p):
     return ta_lib.trend.MACD(df["close"], window_slow=int(p["slow"]), window_fast=int(p["fast"]), window_sign=int(p["signal"])).macd_signal().values
 
+def _mfi(df, p):
+    # Money Flow Index: RSI ponderado por volumen (0-100). Filtro de momentum con volumen.
+    return ta_lib.volume.MFIIndicator(df["high"], df["low"], df["close"], df["volume"], window=int(p["window"])).money_flow_index().values
+
+def _cmf(df, p):
+    # Chaikin Money Flow (-1..1): presión compradora/vendedora ponderada por volumen.
+    return ta_lib.volume.ChaikinMoneyFlowIndicator(df["high"], df["low"], df["close"], df["volume"], window=int(p["window"])).chaikin_money_flow().values
+
+def _vol_ratio(df, p):
+    # Volumen relativo a su media móvil: >1 = más actividad de lo normal (surge).
+    vol = df["volume"].astype(float)
+    sma = vol.rolling(int(p["window"])).mean()
+    return (vol / sma.replace(0, np.nan)).values
+
 
 # Osciladores: se comparan contra un umbral numérico.
 OSCILLATORS: dict[str, dict] = {
@@ -85,6 +99,10 @@ OSCILLATORS: dict[str, dict] = {
     "CCI": {"compute": _cci, "params": {"window": ("int", 14, 30)}, "threshold": (-150.0, 150.0)},
     "WILLR": {"compute": _willr, "params": {"window": ("int", 10, 21)}, "threshold": (-90.0, -10.0)},
     "ADX": {"compute": _adx, "params": {"window": ("int", 10, 30)}, "threshold": (15.0, 40.0)},
+    # Indicadores con volumen: filtros de actividad y de presión compradora/vendedora.
+    "MFI": {"compute": _mfi, "params": {"window": ("int", 10, 21)}, "threshold": (15.0, 85.0)},
+    "CMF": {"compute": _cmf, "params": {"window": ("int", 14, 30)}, "threshold": (-0.3, 0.3)},
+    "VOLRATIO": {"compute": _vol_ratio, "params": {"window": ("int", 10, 30)}, "threshold": (0.7, 2.5)},
 }
 
 # Tipo precio: se cruzan entre sí (o contra el precio).
@@ -336,7 +354,13 @@ def spec_sizing(spec: dict):
 def _series(df: pd.DataFrame, indicator: str, params: dict, cache: dict) -> np.ndarray:
     key = (indicator, tuple(sorted(params.items())))
     if key not in cache:
-        cache[key] = np.asarray(_ALL[indicator]["compute"](df, params), dtype=float)
+        try:
+            arr = np.asarray(_ALL[indicator]["compute"](df, params), dtype=float)
+        except Exception:
+            # Algunos indicadores (ADX, MFI…) fallan en ventanas demasiado cortas:
+            # devolver NaN (no dispara señal) en vez de romper el backtest.
+            arr = np.full(len(df), np.nan)
+        cache[key] = arr
     return cache[key]
 
 

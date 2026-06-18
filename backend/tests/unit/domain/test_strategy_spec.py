@@ -187,3 +187,38 @@ class TestRiskGenes:
             "risk": {"stop_loss_pct": 0.9},  # fuera de rango
         }
         assert not ss.validate_spec(spec)
+
+
+class TestVolumeIndicators:
+    """Nuevos bloques con volumen: MFI, CMF y ratio de volumen."""
+
+    @pytest.mark.unit
+    def test_volume_oscillators_registered_and_compile(self):
+        for ind in ("MFI", "CMF", "VOLRATIO"):
+            assert ind in ss.OSCILLATORS
+        df = _df(n=200)
+        df["volume"] = np.abs(np.random.default_rng(0).normal(1000, 200, len(df)))
+        for ind in ("MFI", "CMF", "VOLRATIO"):
+            thr = 50.0 if ind == "MFI" else (0.0 if ind == "CMF" else 1.2)
+            spec = {
+                "entry": {"combine": "AND", "conditions": [
+                    {"type": "threshold", "indicator": ind, "params": {"window": 14}, "op": "gt", "threshold": thr}]},
+                "exit": {"combine": "AND", "conditions": [
+                    {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "gt", "threshold": 70.0}]},
+            }
+            assert ss.validate_spec(spec)
+            sig = ss.compile_signals(df, spec)
+            assert len(sig) == len(df)
+
+    @pytest.mark.unit
+    def test_zero_volume_does_not_crash(self):
+        df = _df(n=200)
+        df["volume"] = 0.0
+        spec = {
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "VOLRATIO", "params": {"window": 14}, "op": "gt", "threshold": 1.2}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "lt", "threshold": 30.0}]},
+        }
+        sig = ss.compile_signals(df, spec)   # no debe lanzar con volumen nulo
+        assert not np.any(np.isnan(sig))
