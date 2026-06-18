@@ -7,7 +7,7 @@
  * y el historial de estrategias guardadas.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { lazy, useEffect, useRef, useState } from 'react'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import {
   strategyGeneratorService,
@@ -22,7 +22,9 @@ import {
 } from '@/services/strategyGeneratorService'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
-import ParetoFrontier from '@/components/generator/ParetoFrontier'
+import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
+import ParetoFrontier2D from '@/components/generator/ParetoFrontier2D'
+const ParetoFrontier3D = lazy(() => import('@/components/generator/ParetoFrontier3D'))
 import Skeleton from '@/components/ui/Skeleton'
 
 const INTERVALS = ['1d', '4h', '1h', '1w']
@@ -342,7 +344,12 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
       />
 
       {report.optimizer === 'nsga' && report.pareto_frontier && report.pareto_frontier.length > 0 && (
-        <ParetoFrontier points={report.pareto_frontier} />
+        <Viz3DSwitch
+          title="Frontera de Pareto"
+          hint={`${report.pareto_frontier.length} estrategias no dominadas · compromiso retorno / drawdown / sobreajuste`}
+          threeD={<ParetoFrontier3D points={report.pareto_frontier} />}
+          twoD={<ParetoFrontier2D points={report.pareto_frontier} />}
+        />
       )}
 
       {report.ranking.length > 0 ? (
