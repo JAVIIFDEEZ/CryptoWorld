@@ -413,6 +413,9 @@ class StrategyGenerateRequestSerializer(serializers.Serializer):
     preset = serializers.ChoiceField(
         choices=["fast", "balanced", "thorough"], default="balanced", required=False,
     )
+    optimizer = serializers.ChoiceField(
+        choices=["single", "nsga"], default="single", required=False,
+    )
 
 
 class SpecRobustnessRequestSerializer(serializers.Serializer):

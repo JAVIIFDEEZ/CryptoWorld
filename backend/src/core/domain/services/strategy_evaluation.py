@@ -131,6 +131,7 @@ def evaluate_fitness(
         "overfit_gap": round(float(overfit_gap), 4),
         "n_trades": n_trades,
         "total_return_pct": full["total_return_pct"],
+        "max_drawdown_pct": full["max_drawdown_pct"],
         "turnover": full["turnover"],
         "cost_drag_pct": full["total_commission_pct"],
     }

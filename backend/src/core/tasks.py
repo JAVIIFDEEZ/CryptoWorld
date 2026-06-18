@@ -352,6 +352,7 @@ def generate_strategies(
     limit: int = 730,
     initial_capital: float = 10000.0,
     preset: str = "balanced",
+    optimizer: str = "single",
 ) -> dict:
     """
     Genera estrategias por algoritmo genético: evoluciona StrategySpecs con
@@ -375,6 +376,7 @@ def generate_strategies(
             limit=limit,
             initial_capital=initial_capital,
             preset=preset,
+            optimizer=optimizer,
         )
         logger.info(
             "generate_strategies: %s → %s finalistas robustos",

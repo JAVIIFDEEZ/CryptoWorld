@@ -1454,6 +1454,7 @@ class StrategyGenerateLaunchView(APIView):
             limit=v.get("limit", 730),
             initial_capital=v.get("initial_capital", 10000.0),
             preset=v.get("preset", "balanced"),
+            optimizer=v.get("optimizer", "single"),
         )
         return Response(
             {

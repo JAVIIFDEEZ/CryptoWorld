@@ -139,3 +139,20 @@ class TestHoldoutNeverLeaks:
         assert part["holdout_candles"] > 0
         # El holdout son las velas más recientes (split al ~80%)
         assert part["split_index"] == part["evolution_candles"]
+
+
+class TestMultiObjective:
+
+    @pytest.mark.unit
+    def test_nsga_returns_pareto_frontier(self):
+        cfg = GenerationConfig(
+            holdout_fraction=0.2, top_k=3, max_gating_attempts=6, optimizer="nsga",
+            ga=GAConfig(population_size=18, generations=5, seed=7),
+            gating=ev.GatingThresholds(wf_splits=3, pbo_neighbors=6, mc_sims=100, min_trades=8),
+        )
+        report = generate_strategies(_mean_reverting_df(), interval="1d", config=cfg)
+        assert report["optimizer"] == "nsga"
+        assert "pareto_frontier" in report and len(report["pareto_frontier"]) >= 1
+        # Cada punto del frente trae sus tres objetivos
+        for p in report["pareto_frontier"]:
+            assert "oos_sharpe" in p and "max_drawdown_pct" in p and "overfit_gap" in p

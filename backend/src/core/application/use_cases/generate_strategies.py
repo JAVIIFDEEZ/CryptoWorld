@@ -37,6 +37,7 @@ from core.domain.services.strategy_evaluation import (
     holdout_performance,
 )
 from core.domain.services.strategy_generator import GAConfig, evolve
+from core.domain.services.strategy_nsga import NSGAConfig, evolve_nsga
 from core.domain.services.strategy_spec import describe_spec, spec_hash
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class GenerationConfig:
     max_gating_attempts: int = 12      # tope de candidatos a pasar por el gating (coste)
     commission_bps: float = 10.0       # comisión por lado (realismo de costes)
     slippage_bps: float = 5.0          # deslizamiento por lado
+    optimizer: str = "single"          # "single" (fitness escalar) | "nsga" (multi-objetivo)
     ga: GAConfig = GAConfig()
     gating: GatingThresholds = GatingThresholds()
 
@@ -95,6 +97,47 @@ def _json_safe(value):
     return value
 
 
+def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs):
+    """
+    Optimización multi-objetivo: maximizar Sharpe OOS, minimizar drawdown y
+    minimizar sobreajuste. Devuelve los specs de la frontera de Pareto (como
+    candidatos a gating), la historia para la visualización, el nº de
+    evaluaciones y la frontera con sus objetivos.
+    """
+    def objectives(spec: dict) -> tuple:
+        ev = evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy, costs=costs)
+        if ev["n_trades"] < 8 or ev["efficiency"] == 0:
+            return (-99.0, -99.0, -99.0)            # degeneradas: dominadas por todo
+        return (ev["mean_oos_sharpe"], -ev["max_drawdown_pct"] / 100.0, -ev["overfit_gap"])
+
+    nsga_cfg = NSGAConfig(
+        population_size=cfg.ga.population_size,
+        generations=cfg.ga.generations,
+        crossover_rate=cfg.ga.crossover_rate,
+        mutation_rate=cfg.ga.mutation_rate,
+        seed_fraction=cfg.ga.seed_fraction,
+        seed=cfg.ga.seed,
+    )
+    res = evolve_nsga(objectives, nsga_cfg)
+
+    candidate_specs = [{"spec": p["spec"], "fitness": p["objectives"][0]} for p in res["pareto"]]
+    history = [
+        {"generation": h["generation"],
+         "best": h["best_per_objective"][0] if h["best_per_objective"] else 0.0,
+         "mean": float(h["n_pareto"]),
+         "diversity": h["n_pareto"]}
+        for h in res["history"]
+    ]
+    frontier = [
+        {"spec_hash": p["hash"], "description": describe_spec(p["spec"]),
+         "oos_sharpe": p["objectives"][0],
+         "max_drawdown_pct": round(-p["objectives"][1] * 100.0, 2),
+         "overfit_gap": round(-p["objectives"][2], 4)}
+        for p in res["pareto"]
+    ]
+    return candidate_specs, history, res["evaluations"], frontier
+
+
 def _partition(df, holdout_fraction: float):
     """Corte temporal: [evolución | validación final]. El holdout es el tramo
     MÁS RECIENTE, jamás visto durante la evolución (anti data-snooping)."""
@@ -123,18 +166,25 @@ def generate_strategies(
     # ── PASO 5: partición anti data-snooping ──────────────────────────
     df_evo, df_holdout, split = _partition(df, cfg.holdout_fraction)
 
-    # ── PASO 3: fitness robustez-aware SOLO sobre la zona de evolución ──
-    def fitness_fn(spec: dict) -> float:
-        return evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy, costs=costs)["fitness"]
-
-    ga_result = evolve(fitness_fn, cfg.ga)
+    # ── PASO 3: optimización SOLO sobre la zona de evolución ──────────
+    # "single": un fitness escalar robustez-aware. "nsga": multi-objetivo
+    # (maximizar Sharpe OOS, minimizar drawdown y sobreajuste) → frontera de Pareto.
+    pareto_frontier: list[dict] = []
+    if cfg.optimizer == "nsga":
+        candidate_specs, ga_history, evaluations, pareto_frontier = _run_nsga(df_evo, cfg, ppy, costs)
+    else:
+        def fitness_fn(spec: dict) -> float:
+            return evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy, costs=costs)["fitness"]
+        ga_result = evolve(fitness_fn, cfg.ga)
+        candidate_specs = [{"spec": p["spec"], "fitness": p["fitness"]} for p in ga_result["population"]]
+        ga_history, evaluations = ga_result["history"], ga_result["evaluations"]
 
     # ── PASO 4: gating de robustez de los mejores candidatos ──────────
     # Recorremos la población ordenada por fitness; el holdout (PASO 5) se mide
     # pero NO decide la selección/ranking (sería snooping de la validación).
     finalists: list[dict] = []
     attempts = 0
-    for cand in ga_result["population"]:
+    for cand in candidate_specs:
         if attempts >= cfg.max_gating_attempts:
             break
         attempts += 1
@@ -206,11 +256,13 @@ def generate_strategies(
         },
         "ga_config": asdict(cfg.ga),
         "gating_thresholds": asdict(cfg.gating),
+        "optimizer": cfg.optimizer,
         "ga_evolution": {
-            "history": ga_result["history"],
-            "evaluations": ga_result["evaluations"],
-            "best_fitness": ga_result["best"]["fitness"],
+            "history": ga_history,
+            "evaluations": evaluations,
+            "best_fitness": max((c["fitness"] for c in candidate_specs), default=0.0),
         },
+        "pareto_frontier": pareto_frontier,
         "summary": {
             "candidates_gated": len(finalists),
             "passed_gating": len(passed),
@@ -239,12 +291,14 @@ class GenerateStrategiesUseCase:
         limit: int = 730,
         initial_capital: float = 10000.0,
         preset: str = DEFAULT_PRESET,
+        optimizer: str = "single",
         config: GenerationConfig | None = None,
         persist: bool = True,
     ) -> dict:
         # Import diferido: mantiene generate_strategies (dominio puro) importable
         # sin arrastrar infraestructura/Django.
         from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+        from dataclasses import replace
 
         symbol = asset_symbol.upper()
         result = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
@@ -257,6 +311,8 @@ class GenerateStrategiesUseCase:
             }
 
         cfg = config or config_for_preset(preset)
+        if optimizer in ("single", "nsga"):
+            cfg = replace(cfg, optimizer=optimizer)
         report = generate_strategies(
             result.df, interval=interval, config=cfg, initial_capital=initial_capital,
         )
