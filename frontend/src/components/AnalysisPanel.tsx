@@ -764,8 +764,15 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
             </p>
             <div className="flex flex-wrap gap-4 mt-2">
               <div>
-                <p className="text-[10px] text-slate-500 uppercase">Confianza del modelo</p>
-                <p className="text-sm font-bold font-mono text-white">{(data.confidence * 100).toFixed(1)}%</p>
+                <p className="text-[10px] text-slate-500 uppercase">
+                  Confianza {data.calibrated && <span className="text-emerald-400 normal-case">· calibrada</span>}
+                </p>
+                <p className="text-sm font-bold font-mono text-white">
+                  {(data.confidence * 100).toFixed(1)}%
+                  {data.brier_score != null && (
+                    <span className="text-slate-500 font-normal ml-1" title="Brier score: calidad de calibración (0 = perfecto)">Brier {data.brier_score.toFixed(3)}</span>
+                  )}
+                </p>
               </div>
               {data.oos_accuracy !== undefined && (
                 <div>
@@ -822,6 +829,7 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
             <p><span className="text-slate-300 font-medium">Features:</span> Indicadores técnicos calculados sobre las últimas N velas: RSI, MACD, Bollinger, ATR, ADX, EMA, volumen relativo y variaciones de precio.</p>
             <p><span className="text-slate-300 font-medium">Target:</span> Variable binaria — ¿sube o baja el precio en las próximas {data.horizon} velas?</p>
             <p><span className="text-slate-300 font-medium">Validación walk-forward:</span> se entrena en el pasado y se valida en el futuro (TimeSeriesSplit), nunca al revés — así la precisión OOS es honesta, sin fuga del futuro. El <span className="text-slate-300">edge</span> es la ventaja sobre predecir siempre la clase mayoritaria: si es ~0, no hay señal real aunque la precisión parezca alta.</p>
+            <p><span className="text-slate-300 font-medium">Probabilidad calibrada:</span> la confianza se calibra (Platt) para que un 70% signifique de verdad ~70% de acierto, no el voto crudo del bosque (que suele estar sobreconfiado). El Brier score mide esa calidad de calibración.</p>
           </div>
         )}
       </div>

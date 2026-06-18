@@ -83,6 +83,8 @@ export interface PredictionResult {
   prob_up?: number
   horizon: number
   model?: string
+  calibrated?: boolean
+  brier_score?: number | null
   cv_accuracy?: number
   cv_std?: number
   oos_accuracy?: number

@@ -77,3 +77,15 @@ class TestHonesty:
         # La línea base = acierto de predecir siempre la clase mayoritaria ≥ 0.5
         assert r["baseline_accuracy"] >= 0.5
         assert r["baseline_accuracy"] == pytest.approx(max(r["up_rate"], 1 - r["up_rate"]), abs=1e-6)
+
+
+class TestCalibration:
+
+    @pytest.mark.unit
+    def test_probabilities_are_calibrated(self):
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert r["calibrated"] is True
+        assert r["brier_score"] is not None and 0.0 <= r["brier_score"] <= 1.0
+        # La confianza calibrada es una probabilidad válida
+        assert 0.5 <= r["confidence"] <= 1.0
+        assert r["prob_up"] is not None

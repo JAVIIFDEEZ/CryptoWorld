@@ -620,7 +620,8 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     """
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import TimeSeriesSplit
-    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, brier_score_loss
+    from sklearn.calibration import CalibratedClassifierCV
 
     if len(df) < 100:
         return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
@@ -679,15 +680,28 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         auc = float(roc_auc_score(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
     except ValueError:
         auc = None
+    # Brier score: calidad de calibración de las probabilidades OOS (0 = perfecto).
+    brier = float(brier_score_loss(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
 
-    # ── Modelo final entrenado con TODO el histórico → predicción de la vela actual ──
-    model = _make_model().fit(X, y)
+    # ── Modelo final con TODO el histórico → predicción de la vela actual ──
+    # Importancias desde un RF plano (CalibratedClassifierCV no las expone).
+    imp_model = _make_model().fit(X, y)
     latest = feat_all.replace([np.inf, -np.inf], np.nan).dropna()
     X_latest = latest.iloc[-1:][feature_cols].values
-    proba = model.predict_proba(X_latest)[0]
-    pred_class = int(model.predict(X_latest)[0])
 
-    top_features = sorted(zip(feature_cols, model.feature_importances_),
+    # Probabilidad CALIBRADA (Platt, validación que respeta el tiempo): así la
+    # "confianza" mostrada es una probabilidad realista, no el voto crudo del bosque.
+    calibrated = False
+    try:
+        model = CalibratedClassifierCV(_make_model(), method="sigmoid", cv=TimeSeriesSplit(n_splits=3))
+        model.fit(X, y)
+        proba = model.predict_proba(X_latest)[0]
+        calibrated = True
+    except Exception:
+        proba = imp_model.predict_proba(X_latest)[0]
+    pred_class = int(proba[1] >= proba[0])
+
+    top_features = sorted(zip(feature_cols, imp_model.feature_importances_),
                           key=lambda x: x[1], reverse=True)[:8]
 
     # Veredicto honesto: ¿hay edge fuera de muestra?
@@ -706,7 +720,9 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         "confidence": round(float(max(proba)), 4),
         "prob_up": round(float(proba[1]), 4),
         "horizon": horizon,
-        "model": "RandomForest (walk-forward)",
+        "model": "RandomForest calibrado (walk-forward)" if calibrated else "RandomForest (walk-forward)",
+        "calibrated": calibrated,
+        "brier_score": round(brier, 4) if brier is not None else None,
         # cv_accuracy se mantiene por compatibilidad, ahora es la precisión OOS honesta.
         "cv_accuracy": round(oos_accuracy, 4),
         "cv_std": round(float(np.std(fold_acc)) if fold_acc else 0.0, 4),
