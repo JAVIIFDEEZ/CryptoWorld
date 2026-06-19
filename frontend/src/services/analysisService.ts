@@ -108,6 +108,32 @@ export interface PredictionResult {
   error?: string
 }
 
+// Historial real de predicciones (verificadas a posteriori)
+export interface PredictionTrackRecordItem {
+  id: number
+  asset_symbol: string
+  interval: string
+  horizon: number
+  predicted: string
+  confidence: number
+  verdict: string
+  status: 'pending' | 'correct' | 'incorrect' | 'unresolved'
+  actual_direction: string | null
+  actual_return_pct: number | null
+  created_at: string
+  resolve_at: string
+}
+
+export interface PredictionTrackRecord {
+  total: number
+  resolved: number
+  pending: number
+  correct: number
+  accuracy: number | null
+  by_verdict: Record<string, { n: number; accuracy: number }>
+  recent: PredictionTrackRecordItem[]
+}
+
 // Patrones
 export interface CandlePattern {
   name: string
@@ -220,6 +246,12 @@ export const analysisService = {
       interval,
       horizon,
     })
+    return data
+  },
+
+  /** Historial real de aciertos de las predicciones (bucle de mejora continua). */
+  async getPredictionTrackRecord(): Promise<PredictionTrackRecord> {
+    const { data } = await apiClient.get<PredictionTrackRecord>('/analysis/predictions/')
     return data
   },
 

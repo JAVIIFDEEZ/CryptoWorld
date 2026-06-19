@@ -9,13 +9,14 @@
  *   5. Backtesting    — simulación de estrategia con comparativa vs buy&hold
  */
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   analysisService,
   type IntervalType,
   type AnalysisType,
   type SignalsResult,
   type PredictionResult,
+  type PredictionTrackRecord,
   type PatternsResult,
   type BacktestResult,
   type AnalysisResult,
@@ -716,6 +717,44 @@ function PredictionVerdict({ data }: { data: PredictionResult }) {
   )
 }
 
+function PredictionTrackRecordPanel() {
+  const [tr, setTr] = useState<PredictionTrackRecord | null>(null)
+  useEffect(() => { analysisService.getPredictionTrackRecord().then(setTr).catch(() => { /* sin historial */ }) }, [])
+  if (!tr || tr.resolved === 0) {
+    return (
+      <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3 text-[11px] text-slate-400">
+        <span className="text-slate-300 font-medium">Registro automático:</span> esta predicción se ha guardado y se
+        verificará cuando transcurra el horizonte. Vuelve para ver el acierto real
+        {tr && tr.pending > 0 ? ` (${tr.pending} pendientes).` : '.'}
+      </div>
+    )
+  }
+  const acc = tr.accuracy ?? 0
+  const tone = acc >= 0.55 ? 'text-green-400' : acc >= 0.5 ? 'text-yellow-400' : 'text-red-400'
+  return (
+    <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <h4 className="text-xs font-semibold text-slate-300">Historial real de aciertos</h4>
+        <span className="text-[10px] text-slate-500">{tr.resolved} verificadas · {tr.pending} pendientes</span>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className={`text-2xl font-bold font-mono ${tone}`}>{(acc * 100).toFixed(1)}%</span>
+        <span className="text-[11px] text-slate-500">{tr.correct}/{tr.resolved} aciertos en vivo</span>
+      </div>
+      {Object.keys(tr.by_verdict).length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {Object.entries(tr.by_verdict).map(([v, s]) => (
+            <span key={v} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
+              {v}: {(s.accuracy * 100).toFixed(0)}% <span className="text-slate-500">({s.n})</span>
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px] text-slate-600 mt-2">Rendimiento real verificado a posteriori, no el backtest. Por veredicto del modelo: ¿acierta más cuando dice tener edge?</p>
+    </div>
+  )
+}
+
 function PredictTab({ data }: { data: PredictionResult | null }) {
   const [showHow, setShowHow] = useState(false)
 
@@ -810,6 +849,9 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
           <MetricCard label="F1 (subida)" value={data.f1_up != null ? data.f1_up.toFixed(2) : '—'} color="text-slate-300" />
         </div>
       )}
+
+      {/* Historial real verificado (bucle de mejora continua) */}
+      <PredictionTrackRecordPanel />
 
       {/* ¿Cómo funciona? — colapsable */}
       <div className="border border-slate-700 rounded-lg overflow-hidden">

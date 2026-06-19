@@ -574,3 +574,68 @@ class StrategySignalEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.signal} · {self.strategy_id} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class PredictionRecord(models.Model):
+    """
+    Registro inmutable de una predicción de dirección del modelo ML, para poder
+    comprobar después si acertó y medir el rendimiento REAL en vivo (no solo el
+    backtest OOS). Es el bucle de mejora continua: cada predicción se guarda con
+    el precio del momento y una fecha de resolución (cuando transcurre el
+    horizonte); una tarea periódica trae el precio real entonces y la marca como
+    acierto o fallo.
+    """
+
+    STATUS_CHOICES = [
+        ("pending", "Pendiente"),
+        ("correct", "Acierto"),
+        ("incorrect", "Fallo"),
+        ("unresolved", "Sin resolver"),
+    ]
+    DIRECTION_CHOICES = [("ALCISTA", "Alcista"), ("BAJISTA", "Bajista")]
+
+    asset = models.ForeignKey(
+        CryptoAsset, on_delete=models.SET_NULL, related_name="prediction_records",
+        null=True, blank=True,
+    )
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="prediction_records",
+        null=True, blank=True,
+    )
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    interval = models.CharField(max_length=10)
+    horizon = models.PositiveSmallIntegerField()
+
+    # ── Lo que predijo el modelo ──
+    predicted = models.CharField(max_length=8, choices=DIRECTION_CHOICES)
+    prob_up = models.FloatField()
+    confidence = models.FloatField()
+    edge = models.FloatField(null=True, blank=True)
+    oos_accuracy = models.FloatField(null=True, blank=True)
+    verdict = models.CharField(max_length=10, blank=True)
+    model = models.CharField(max_length=80, blank=True)
+    price_at_prediction = models.FloatField()
+
+    # ── Resolución (se rellena cuando transcurre el horizonte) ──
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="pending", db_index=True)
+    resolve_at = models.DateTimeField(db_index=True)
+    actual_direction = models.CharField(max_length=8, choices=DIRECTION_CHOICES, blank=True)
+    price_at_resolution = models.FloatField(null=True, blank=True)
+    actual_return_pct = models.FloatField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "prediction_records"
+        verbose_name = "Registro de Predicción"
+        verbose_name_plural = "Registros de Predicción"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "resolve_at"]),
+            models.Index(fields=["owner", "-created_at"]),
+            models.Index(fields=["asset_symbol", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.asset_symbol} {self.predicted} h{self.horizon} ({self.status})"

@@ -424,6 +424,30 @@ def analyze_spec_robustness(
 
 
 @shared_task(
+    name="core.tasks.resolve_predictions",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def resolve_predictions(self) -> dict:
+    """
+    Verifica las predicciones cuyo horizonte ya transcurrió: trae el precio real
+    de la fecha de resolución y las marca acierto/fallo. Es el bucle de mejora
+    continua del modelo ML. Programada por celery beat (cada 30 min).
+    """
+    try:
+        from core.application.use_cases.track_predictions import ResolvePredictionsUseCase
+
+        result = ResolvePredictionsUseCase().execute()
+        logger.info("resolve_predictions: %d resueltas, %d aciertos",
+                    result["resolved"], result["correct"])
+        return result
+    except Exception as exc:
+        logger.error("resolve_predictions error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.evaluate_monitored_strategies",
     bind=True,
     max_retries=1,

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class PredictPriceUseCase:
 
-    def execute(self, dto: PredictionRequestDTO) -> dict:
+    def execute(self, dto: PredictionRequestDTO, owner=None) -> dict:
         symbol = dto.asset_symbol.upper()
 
         result = fetch_ohlcv_dataframe(symbol=symbol, interval=dto.interval, limit=dto.limit)
@@ -31,4 +31,11 @@ class PredictPriceUseCase:
         prediction["asset_symbol"] = symbol
         prediction["interval"] = dto.interval
         prediction["data_source"] = result.source
+
+        # Registrar la predicción para verificarla cuando transcurra el horizonte.
+        from core.application.use_cases.track_predictions import log_prediction
+        log_prediction(
+            prediction, symbol, dto.interval, dto.horizon,
+            last_close=float(result.df["close"].iloc[-1]), owner=owner,
+        )
         return prediction

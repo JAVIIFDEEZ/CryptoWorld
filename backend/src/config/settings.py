@@ -334,5 +334,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.evaluate_monitored_strategies",
         "schedule": 900.0,  # segundos — cada 15 min
     },
+    # Verificar predicciones ML cuyo horizonte ha vencido (cada 30 min)
+    "resolve-predictions": {
+        "task": "core.tasks.resolve_predictions",
+        "schedule": 1800.0,  # segundos — cada 30 min
+    },
 }
 

@@ -1284,9 +1284,31 @@ class PredictPriceView(APIView):
                 asset_symbol=v["asset_symbol"],
                 interval=v.get("interval", "1h"),
                 horizon=v.get("horizon", 5),
-            )
+            ),
+            owner=request.user,
         )
         return Response(result, status=status.HTTP_200_OK)
+
+
+class PredictionTrackRecordView(APIView):
+    """
+    GET /api/analysis/predictions/ — Rendimiento realizado (en vivo) de las
+    predicciones del usuario: precisión global, segmentada por veredicto del
+    modelo y registros recientes con su estado (acierto/fallo/pendiente).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.track_predictions import PredictionTrackRecordUseCase
+
+        try:
+            limit = min(int(request.query_params.get("limit", 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+        return Response(
+            PredictionTrackRecordUseCase().execute(owner=request.user, limit=limit),
+            status=status.HTTP_200_OK,
+        )
 
 
 class DetectPatternsView(APIView):
