@@ -38,6 +38,13 @@ def log_prediction(prediction: dict, asset_symbol: str, interval: str, horizon: 
 
     minutes = _INTERVAL_MINUTES.get(interval, 60) * max(1, int(horizon))
     asset = CryptoAsset.objects.filter(symbol=asset_symbol.upper()).first()
+    # Dedupe: una sola predicción "abierta" por (dueño, activo, marco, horizonte).
+    # Evita inflar el historial con recargas; al resolverse se podrá registrar otra.
+    if PredictionRecord.objects.filter(
+        owner=(owner if (owner is not None and getattr(owner, "is_authenticated", False)) else None),
+        asset_symbol=asset_symbol.upper(), interval=interval, horizon=int(horizon), status="pending",
+    ).exists():
+        return
     try:
         PredictionRecord.objects.create(
             asset=asset,

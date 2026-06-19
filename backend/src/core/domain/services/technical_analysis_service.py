@@ -646,10 +646,25 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
                 "message": "Una sola clase en el objetivo; no hay nada que predecir."}
 
-    def _make_model() -> "RandomForestClassifier":
+    def _rf() -> "RandomForestClassifier":
         return RandomForestClassifier(
-            n_estimators=200, max_depth=6, min_samples_leaf=8,
+            n_estimators=150, max_depth=6, min_samples_leaf=8,
             class_weight="balanced", random_state=42, n_jobs=-1,
+        )
+
+    def _make_model():
+        # Ensemble por votación blanda: combina familias de modelos con sesgos
+        # distintos (bosque, boosting, lineal) → predicciones más robustas que
+        # un único modelo. La regresión logística va escalada en un pipeline.
+        from sklearn.ensemble import GradientBoostingClassifier, VotingClassifier
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+        gb = GradientBoostingClassifier(n_estimators=80, max_depth=3, random_state=42)
+        lr = make_pipeline(StandardScaler(),
+                           LogisticRegression(max_iter=1000, class_weight="balanced"))
+        return VotingClassifier(
+            [("rf", _rf()), ("gb", gb), ("lr", lr)], voting="soft",
         )
 
     # ── Evaluación walk-forward (out-of-sample, respeta el tiempo) ──
@@ -684,8 +699,8 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     brier = float(brier_score_loss(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
 
     # ── Modelo final con TODO el histórico → predicción de la vela actual ──
-    # Importancias desde un RF plano (CalibratedClassifierCV no las expone).
-    imp_model = _make_model().fit(X, y)
+    # Importancias desde un RF plano (ni el ensemble ni el calibrador las exponen).
+    imp_model = _rf().fit(X, y)
     latest = feat_all.replace([np.inf, -np.inf], np.nan).dropna()
     X_latest = latest.iloc[-1:][feature_cols].values
 
@@ -720,7 +735,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         "confidence": round(float(max(proba)), 4),
         "prob_up": round(float(proba[1]), 4),
         "horizon": horizon,
-        "model": "RandomForest calibrado (walk-forward)" if calibrated else "RandomForest (walk-forward)",
+        "model": "Ensemble (RF+GB+LR) calibrado, walk-forward" if calibrated else "Ensemble (RF+GB+LR), walk-forward",
         "calibrated": calibrated,
         "brier_score": round(brier, 4) if brier is not None else None,
         # cv_accuracy se mantiene por compatibilidad, ahora es la precisión OOS honesta.

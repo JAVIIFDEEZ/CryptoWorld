@@ -89,3 +89,13 @@ class TestCalibration:
         # La confianza calibrada es una probabilidad válida
         assert 0.5 <= r["confidence"] <= 1.0
         assert r["prob_up"] is not None
+
+
+class TestEnsemble:
+
+    @pytest.mark.unit
+    def test_model_is_voting_ensemble(self):
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert "Ensemble" in r["model"] and "RF+GB+LR" in r["model"]
+        # Sigue exponiendo importancias (desde el RF interno)
+        assert len(r["features_importance"]) >= 3
