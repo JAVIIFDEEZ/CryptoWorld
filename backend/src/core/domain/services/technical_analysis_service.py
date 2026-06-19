@@ -719,6 +719,29 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     top_features = sorted(zip(feature_cols, imp_model.feature_importances_),
                           key=lambda x: x[1], reverse=True)[:8]
 
+    # ── Explicabilidad LOCAL de esta predicción (atribución por oclusión) ──
+    # Para esta vela concreta, ¿qué features empujan la probabilidad alcista?
+    # Se sustituye cada feature por su valor "neutro" (mediana histórica) y se
+    # mide cuánto cae prob_up: la diferencia es la contribución de esa feature.
+    # Es atribución por oclusión sobre el RF (rápida y determinista); no es SHAP,
+    # pero da la dirección y magnitud del aporte de cada señal a ESTA decisión.
+    drivers = []
+    try:
+        base_prob = float(imp_model.predict_proba(X_latest)[0, 1])
+        neutral = np.median(X, axis=0)
+        contribs = []
+        for j in range(len(feature_cols)):
+            occ = X_latest.copy()
+            occ[0, j] = neutral[j]
+            p = float(imp_model.predict_proba(occ)[0, 1])
+            contribs.append((feature_cols[j], round(base_prob - p, 4)))
+        drivers = [
+            {"feature": name, "contribution": contrib}
+            for name, contrib in sorted(contribs, key=lambda c: abs(c[1]), reverse=True)[:6]
+        ]
+    except Exception:  # noqa: BLE001 — la explicabilidad nunca debe romper la predicción
+        drivers = []
+
     # Veredicto honesto: ¿hay edge fuera de muestra?
     if edge >= 0.04 and oos_accuracy > 0.5:
         verdict = "EDGE"
@@ -757,6 +780,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         "features_importance": [
             {"feature": name, "importance": round(float(imp), 4)} for name, imp in top_features
         ],
+        "drivers": drivers,
         "disclaimer": "Predicción estadística evaluada fuera de muestra (walk-forward). "
                       "No constituye consejo financiero.",
     }

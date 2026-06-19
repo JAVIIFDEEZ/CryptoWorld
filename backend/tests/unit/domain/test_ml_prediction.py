@@ -99,3 +99,30 @@ class TestEnsemble:
         assert "Ensemble" in r["model"] and "RF+GB+LR" in r["model"]
         # Sigue exponiendo importancias (desde el RF interno)
         assert len(r["features_importance"]) >= 3
+
+
+class TestLocalExplainability:
+    """Atribución por oclusión: por qué el modelo decide ESTA vela."""
+
+    @pytest.mark.unit
+    def test_drivers_present_and_well_formed(self):
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert "drivers" in r and isinstance(r["drivers"], list)
+        assert 1 <= len(r["drivers"]) <= 6
+        for d in r["drivers"]:
+            assert set(d.keys()) == {"feature", "contribution"}
+            assert d["feature"] in [f["feature"] for f in r["features_importance"]] or isinstance(d["feature"], str)
+            assert isinstance(d["contribution"], float)
+
+    @pytest.mark.unit
+    def test_drivers_sorted_by_absolute_contribution(self):
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        mags = [abs(d["contribution"]) for d in r["drivers"]]
+        assert mags == sorted(mags, reverse=True)
+
+    @pytest.mark.unit
+    def test_drivers_deterministic(self):
+        df = _df(_trend_cycle())
+        a = predict_price_direction(df, horizon=5)
+        b = predict_price_direction(df, horizon=5)
+        assert a["drivers"] == b["drivers"]
