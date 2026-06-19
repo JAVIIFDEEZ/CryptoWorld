@@ -28,6 +28,7 @@ from core.domain.services.strategy_spec import (
     OSCILLATORS,
     THRESHOLD_OPS,
     _MAX_CONDITIONS,
+    _random_regime,
     _random_risk,
     _random_sizing,
     jitter_params,
@@ -164,6 +165,17 @@ def _mutate_sizing(spec: dict, rng: np.random.Generator) -> dict:
     return out
 
 
+def _mutate_regime(spec: dict, rng: np.random.Generator) -> dict:
+    """Evoluciona el filtro de régimen: exigir tendencia (ADX) para entrar, o no."""
+    out = copy.deepcopy(spec)
+    new_regime = _random_regime(rng)
+    if new_regime:
+        out["regime"] = new_regime
+    else:
+        out.pop("regime", None)              # quitar el filtro de régimen
+    return out
+
+
 _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_condition_params,
     _mutate_threshold,
@@ -174,6 +186,7 @@ _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_remove_condition,
     _mutate_risk,
     _mutate_sizing,
+    _mutate_regime,
 ]
 
 

@@ -222,3 +222,35 @@ class TestVolumeIndicators:
         }
         sig = ss.compile_signals(df, spec)   # no debe lanzar con volumen nulo
         assert not np.any(np.isnan(sig))
+
+
+class TestRegimeGate:
+    """Filtro de régimen: entrar solo si hay tendencia (ADX ≥ umbral)."""
+
+    @pytest.mark.unit
+    def test_regime_gate_reduces_or_keeps_entries(self):
+        df = _df(n=300)
+        base = {
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "lt", "threshold": 55.0}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "gt", "threshold": 70.0}]},
+        }
+        gated = {**base, "regime": {"adx_min": 30.0}}
+        assert ss.validate_spec(gated)
+        entries_base = int((ss.compile_signals(df, base) == 1).sum())
+        entries_gated = int((ss.compile_signals(df, gated) == 1).sum())
+        # El filtro nunca añade entradas; solo puede quitarlas (exige tendencia).
+        assert entries_gated <= entries_base
+
+    @pytest.mark.unit
+    def test_out_of_range_regime_rejected(self):
+        spec = {
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "lt", "threshold": 30.0}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "gt", "threshold": 70.0}]},
+            "regime": {"adx_min": 99.0},  # fuera de rango
+        }
+        assert not ss.validate_spec(spec)
+        assert "ADX≥" in ss.describe_spec({**spec, "regime": {"adx_min": 25.0}})

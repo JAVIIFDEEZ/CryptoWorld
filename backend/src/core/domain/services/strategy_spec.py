@@ -220,8 +220,21 @@ def _random_sizing(rng: np.random.Generator) -> dict | None:
     return {"mode": "risk", "risk_pct": round(float(rng.uniform(lo, hi)), 4)}
 
 
+# Filtro de régimen: ADX mínimo (con su ventana fija) para permitir entradas.
+REGIME_ADX_RANGE = (15.0, 35.0)
+REGIME_ADX_WINDOW = 14
+
+
+def _random_regime(rng: np.random.Generator) -> dict | None:
+    """Filtro de régimen aleatorio (o None): exigir tendencia (ADX≥x) para entrar."""
+    if rng.random() < 0.65:
+        return None
+    lo, hi = REGIME_ADX_RANGE
+    return {"adx_min": round(float(rng.uniform(lo, hi)), 1)}
+
+
 def random_spec(rng: np.random.Generator) -> dict:
-    """Genera un StrategySpec aleatorio legal (riesgo y sizing opcionales)."""
+    """Genera un StrategySpec aleatorio legal (riesgo, sizing y régimen opcionales)."""
     spec = {"entry": _random_block(rng), "exit": _random_block(rng)}
     risk = _random_risk(rng)
     if risk:
@@ -229,6 +242,9 @@ def random_spec(rng: np.random.Generator) -> dict:
     sizing = _random_sizing(rng)
     if sizing:
         spec["sizing"] = sizing
+    regime = _random_regime(rng)
+    if regime:
+        spec["regime"] = regime
     return spec
 
 
@@ -312,11 +328,23 @@ def _validate_sizing(sizing) -> bool:
     return mode == "full"
 
 
+def _validate_regime(regime) -> bool:
+    if regime is None:
+        return True
+    if not isinstance(regime, dict) or set(regime) != {"adx_min"}:
+        return False
+    lo, hi = REGIME_ADX_RANGE
+    v = regime["adx_min"]
+    return isinstance(v, (int, float)) and lo - 1e-9 <= v <= hi + 1e-9
+
+
 def validate_spec(spec: dict) -> bool:
     """True si el spec es estructuralmente legal y todos sus bloques válidos."""
     if not isinstance(spec, dict) or "entry" not in spec or "exit" not in spec:
         return False
     if not _validate_risk(spec.get("risk")) or not _validate_sizing(spec.get("sizing")):
+        return False
+    if not _validate_regime(spec.get("regime")):
         return False
     return _validate_block(spec["entry"]) and _validate_block(spec["exit"])
 
@@ -402,6 +430,14 @@ def compile_signals(df: pd.DataFrame, spec: dict) -> np.ndarray:
                      spec["entry"]["combine"])
     exit_ = _combine([_condition_bool(df, c, cache) for c in spec["exit"]["conditions"]],
                      spec["exit"]["combine"])
+    # Filtro de régimen: solo se permite ENTRAR si hay tendencia (ADX ≥ umbral).
+    # No afecta a las salidas: se debe poder salir en cualquier régimen.
+    regime = spec.get("regime")
+    if regime:
+        adx = _series(df, "ADX", {"window": REGIME_ADX_WINDOW}, cache)
+        with np.errstate(invalid="ignore"):
+            trending = np.where(np.isnan(adx), False, adx >= regime["adx_min"])
+        entry = entry & trending
     signals = np.zeros(n)
     signals[exit_] = -1
     signals[entry & ~exit_] = 1
@@ -494,7 +530,9 @@ def describe_spec(spec: dict) -> str:
     def block(b):
         sep = " Y " if b["combine"] == "AND" else " O "
         return sep.join(_describe_condition(c) for c in b["conditions"])
-    return (f"ENTRAR si {block(spec['entry'])}; SALIR si {block(spec['exit'])}"
+    regime = spec.get("regime")
+    regime_txt = f" (solo si ADX≥{regime['adx_min']})" if regime else ""
+    return (f"ENTRAR si {block(spec['entry'])}{regime_txt}; SALIR si {block(spec['exit'])}"
             f"{_describe_risk(spec.get('risk'))}{_describe_sizing(spec.get('sizing'))}")
 
 
@@ -561,6 +599,11 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
         lo, hi = SIZING_RISK_PCT_RANGE
         span = (hi - lo) * 0.1
         sizing["risk_pct"] = round(float(min(hi, max(lo, sizing["risk_pct"] + rng.uniform(-span, span)))), 4)
+    # Perturbar el filtro de régimen (umbral de ADX)
+    if out.get("regime"):
+        lo, hi = REGIME_ADX_RANGE
+        span = (hi - lo) * 0.1
+        out["regime"]["adx_min"] = round(float(min(hi, max(lo, out["regime"]["adx_min"] + rng.uniform(-span, span)))), 1)
     return out
 
 
