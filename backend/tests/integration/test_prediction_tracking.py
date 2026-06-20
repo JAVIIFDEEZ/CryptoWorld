@@ -12,7 +12,8 @@ from django.utils import timezone
 
 from core.application.use_cases.ohlcv_fetcher import OhlcvFetchResult
 from core.application.use_cases.track_predictions import (
-    PredictionTrackRecordUseCase, ResolvePredictionsUseCase, log_prediction,
+    PredictionMonitoringUseCase, PredictionTrackRecordUseCase,
+    ResolvePredictionsUseCase, log_prediction,
 )
 
 
@@ -123,3 +124,63 @@ class TestTrackRecord:
         resp = authenticated_client.get("/api/analysis/predictions/")
         assert resp.status_code == 200
         assert set(resp.data) >= {"total", "resolved", "pending", "correct", "accuracy", "by_verdict", "recent"}
+
+
+class TestMonitoring:
+
+    def _resolved(self, btc, user, n, n_correct, oos, resolved_at=None):
+        """Crea `n` predicciones resueltas (`n_correct` aciertos) con OOS prometida."""
+        from core.infrastructure.persistence.models import PredictionRecord
+        base = resolved_at or timezone.now()
+        for i in range(n):
+            PredictionRecord.objects.create(
+                asset=btc, asset_symbol="BTC", interval="1d", horizon=5,
+                predicted="ALCISTA", prob_up=0.6, confidence=0.6, price_at_prediction=100.0,
+                oos_accuracy=oos, verdict="EDGE", owner=user,
+                status="correct" if i < n_correct else "incorrect",
+                resolve_at=base, resolved_at=base + timedelta(minutes=i),
+            )
+
+    @pytest.mark.integration
+    def test_insufficient_sample(self, btc, test_user):
+        self._resolved(btc, test_user, n=4, n_correct=3, oos=0.6)
+        m = PredictionMonitoringUseCase().execute(owner=test_user)
+        assert m["status"] == "insufficient"
+        assert m["n_resolved"] == 4
+
+    @pytest.mark.integration
+    def test_ok_when_realized_matches_expected(self, btc, test_user):
+        # 12 resueltas, 7 aciertos (~58%), prometido 56% → en línea (ok)
+        self._resolved(btc, test_user, n=12, n_correct=7, oos=0.56)
+        m = PredictionMonitoringUseCase().execute(owner=test_user)
+        assert m["status"] == "ok"
+        assert m["realized_accuracy"] == pytest.approx(7 / 12, abs=1e-3)
+        assert m["expected_accuracy"] == pytest.approx(0.56, abs=1e-3)
+        assert m["gap"] == pytest.approx(7 / 12 - 0.56, abs=1e-3)
+
+    @pytest.mark.integration
+    def test_drift_when_realized_far_below_expected(self, btc, test_user):
+        # 12 resueltas, 3 aciertos (25%), prometido 60% → brecha -35% → drift
+        self._resolved(btc, test_user, n=12, n_correct=3, oos=0.60)
+        m = PredictionMonitoringUseCase().execute(owner=test_user)
+        assert m["status"] == "drift"
+        assert m["gap"] < m["thresholds"]["drift"]
+        assert m["by_asset"]["BTC"]["n"] == 12
+
+    @pytest.mark.integration
+    def test_series_has_buckets(self, btc, test_user):
+        self._resolved(btc, test_user, n=16, n_correct=8, oos=0.55)
+        m = PredictionMonitoringUseCase().execute(owner=test_user, buckets=4)
+        assert 1 <= len(m["series"]) <= 4
+        assert sum(b["n"] for b in m["series"]) == 16
+
+    @pytest.mark.integration
+    def test_endpoint_requires_auth(self, api_client):
+        assert api_client.get("/api/analysis/predictions/monitoring/").status_code == 401
+
+    @pytest.mark.integration
+    def test_endpoint_returns_monitoring(self, authenticated_client, btc):
+        resp = authenticated_client.get("/api/analysis/predictions/monitoring/")
+        assert resp.status_code == 200
+        assert set(resp.data) >= {"status", "expected_accuracy", "realized_accuracy", "gap",
+                                  "n_resolved", "series", "by_asset", "thresholds"}

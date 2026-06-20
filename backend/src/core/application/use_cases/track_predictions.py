@@ -177,3 +177,102 @@ class PredictionTrackRecordUseCase:
             "by_verdict": by_verdict,
             "recent": recent,
         }
+
+
+class PredictionMonitoringUseCase:
+    """Monitorización de *drift* del modelo: compara la precisión REALIZADA en
+    vivo contra la precisión out-of-sample que el modelo prometió (OOS), y la
+    sigue en el tiempo para detectar degradación.
+
+    Buenas prácticas de model monitoring:
+      · *Expected vs realized*: la media de `oos_accuracy` registrada es lo que el
+        modelo prometía; la precisión realizada es lo que de verdad logró. Una
+        brecha negativa sostenida es la señal canónica de degradación.
+      · Serie temporal por ventanas de resolución: permite ver si la precisión
+        cae con el tiempo (concept drift) en lugar de un único número agregado.
+      · Estado accionable (ok / watch / drift) con umbrales explícitos para poder
+        disparar una alerta o una reentrenamiento/reoptimización.
+    """
+
+    # Brecha (realizado − prometido) a partir de la cual se alerta.
+    _WATCH_GAP = -0.08
+    _DRIFT_GAP = -0.15
+    _MIN_RESOLVED = 10   # por debajo de esto no hay muestra suficiente para juzgar
+
+    def execute(self, owner=None, buckets: int = 8) -> dict:
+        from core.infrastructure.persistence.models import PredictionRecord
+
+        qs = PredictionRecord.objects.all()
+        if owner is not None and getattr(owner, "is_authenticated", False):
+            qs = qs.filter(owner=owner)
+
+        resolved = list(
+            qs.filter(status__in=["correct", "incorrect"], resolved_at__isnull=False)
+            .order_by("resolved_at")
+            .values("status", "verdict", "oos_accuracy", "asset_symbol", "resolved_at")
+        )
+        n = len(resolved)
+
+        # Precisión prometida (media de las OOS registradas) vs realizada en vivo.
+        oos_vals = [r["oos_accuracy"] for r in resolved if r["oos_accuracy"] is not None]
+        expected_accuracy = round(sum(oos_vals) / len(oos_vals), 4) if oos_vals else None
+        n_correct = sum(1 for r in resolved if r["status"] == "correct")
+        realized_accuracy = round(n_correct / n, 4) if n else None
+        gap = (round(realized_accuracy - expected_accuracy, 4)
+               if (expected_accuracy is not None and realized_accuracy is not None) else None)
+
+        # Estado de drift accionable.
+        if n < self._MIN_RESOLVED or gap is None:
+            status_ = "insufficient"
+            message = f"Aún no hay muestra suficiente ({n}/{self._MIN_RESOLVED} resueltas) para juzgar el drift."
+        elif gap <= self._DRIFT_GAP:
+            status_ = "drift"
+            message = (f"Degradación: el modelo acierta {realized_accuracy:.0%} en vivo, "
+                       f"{abs(gap):.0%} por debajo de lo prometido. Conviene reoptimizar/reentrenar.")
+        elif gap <= self._WATCH_GAP:
+            status_ = "watch"
+            message = (f"Vigilancia: la precisión en vivo ({realized_accuracy:.0%}) cae "
+                       f"{abs(gap):.0%} respecto a lo esperado. Seguir de cerca.")
+        else:
+            status_ = "ok"
+            message = (f"Estable: la precisión en vivo ({realized_accuracy:.0%}) está en línea "
+                       f"con lo prometido fuera de muestra.")
+
+        # Serie temporal: precisión por ventanas iguales de resoluciones (orden cronológico).
+        series = []
+        if n:
+            size = max(1, -(-n // max(1, buckets)))  # ceil division
+            for i in range(0, n, size):
+                chunk = resolved[i:i + size]
+                c = sum(1 for r in chunk if r["status"] == "correct")
+                series.append({
+                    "from": chunk[0]["resolved_at"].isoformat(),
+                    "to": chunk[-1]["resolved_at"].isoformat(),
+                    "n": len(chunk),
+                    "accuracy": round(c / len(chunk), 4),
+                })
+
+        # Precisión realizada por activo (¿en qué mercados funciona el modelo?).
+        by_asset: dict = {}
+        for r in resolved:
+            sym = r["asset_symbol"]
+            agg = by_asset.setdefault(sym, {"n": 0, "correct": 0})
+            agg["n"] += 1
+            agg["correct"] += int(r["status"] == "correct")
+        by_asset = {
+            sym: {"n": a["n"], "accuracy": round(a["correct"] / a["n"], 4)}
+            for sym, a in sorted(by_asset.items(), key=lambda kv: kv[1]["n"], reverse=True)
+        }
+
+        return {
+            "status": status_,
+            "message": message,
+            "expected_accuracy": expected_accuracy,
+            "realized_accuracy": realized_accuracy,
+            "gap": gap,
+            "n_resolved": n,
+            "min_sample": self._MIN_RESOLVED,
+            "series": series,
+            "by_asset": by_asset,
+            "thresholds": {"watch": self._WATCH_GAP, "drift": self._DRIFT_GAP},
+        }

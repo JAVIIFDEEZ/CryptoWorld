@@ -1311,6 +1311,27 @@ class PredictionTrackRecordView(APIView):
         )
 
 
+class PredictionMonitoringView(APIView):
+    """
+    GET /api/analysis/predictions/monitoring/ — Monitorización de *drift* del
+    modelo: precisión prometida (OOS) vs realizada en vivo, serie temporal de
+    precisión y estado de alerta (ok/watch/drift) para disparar reoptimización.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.track_predictions import PredictionMonitoringUseCase
+
+        try:
+            buckets = min(max(int(request.query_params.get("buckets", 8)), 2), 24)
+        except (TypeError, ValueError):
+            buckets = 8
+        return Response(
+            PredictionMonitoringUseCase().execute(owner=request.user, buckets=buckets),
+            status=status.HTTP_200_OK,
+        )
+
+
 class DetectPatternsView(APIView):
     """
     POST /api/analysis/patterns/ — Detección de patrones de velas.

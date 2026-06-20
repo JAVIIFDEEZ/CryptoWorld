@@ -77,6 +77,12 @@ export interface FeatureImportance {
   importance: number
 }
 
+// Explicabilidad local: contribución de cada feature a ESTA predicción
+export interface PredictionDriver {
+  feature: string
+  contribution: number
+}
+
 export interface PredictionResult {
   prediction: string
   confidence: number
@@ -101,6 +107,7 @@ export interface PredictionResult {
   verdict?: 'EDGE' | 'WEAK' | 'NO_EDGE'
   verdict_text?: string
   features_importance?: FeatureImportance[]
+  drivers?: PredictionDriver[]
   disclaimer?: string
   asset_symbol?: string
   interval?: string
@@ -132,6 +139,27 @@ export interface PredictionTrackRecord {
   accuracy: number | null
   by_verdict: Record<string, { n: number; accuracy: number }>
   recent: PredictionTrackRecordItem[]
+}
+
+// Monitorización de drift del modelo (prometido OOS vs realizado en vivo)
+export interface PredictionMonitoringBucket {
+  from: string
+  to: string
+  n: number
+  accuracy: number
+}
+
+export interface PredictionMonitoring {
+  status: 'ok' | 'watch' | 'drift' | 'insufficient'
+  message: string
+  expected_accuracy: number | null
+  realized_accuracy: number | null
+  gap: number | null
+  n_resolved: number
+  min_sample: number
+  series: PredictionMonitoringBucket[]
+  by_asset: Record<string, { n: number; accuracy: number }>
+  thresholds: { watch: number; drift: number }
 }
 
 // Patrones
@@ -252,6 +280,12 @@ export const analysisService = {
   /** Historial real de aciertos de las predicciones (bucle de mejora continua). */
   async getPredictionTrackRecord(): Promise<PredictionTrackRecord> {
     const { data } = await apiClient.get<PredictionTrackRecord>('/analysis/predictions/')
+    return data
+  },
+
+  /** Monitorización de drift del modelo (prometido OOS vs realizado en vivo). */
+  async getPredictionMonitoring(): Promise<PredictionMonitoring> {
+    const { data } = await apiClient.get<PredictionMonitoring>('/analysis/predictions/monitoring/')
     return data
   },
 

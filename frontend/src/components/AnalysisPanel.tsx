@@ -24,6 +24,7 @@ import {
 } from '@/services/analysisService'
 import InfoTooltip from '@/components/ui/InfoTooltip'
 import IndicatorsRadar from '@/components/analysis/IndicatorsRadar'
+import PredictionMonitoringPanel from '@/components/analysis/PredictionMonitoringPanel'
 
 // ── Tipos locales ────────────────────────────────────────────────
 
@@ -755,6 +756,44 @@ function PredictionTrackRecordPanel() {
   )
 }
 
+function PredictionDrivers({ data }: { data: PredictionResult }) {
+  const drivers = data.drivers ?? []
+  if (drivers.length === 0) return null
+  const max = Math.max(...drivers.map((d) => Math.abs(d.contribution)), 1e-6)
+  return (
+    <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3">
+      <h4 className="text-xs font-semibold text-slate-300 mb-1">Por qué esta predicción</h4>
+      <p className="text-[10px] text-slate-500 mb-2">
+        Contribución de cada señal a la probabilidad alcista de ESTA vela (atribución por oclusión).
+        Verde = empuja a subida; rojo = a bajada.
+      </p>
+      <div className="space-y-1.5">
+        {drivers.map((d) => {
+          const pos = d.contribution >= 0
+          const w = Math.min((Math.abs(d.contribution) / max) * 100, 100)
+          return (
+            <div key={d.feature} className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-300 w-28 truncate" title={d.feature}>{d.feature}</span>
+              <div className="flex-1 flex items-center">
+                <div className="w-1/2 flex justify-end">
+                  {!pos && <div className="bg-red-500/80 h-2 rounded-l-full" style={{ width: `${w}%` }} />}
+                </div>
+                <div className="w-px h-3 bg-slate-600" />
+                <div className="w-1/2">
+                  {pos && <div className="bg-green-500/80 h-2 rounded-r-full" style={{ width: `${w}%` }} />}
+                </div>
+              </div>
+              <span className={`text-[10px] font-mono w-14 text-right ${pos ? 'text-green-400' : 'text-red-400'}`}>
+                {pos ? '+' : ''}{(d.contribution * 100).toFixed(1)}%
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function PredictTab({ data }: { data: PredictionResult | null }) {
   const [showHow, setShowHow] = useState(false)
 
@@ -767,7 +806,7 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
           </svg>
         }
         title="Predicción ML de dirección de precio"
-        description="Modelo Random Forest entrenado con indicadores técnicos como features. Predice si el precio subirá o bajará en las próximas N velas. Validado con cross-validation de 5 folds."
+        description="Ensemble (Random Forest + Gradient Boosting + Regresión logística) con indicadores técnicos como features. Predice si el precio subirá o bajará en las próximas N velas, validado walk-forward (out-of-sample) con probabilidad calibrada."
       />
     )
   }
@@ -850,8 +889,14 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
         </div>
       )}
 
+      {/* Explicabilidad local: por qué el modelo decide ESTA vela */}
+      {data.drivers && data.drivers.length > 0 && <PredictionDrivers data={data} />}
+
       {/* Historial real verificado (bucle de mejora continua) */}
       <PredictionTrackRecordPanel />
+
+      {/* Monitorización de drift: prometido OOS vs realizado en vivo */}
+      <PredictionMonitoringPanel />
 
       {/* ¿Cómo funciona? — colapsable */}
       <div className="border border-slate-700 rounded-lg overflow-hidden">
@@ -867,7 +912,9 @@ function PredictTab({ data }: { data: PredictionResult | null }) {
         </button>
         {showHow && (
           <div className="px-4 py-3 bg-slate-900/40 border-t border-slate-700 space-y-2 text-[11px] text-slate-400 leading-relaxed">
-            <p><span className="text-slate-300 font-medium">Algoritmo:</span> Random Forest — ensemble de árboles de decisión. Combina múltiples modelos débiles para reducir overfitting y mejorar la generalización.</p>
+            <p><span className="text-slate-300 font-medium">Algoritmo:</span> ensemble por votación blanda de Random Forest, Gradient Boosting y regresión logística. Combina familias de modelos con sesgos distintos para reducir overfitting y mejorar la generalización.</p>
+            <p><span className="text-slate-300 font-medium">Explicabilidad local:</span> para cada predicción se mide, por oclusión, cuánto aporta cada señal a la probabilidad de subida de esa vela concreta (panel «Por qué esta predicción»).</p>
+            <p><span className="text-slate-300 font-medium">Monitorización de drift:</span> se compara la precisión prometida fuera de muestra con la realizada en vivo; si cae de forma sostenida, el panel avisa para reoptimizar.</p>
             <p><span className="text-slate-300 font-medium">Features:</span> Indicadores técnicos calculados sobre las últimas N velas: RSI, MACD, Bollinger, ATR, ADX, EMA, volumen relativo y variaciones de precio.</p>
             <p><span className="text-slate-300 font-medium">Target:</span> Variable binaria — ¿sube o baja el precio en las próximas {data.horizon} velas?</p>
             <p><span className="text-slate-300 font-medium">Validación walk-forward:</span> se entrena en el pasado y se valida en el futuro (TimeSeriesSplit), nunca al revés — así la precisión OOS es honesta, sin fuga del futuro. El <span className="text-slate-300">edge</span> es la ventaja sobre predecir siempre la clase mayoritaria: si es ~0, no hay señal real aunque la precisión parezca alta.</p>
