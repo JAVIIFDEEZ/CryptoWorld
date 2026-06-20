@@ -472,3 +472,28 @@ def evaluate_monitored_strategies(self) -> dict:
     except Exception as exc:
         logger.error("evaluate_monitored_strategies error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.evaluate_paper_trading",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+)
+def evaluate_paper_trading(self) -> dict:
+    """
+    Reevalúa las carteras de paper trading activas y ejecuta sus señales (abrir/
+    cerrar posición con costes), registrando el P&L realizado. Verifica hacia
+    delante, en vivo y sin riesgo, las estrategias generadas. Programada por
+    celery beat (cada 15 min).
+    """
+    try:
+        from core.application.use_cases.paper_trading import EvaluatePaperTradingUseCase
+
+        result = EvaluatePaperTradingUseCase().execute()
+        logger.info("evaluate_paper_trading: %d carteras, %d operaciones",
+                    result["evaluated"], result["trades"])
+        return result
+    except Exception as exc:
+        logger.error("evaluate_paper_trading error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)

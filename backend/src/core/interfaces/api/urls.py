@@ -156,6 +156,16 @@ urlpatterns = [
         views.StrategySignalView.as_view(),
         name="strategies-signal",
     ),
+    path(
+        "strategies/paper/",
+        views.PaperTradingView.as_view(),
+        name="strategies-paper",
+    ),
+    path(
+        "strategies/paper/<int:account_id>/",
+        views.PaperTradingDetailView.as_view(),
+        name="strategies-paper-detail",
+    ),
 
     # ── Market Intelligence ─────────────────────────────────────────
     path("market/overview/", views.MarketOverviewView.as_view(), name="market-overview"),

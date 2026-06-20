@@ -1724,6 +1724,82 @@ class RecentSignalEventsView(APIView):
         return Response({"count": len(events), "results": events}, status=status.HTTP_200_OK)
 
 
+class PaperTradingView(APIView):
+    """
+    GET  /api/strategies/paper/ — Carteras de paper trading del usuario.
+    POST /api/strategies/paper/ — Lanza una cartera virtual que sigue una
+         estrategia generada. Body: {"strategy_id": int, "initial_capital"?: float}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.paper_trading import PaperTradingListUseCase
+
+        return Response(
+            PaperTradingListUseCase().execute(owner=request.user), status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        from core.infrastructure.persistence.models import PaperTradingAccount, StrategyDefinition
+
+        strategy_id = request.data.get("strategy_id")
+        if not strategy_id:
+            return Response({"error": "Falta strategy_id."}, status=status.HTTP_400_BAD_REQUEST)
+        strat = StrategyDefinition.objects.select_related("asset").filter(id=strategy_id).first()
+        if strat is None:
+            return Response({"error": "Estrategia no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        if not strat.asset:
+            return Response({"error": "La estrategia no tiene activo asociado."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            capital = float(request.data.get("initial_capital", 10000.0))
+        except (TypeError, ValueError):
+            capital = 10000.0
+        capital = min(max(capital, 100.0), 1_000_000.0)
+
+        # Reactivar si el usuario ya seguía esta estrategia (evita duplicados).
+        existing = PaperTradingAccount.objects.filter(
+            owner=request.user, strategy=strat, is_active=True,
+        ).first()
+        if existing:
+            from core.application.use_cases.paper_trading import _serialize_account
+            return Response(_serialize_account(existing), status=status.HTTP_200_OK)
+
+        acc = PaperTradingAccount.objects.create(
+            strategy=strat, owner=request.user,
+            asset_symbol=strat.asset.symbol, interval=strat.interval,
+            initial_capital=capital, cash=capital,
+        )
+        from core.application.use_cases.paper_trading import _serialize_account
+        return Response(_serialize_account(acc), status=status.HTTP_201_CREATED)
+
+
+class PaperTradingDetailView(APIView):
+    """
+    GET    /api/strategies/paper/<id>/ — Detalle de una cartera con su historial.
+    DELETE /api/strategies/paper/<id>/ — Detiene la cartera (deja de operar).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, account_id: int):
+        from core.application.use_cases.paper_trading import PaperTradingDetailUseCase
+
+        data = PaperTradingDetailUseCase().execute(owner=request.user, account_id=account_id)
+        if data is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(data, status=status.HTTP_200_OK)
+
+    def delete(self, request, account_id: int):
+        from core.infrastructure.persistence.models import PaperTradingAccount
+
+        acc = PaperTradingAccount.objects.filter(id=account_id, owner=request.user).first()
+        if acc is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        acc.is_active = False
+        acc.save(update_fields=["is_active", "updated_at"])
+        return Response({"id": acc.id, "is_active": False}, status=status.HTTP_200_OK)
+
+
 class AssetDetailInfoView(APIView):
     """
     GET /api/assets/<symbol>/info/ — Información de proyecto de un activo.

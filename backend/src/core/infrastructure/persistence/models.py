@@ -639,3 +639,109 @@ class PredictionRecord(models.Model):
 
     def __str__(self) -> str:
         return f"{self.asset_symbol} {self.predicted} h{self.horizon} ({self.status})"
+
+
+class PaperTradingAccount(models.Model):
+    """
+    Cartera virtual (paper trading) que sigue automáticamente una estrategia
+    generada: invierte capital ficticio según sus señales de compra/venta y
+    registra el P&L REALIZADO operación a operación.
+
+    Cierra el bucle entre el generador y la operativa: el backtest dice cómo se
+    habría comportado en el pasado; el paper trading lo verifica hacia delante con
+    datos en vivo, sin arriesgar dinero. Una tarea periódica reevalúa la señal en
+    la última vela y, si cambia, abre o cierra la posición aplicando costes
+    (comisión + slippage) coherentes con el motor de backtest.
+    """
+
+    strategy = models.ForeignKey(
+        StrategyDefinition, on_delete=models.CASCADE, related_name="paper_accounts",
+    )
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="paper_accounts",
+        null=True, blank=True,
+    )
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    interval = models.CharField(max_length=10, default="1d")
+
+    initial_capital = models.FloatField(default=10000.0)
+    cash = models.FloatField(default=10000.0)          # efectivo disponible
+    units = models.FloatField(default=0.0)             # tamaño de la posición abierta (0 = en liquidez)
+    entry_price = models.FloatField(null=True, blank=True)   # precio medio de entrada (con coste)
+    last_price = models.FloatField(null=True, blank=True)    # último cierre marcado a mercado
+    realized_pnl = models.FloatField(default=0.0)      # P&L realizado acumulado (moneda)
+
+    commission_bps = models.FloatField(default=10.0)   # coste por operación (puntos básicos)
+    slippage_bps = models.FloatField(default=5.0)
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    trades_count = models.PositiveIntegerField(default=0)   # operaciones cerradas (round-trips)
+    wins = models.PositiveIntegerField(default=0)
+    last_signal = models.CharField(max_length=8, default="HOLD")  # BUY | SELL | HOLD
+    last_eval_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "paper_trading_accounts"
+        verbose_name = "Cartera de Paper Trading"
+        verbose_name_plural = "Carteras de Paper Trading"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["owner", "is_active"]),
+            models.Index(fields=["is_active", "asset_symbol", "interval"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Paper #{self.id} {self.asset_symbol} ({'activa' if self.is_active else 'parada'})"
+
+    @property
+    def position_value(self) -> float:
+        """Valor a mercado de la posición abierta (0 si está en liquidez)."""
+        if self.units and self.last_price:
+            return self.units * self.last_price
+        return 0.0
+
+    @property
+    def equity(self) -> float:
+        """Patrimonio total: efectivo + posición marcada a mercado."""
+        return self.cash + self.position_value
+
+    @property
+    def total_return_pct(self) -> float:
+        """Rentabilidad total sobre el capital inicial (realizado + latente)."""
+        if not self.initial_capital:
+            return 0.0
+        return (self.equity / self.initial_capital - 1.0) * 100.0
+
+
+class PaperTrade(models.Model):
+    """Operación individual (apertura o cierre) de una cartera de paper trading."""
+
+    SIDE_CHOICES = [("BUY", "Compra"), ("SELL", "Venta")]
+
+    account = models.ForeignKey(
+        PaperTradingAccount, on_delete=models.CASCADE, related_name="trades",
+    )
+    side = models.CharField(max_length=4, choices=SIDE_CHOICES)
+    price = models.FloatField()              # precio de cierre de la vela
+    fill_price = models.FloatField()         # precio efectivo tras slippage
+    units = models.FloatField()
+    cost = models.FloatField(default=0.0)    # comisión + slippage aplicados (moneda)
+    cash_after = models.FloatField()
+    equity_after = models.FloatField()
+    pnl = models.FloatField(null=True, blank=True)       # P&L realizado del cierre (moneda)
+    pnl_pct = models.FloatField(null=True, blank=True)   # % sobre el coste de entrada
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "paper_trades"
+        verbose_name = "Operación de Paper Trading"
+        verbose_name_plural = "Operaciones de Paper Trading"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["account", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.side} {self.units:.4f} @ {self.price:.2f}"
