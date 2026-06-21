@@ -265,6 +265,50 @@ export interface SignalEvent {
   created_at: string
 }
 
+// ── Paper trading (cartera virtual que sigue una estrategia) ────────
+export interface PaperAccount {
+  id: number
+  strategy_id: number
+  strategy_name: string | null
+  asset_symbol: string
+  interval: string
+  initial_capital: number
+  cash: number
+  units: number
+  entry_price: number | null
+  last_price: number | null
+  position_value: number
+  equity: number
+  realized_pnl: number
+  total_return_pct: number
+  in_position: boolean
+  is_active: boolean
+  trades_count: number
+  wins: number
+  win_rate: number | null
+  last_signal: 'BUY' | 'SELL' | 'HOLD'
+  last_eval_at: string | null
+  started_at: string
+}
+
+export interface PaperTrade {
+  id: number
+  side: 'BUY' | 'SELL'
+  price: number
+  fill_price: number
+  units: number
+  cost: number
+  cash_after: number
+  equity_after: number
+  pnl: number | null
+  pnl_pct: number | null
+  created_at: string
+}
+
+export interface PaperAccountDetail extends PaperAccount {
+  trades: PaperTrade[]
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const strategyGeneratorService = {
@@ -314,5 +358,32 @@ export const strategyGeneratorService = {
   async listSignalEvents(limit = 30): Promise<SignalEvent[]> {
     const { data } = await apiClient.get<{ count: number; results: SignalEvent[] }>('/strategies/signals/recent/', { params: { limit } })
     return data.results
+  },
+
+  /** Carteras de paper trading del usuario (siguen una estrategia en vivo). */
+  async listPaperAccounts(): Promise<PaperAccount[]> {
+    const { data } = await apiClient.get<{ count: number; results: PaperAccount[] }>('/strategies/paper/')
+    return data.results
+  },
+
+  /** Lanza una cartera virtual que sigue una estrategia generada. */
+  async startPaperAccount(strategyId: number, initialCapital?: number): Promise<PaperAccount> {
+    const { data } = await apiClient.post<PaperAccount>('/strategies/paper/', {
+      strategy_id: strategyId,
+      ...(initialCapital ? { initial_capital: initialCapital } : {}),
+    })
+    return data
+  },
+
+  /** Detalle de una cartera con su historial de operaciones. */
+  async getPaperAccount(accountId: number): Promise<PaperAccountDetail> {
+    const { data } = await apiClient.get<PaperAccountDetail>(`/strategies/paper/${accountId}/`)
+    return data
+  },
+
+  /** Detiene una cartera de paper trading (deja de operar). */
+  async stopPaperAccount(accountId: number): Promise<{ id: number; is_active: boolean }> {
+    const { data } = await apiClient.delete(`/strategies/paper/${accountId}/`)
+    return data
   },
 }

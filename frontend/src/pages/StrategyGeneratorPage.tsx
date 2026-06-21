@@ -22,6 +22,7 @@ import {
 } from '@/services/strategyGeneratorService'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
+import PaperTradingPanel from '@/components/generator/PaperTradingPanel'
 import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
 import ParetoFrontier2D from '@/components/generator/ParetoFrontier2D'
 const ParetoFrontier3D = lazy(() => import('@/components/generator/ParetoFrontier3D'))
@@ -63,6 +64,7 @@ export default function StrategyGeneratorPage() {
   const [history, setHistory] = useState<SavedStrategy[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [signalEvents, setSignalEvents] = useState<SignalEvent[]>([])
+  const [paperKey, setPaperKey] = useState(0)
 
   const pollRef = useRef<number>(0)
   const tickRef = useRef<number>(0)
@@ -256,8 +258,11 @@ export default function StrategyGeneratorPage() {
           </button>
         </div>
 
-        {showHistory && <HistoryStrip items={history} />}
+        {showHistory && <HistoryStrip items={history} onStartPaper={() => setPaperKey((k) => k + 1)} />}
       </div>
+
+      {/* Carteras de paper trading (forward test en vivo de las estrategias) */}
+      <PaperTradingPanel refreshKey={paperKey} />
 
       {/* Señales recientes de estrategias monitorizadas */}
       {signalEvents.length > 0 && <SignalFeed events={signalEvents} />}
@@ -579,15 +584,15 @@ function RejectedList({ report }: Readonly<{ report: GenerationReport }>) {
   )
 }
 
-function HistoryStrip({ items }: Readonly<{ items: SavedStrategy[] }>) {
+function HistoryStrip({ items, onStartPaper }: Readonly<{ items: SavedStrategy[]; onStartPaper: () => void }>) {
   if (!items.length) {
     return <div className="px-4 pb-4 text-xs text-slate-500">Aún no hay estrategias guardadas para este activo.</div>
   }
   return (
     <div className="px-4 pb-4 border-t border-slate-700/50 pt-3">
-      <p className="text-[10px] uppercase text-slate-500 mb-2">Estrategias robustas guardadas · actívalas para recibir su señal</p>
+      <p className="text-[10px] uppercase text-slate-500 mb-2">Estrategias robustas guardadas · actívalas para recibir su señal o síguelas en paper trading</p>
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {items.map((s) => <HistoryCard key={s.id} s={s} />)}
+        {items.map((s) => <HistoryCard key={s.id} s={s} onStartPaper={onStartPaper} />)}
       </div>
     </div>
   )
@@ -625,10 +630,11 @@ function SignalFeed({ events }: Readonly<{ events: SignalEvent[] }>) {
   )
 }
 
-function HistoryCard({ s }: Readonly<{ s: SavedStrategy }>) {
+function HistoryCard({ s, onStartPaper }: Readonly<{ s: SavedStrategy; onStartPaper: () => void }>) {
   const [monitored, setMonitored] = useState(s.is_monitored)
   const [signal, setSignal] = useState<string>(s.last_signal || 'HOLD')
   const [busy, setBusy] = useState(false)
+  const [paperStarted, setPaperStarted] = useState(false)
 
   async function toggle() {
     setBusy(true)
@@ -639,6 +645,15 @@ function HistoryCard({ s }: Readonly<{ s: SavedStrategy }>) {
         const sig = await strategyGeneratorService.getSignal(s.id)
         if (!sig.error) setSignal(sig.signal)
       }
+    } catch { /* ignora */ } finally { setBusy(false) }
+  }
+
+  async function startPaper() {
+    setBusy(true)
+    try {
+      await strategyGeneratorService.startPaperAccount(s.id)
+      setPaperStarted(true)
+      onStartPaper()
     } catch { /* ignora */ } finally { setBusy(false) }
   }
 
@@ -677,6 +692,18 @@ function HistoryCard({ s }: Readonly<{ s: SavedStrategy }>) {
       >
         <span className={`w-1.5 h-1.5 rounded-full ${monitored ? 'bg-blue-400 animate-pulse' : 'bg-slate-600'}`} />
         {monitored ? 'Monitorizando' : 'Activar señal'}
+      </button>
+      <button
+        onClick={startPaper}
+        disabled={busy || paperStarted}
+        title="Sigue esta estrategia con capital ficticio y mide su P&L en vivo"
+        className={`mt-1.5 w-full text-[11px] font-medium rounded-md py-1.5 border transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 ${
+          paperStarted
+            ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40'
+            : 'bg-slate-800 text-slate-400 border-slate-600 hover:text-slate-200'
+        }`}
+      >
+        {paperStarted ? '✓ Paper trading activo' : '▶ Seguir en paper trading'}
       </button>
     </div>
   )
