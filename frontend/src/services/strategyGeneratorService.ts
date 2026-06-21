@@ -309,6 +309,26 @@ export interface PaperAccountDetail extends PaperAccount {
   trades: PaperTrade[]
 }
 
+// ── Mejor estrategia por activo (campeona) con track record en vivo ─
+export interface BestStrategy {
+  strategy_id: number
+  asset_symbol: string | null
+  name: string
+  interval: string
+  fitness: number | null
+  holdout_return_pct: number | null
+  holdout_sharpe: number | null
+  generated_at: string | null
+  is_monitored: boolean
+  live: {
+    account_id: number
+    total_return_pct: number
+    realized_pnl: number
+    trades_count: number
+    is_active: boolean
+  } | null
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const strategyGeneratorService = {
@@ -385,5 +405,13 @@ export const strategyGeneratorService = {
   async stopPaperAccount(accountId: number): Promise<{ id: number; is_active: boolean }> {
     const { data } = await apiClient.delete(`/strategies/paper/${accountId}/`)
     return data
+  },
+
+  /** Mejor estrategia validada de cada activo (campeona) con su track record. */
+  async getBestStrategies(interval?: string): Promise<BestStrategy[]> {
+    const { data } = await apiClient.get<{ count: number; results: BestStrategy[] }>(
+      '/strategies/best/', { params: interval ? { interval } : {} },
+    )
+    return data.results
   },
 }

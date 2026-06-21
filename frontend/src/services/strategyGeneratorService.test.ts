@@ -110,6 +110,19 @@ describe('strategyGeneratorService', () => {
     expect(mockApi.delete).toHaveBeenCalledWith('/strategies/paper/4/')
     expect(r.is_active).toBe(false)
   })
+
+  it('getBestStrategies unwraps champions and forwards interval', async () => {
+    mockApi.get.mockResolvedValue({ data: { count: 1, results: [{ strategy_id: 5, asset_symbol: 'BTC' }] } })
+    const r = await strategyGeneratorService.getBestStrategies('1d')
+    expect(mockApi.get).toHaveBeenCalledWith('/strategies/best/', { params: { interval: '1d' } })
+    expect(r[0].asset_symbol).toBe('BTC')
+  })
+
+  it('getBestStrategies omits params when no interval', async () => {
+    mockApi.get.mockResolvedValue({ data: { count: 0, results: [] } })
+    await strategyGeneratorService.getBestStrategies()
+    expect(mockApi.get).toHaveBeenCalledWith('/strategies/best/', { params: {} })
+  })
 })
 
 describe('type guards', () => {
