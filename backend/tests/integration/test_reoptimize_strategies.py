@@ -142,6 +142,31 @@ class TestReoptimize:
         assert StrategyDefinition.objects.filter(asset=assets["BTC"]).count() == 2
 
     @pytest.mark.integration
+    def test_explicit_pairs_override_tracked(self, assets, monkeypatch):
+        # Reoptimización dirigida de un activo concreto (p. ej. decaído), sin
+        # depender de que esté "seguido".
+        captured = {}
+        fake_report = {
+            "summary": {"passed_gating": 1, "candidates_gated": 3},
+            "ranking": [
+                {"spec_hash": "fresh", "passed_gating": True, "rank": 1, "fitness": 1.1,
+                 "description": "nueva", "spec": _spec(), "gating": {"metrics": {}, "checks": {}},
+                 "holdout_validation": {"return_pct": 9}},
+            ],
+        }
+
+        def _fake(self, **kw):
+            captured["symbol"] = kw.get("asset_symbol")
+            return fake_report
+
+        monkeypatch.setattr(
+            "core.application.use_cases.generate_strategies.GenerateStrategiesUseCase.execute", _fake,
+        )
+        out = ReoptimizeStrategiesUseCase().execute(pairs=[("ETH", "4h")])
+        assert captured["symbol"] == "ETH"
+        assert out["pairs"] == 1 and out["new_strategies"] == 1
+
+    @pytest.mark.integration
     def test_skips_assets_with_generation_error(self, assets, monkeypatch):
         from core.infrastructure.persistence.models import PaperTradingAccount
         s = _strategy(assets["BTC"], 1.0, "old")

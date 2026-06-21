@@ -493,10 +493,36 @@ def evaluate_paper_trading(self) -> dict:
         result = EvaluatePaperTradingUseCase().execute()
         logger.info("evaluate_paper_trading: %d carteras, %d operaciones",
                     result["evaluated"], result["trades"])
+        # Decadencia detectada → reoptimizar ese activo ya, sin esperar al ciclo
+        # semanal (cierre del bucle drift→reoptimización).
+        for symbol, interval in result.get("decayed_pairs", []):
+            reoptimize_asset.delay(symbol, interval)
         return result
     except Exception as exc:
         logger.error("evaluate_paper_trading error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.reoptimize_asset",
+    bind=True,
+    max_retries=0,
+)
+def reoptimize_asset(self, symbol: str, interval: str) -> dict:
+    """
+    Reoptimiza un único activo (regenera con datos frescos) cuando su estrategia
+    se ha degradado en vivo. Se dispara desde el paper trading al detectar
+    decadencia, para no esperar al ciclo semanal.
+    """
+    try:
+        from core.application.use_cases.reoptimize_strategies import ReoptimizeStrategiesUseCase
+
+        result = ReoptimizeStrategiesUseCase().execute(pairs=[(symbol.upper(), interval)])
+        logger.info("reoptimize_asset %s/%s: %d nuevas", symbol, interval, result["new_strategies"])
+        return result
+    except Exception as exc:
+        logger.error("reoptimize_asset %s/%s error: %s", symbol, interval, exc, exc_info=True)
+        return {"error": str(exc)}
 
 
 @shared_task(

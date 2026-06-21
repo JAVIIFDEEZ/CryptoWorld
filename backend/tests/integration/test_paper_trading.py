@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from core.application.use_cases.ohlcv_fetcher import OhlcvFetchResult
 from core.application.use_cases.paper_trading import (
-    EvaluatePaperTradingUseCase, PaperTradingDetailUseCase, _apply_signal,
+    EvaluatePaperTradingUseCase, PaperTradingDetailUseCase, _apply_signal, _check_decay,
 )
 
 
@@ -125,6 +125,18 @@ class TestEvaluateUseCase:
         assert acc.trades.filter(side="BUY").exists()
 
     @pytest.mark.integration
+    def test_evaluation_records_equity_snapshot(self, strategy, monkeypatch):
+        acc = _account(strategy)
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=200, **kw: OhlcvFetchResult(df=_df_with_signal("buy"), source="binance"),
+        )
+        EvaluatePaperTradingUseCase().execute()
+        acc.refresh_from_db()
+        assert acc.equity_snapshots.count() == 1   # mark-to-market en cada evaluación
+        assert acc.peak_equity >= acc.initial_capital
+
+    @pytest.mark.integration
     def test_inactive_accounts_are_skipped(self, strategy, monkeypatch):
         acc = _account(strategy)
         acc.is_active = False
@@ -135,6 +147,64 @@ class TestEvaluateUseCase:
         )
         out = EvaluatePaperTradingUseCase().execute()
         assert out["evaluated"] == 0
+
+
+class TestDecay:
+
+    @pytest.mark.integration
+    def test_drawdown_marks_decayed_on_transition(self, strategy):
+        from django.utils import timezone
+        acc = _account(strategy)
+        acc.trades_count = 6
+        acc.peak_equity = 12000.0
+        acc.cash = 8000.0   # equity 8000 → drawdown 33%, total return -20%
+        decayed = _check_decay(acc, timezone.now())
+        assert decayed is True and acc.decayed is True and acc.decayed_at is not None
+
+    @pytest.mark.integration
+    def test_not_enough_trades_does_not_decay(self, strategy):
+        from django.utils import timezone
+        acc = _account(strategy)
+        acc.trades_count = 2
+        acc.peak_equity = 12000.0
+        acc.cash = 8000.0
+        assert _check_decay(acc, timezone.now()) is False and acc.decayed is False
+
+    @pytest.mark.integration
+    def test_healthy_account_does_not_decay(self, strategy):
+        from django.utils import timezone
+        acc = _account(strategy)
+        acc.trades_count = 8
+        acc.peak_equity = 10500.0
+        acc.cash = 10400.0   # casi en máximos
+        assert _check_decay(acc, timezone.now()) is False
+
+    @pytest.mark.integration
+    def test_already_decayed_does_not_retrigger(self, strategy):
+        from django.utils import timezone
+        acc = _account(strategy)
+        acc.trades_count = 6
+        acc.peak_equity = 12000.0
+        acc.cash = 8000.0
+        acc.decayed = True
+        assert _check_decay(acc, timezone.now()) is False   # ya decaída: no re-dispara
+
+    @pytest.mark.integration
+    def test_evaluation_returns_decayed_pairs(self, strategy, monkeypatch):
+        # Cartera ya degradada: la evaluación la marca y la devuelve para reoptimizar.
+        acc = _account(strategy)
+        acc.trades_count = 6
+        acc.peak_equity = 12000.0
+        acc.cash = 8000.0
+        acc.save(update_fields=["trades_count", "peak_equity", "cash"])
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=200, **kw: OhlcvFetchResult(df=_df_with_signal("sell"), source="binance"),
+        )
+        out = EvaluatePaperTradingUseCase().execute()
+        assert ("BTC", "1d") in out["decayed_pairs"]
+        acc.refresh_from_db()
+        assert acc.decayed is True
 
 
 class TestApi:
@@ -159,9 +229,10 @@ class TestApi:
         lst = authenticated_client.get("/api/strategies/paper/")
         assert lst.status_code == 200 and lst.data["count"] == 1
 
-        # Detalle con trades
+        # Detalle con trades y curva de equity
         det = authenticated_client.get(f"/api/strategies/paper/{acc_id}/")
-        assert det.status_code == 200 and "trades" in det.data
+        assert det.status_code == 200 and "trades" in det.data and "equity_curve" in det.data
+        assert "drawdown_pct" in det.data and "decayed" in det.data
 
         # Detener
         stop = authenticated_client.delete(f"/api/strategies/paper/{acc_id}/")

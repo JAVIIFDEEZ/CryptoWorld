@@ -42,11 +42,14 @@ class ReoptimizeStrategiesUseCase:
     """Regenera las estrategias de los activos seguidos y persiste solo las nuevas
     (dedup por spec_hash). Pensada para Celery beat (p. ej. semanal)."""
 
-    def execute(self, preset: str = "balanced", limit_pairs: int = 12) -> dict:
+    def execute(self, preset: str = "balanced", limit_pairs: int = 12,
+                pairs: list[tuple[str, str]] | None = None) -> dict:
         from core.application.use_cases.generate_strategies import GenerateStrategiesUseCase
         from core.infrastructure.persistence.models import CryptoAsset, StrategyDefinition
 
-        pairs = _tracked_pairs()[:limit_pairs]
+        # `pairs` explícito: reoptimización dirigida (p. ej. de un activo decaído);
+        # si no, los activos seguidos (ciclo programado).
+        pairs = (pairs if pairs is not None else _tracked_pairs())[:limit_pairs]
         summary = {"pairs": len(pairs), "new_strategies": 0, "regenerated": 0, "details": []}
 
         for symbol, interval in pairs:

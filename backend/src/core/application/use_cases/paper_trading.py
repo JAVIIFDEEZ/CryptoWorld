@@ -22,6 +22,29 @@ logger = logging.getLogger(__name__)
 # Velas suficientes para calentar los indicadores más lentos del spec.
 _SIGNAL_LIMIT = 200
 
+# Umbrales de decadencia (decay) de una estrategia en vivo. Cuando se cruzan, la
+# cartera se marca como decaída y se dispara la reoptimización del activo.
+_DECAY_MIN_TRADES = 5        # nº mínimo de operaciones cerradas para juzgar
+_DECAY_MAX_DRAWDOWN = 20.0   # % de caída desde el pico que se considera degradación
+_DECAY_MAX_LOSS = -10.0      # % de rentabilidad total por debajo del cual también decae
+
+
+def _check_decay(account, now) -> bool:
+    """Marca la cartera como decaída si su rendimiento en vivo se ha degradado.
+    Devuelve True solo en la transición (sana → decaída), para disparar la
+    reoptimización una única vez."""
+    if account.decayed or account.trades_count < _DECAY_MIN_TRADES:
+        return False
+    degraded = (
+        account.drawdown_pct >= _DECAY_MAX_DRAWDOWN
+        or account.total_return_pct <= _DECAY_MAX_LOSS
+    )
+    if degraded:
+        account.decayed = True
+        account.decayed_at = now
+        return True
+    return False
+
 
 def _apply_signal(account, signal: str, price: float) -> "object | None":
     """Aplica una señal a la cartera marcándola a mercado. Devuelve el PaperTrade
@@ -88,12 +111,15 @@ class EvaluatePaperTradingUseCase:
         from django.utils import timezone
         from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
         from core.domain.services.strategy_spec import signal_state
-        from core.infrastructure.persistence.models import PaperTradingAccount
+        from core.infrastructure.persistence.models import (
+            PaperEquitySnapshot, PaperTradingAccount,
+        )
 
         accounts = list(
             PaperTradingAccount.objects.select_related("strategy").filter(is_active=True)
         )
         evaluated = trades = 0
+        decayed_pairs: set = set()
         ohlcv_cache: dict = {}
 
         for acc in accounts:
@@ -106,22 +132,34 @@ class EvaluatePaperTradingUseCase:
                 continue
 
             evaluated += 1
+            now = timezone.now()
             signal = signal_state(df, acc.strategy.spec)["signal"]
             price = float(df["close"].iloc[-1])
             with transaction.atomic():
                 trade = _apply_signal(acc, signal, price)
                 acc.last_signal = signal
-                acc.last_eval_at = timezone.now()
-                acc.save(update_fields=[
+                acc.last_eval_at = now
+                # Mark-to-market: actualizar pico y detectar decadencia (decay).
+                acc.peak_equity = max(acc.peak_equity, acc.initial_capital, acc.equity)
+                just_decayed = _check_decay(acc, now)
+                fields = [
                     "cash", "units", "entry_price", "last_price", "realized_pnl",
-                    "trades_count", "wins", "last_signal", "last_eval_at", "updated_at",
-                ])
+                    "trades_count", "wins", "last_signal", "last_eval_at",
+                    "peak_equity", "decayed", "decayed_at", "updated_at",
+                ]
+                acc.save(update_fields=fields)
+                PaperEquitySnapshot.objects.create(
+                    account=acc, equity=round(acc.equity, 2), price=price, in_position=acc.units > 0,
+                )
                 if trade is not None:
                     trade.save()
                     trades += 1
+                if just_decayed:
+                    decayed_pairs.add((acc.asset_symbol, acc.interval))
 
-        logger.info("paper_trading: %d carteras evaluadas, %d operaciones", evaluated, trades)
-        return {"evaluated": evaluated, "trades": trades}
+        logger.info("paper_trading: %d carteras evaluadas, %d operaciones, %d decaídas",
+                    evaluated, trades, len(decayed_pairs))
+        return {"evaluated": evaluated, "trades": trades, "decayed_pairs": sorted(decayed_pairs)}
 
 
 class PaperTradingListUseCase:
@@ -166,7 +204,23 @@ class PaperTradingDetailUseCase:
             }
             for t in acc.trades.all()[:trades_limit]
         ]
+        data["equity_curve"] = _equity_curve(acc, max_points=300)
         return data
+
+
+def _equity_curve(account, max_points: int = 300) -> list[dict]:
+    """Curva de equity (patrimonio en el tiempo), submuestreada a max_points para
+    no devolver miles de puntos a la gráfica."""
+    qs = account.equity_snapshots.order_by("created_at")
+    total = qs.count()
+    if total == 0:
+        return []
+    step = max(1, total // max_points)
+    points = list(qs.values("equity", "price", "created_at"))[::step]
+    return [
+        {"t": p["created_at"].isoformat(), "equity": round(p["equity"], 2), "price": round(p["price"], 6)}
+        for p in points
+    ]
 
 
 def _serialize_account(a) -> dict:
@@ -186,8 +240,11 @@ def _serialize_account(a) -> dict:
         "equity": round(a.equity, 2),
         "realized_pnl": round(a.realized_pnl, 2),
         "total_return_pct": round(a.total_return_pct, 4),
+        "drawdown_pct": round(a.drawdown_pct, 4),
         "in_position": a.units > 0,
         "is_active": a.is_active,
+        "decayed": a.decayed,
+        "decayed_at": a.decayed_at.isoformat() if a.decayed_at else None,
         "trades_count": a.trades_count,
         "wins": a.wins,
         "win_rate": win_rate,

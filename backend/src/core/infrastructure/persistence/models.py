@@ -679,6 +679,12 @@ class PaperTradingAccount(models.Model):
     wins = models.PositiveIntegerField(default=0)
     last_signal = models.CharField(max_length=8, default="HOLD")  # BUY | SELL | HOLD
     last_eval_at = models.DateTimeField(null=True, blank=True)
+    # Seguimiento de decadencia (decay): pico de patrimonio para medir drawdown y
+    # bandera que se activa cuando la estrategia se degrada en vivo (dispara
+    # reoptimización del activo sin esperar al ciclo semanal).
+    peak_equity = models.FloatField(default=0.0)
+    decayed = models.BooleanField(default=False, db_index=True)
+    decayed_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -714,6 +720,14 @@ class PaperTradingAccount(models.Model):
             return 0.0
         return (self.equity / self.initial_capital - 1.0) * 100.0
 
+    @property
+    def drawdown_pct(self) -> float:
+        """Caída actual desde el máximo histórico de patrimonio (≥ 0)."""
+        peak = max(self.peak_equity, self.initial_capital)
+        if peak <= 0:
+            return 0.0
+        return max(0.0, (peak - self.equity) / peak * 100.0)
+
 
 class PaperTrade(models.Model):
     """Operación individual (apertura o cierre) de una cartera de paper trading."""
@@ -745,3 +759,34 @@ class PaperTrade(models.Model):
 
     def __str__(self) -> str:
         return f"{self.side} {self.units:.4f} @ {self.price:.2f}"
+
+
+class PaperEquitySnapshot(models.Model):
+    """
+    Foto del patrimonio de una cartera en un instante, marcada a mercado. La
+    sucesión de snapshots forma la CURVA DE EQUITY: la evolución real del valor de
+    la cartera, base para graficar el rendimiento y medir el drawdown.
+
+    Se registra una en cada evaluación periódica (mark-to-market), haya operado o
+    no, porque el patrimonio se mueve con el precio aunque no haya trade.
+    """
+
+    account = models.ForeignKey(
+        PaperTradingAccount, on_delete=models.CASCADE, related_name="equity_snapshots",
+    )
+    equity = models.FloatField()             # patrimonio total (efectivo + posición)
+    price = models.FloatField()              # precio de mercado en el instante
+    in_position = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "paper_equity_snapshots"
+        verbose_name = "Snapshot de Patrimonio"
+        verbose_name_plural = "Snapshots de Patrimonio"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["account", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"#{self.account_id} {self.equity:.2f} @ {self.created_at:%Y-%m-%d %H:%M}"
