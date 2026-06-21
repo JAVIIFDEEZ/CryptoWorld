@@ -1800,6 +1800,24 @@ class PaperTradingDetailView(APIView):
         return Response({"id": acc.id, "is_active": False}, status=status.HTTP_200_OK)
 
 
+class BestStrategiesView(APIView):
+    """
+    GET /api/strategies/best/ — Mejor estrategia validada de cada activo (la
+    campeona por fitness), con su rendimiento en holdout y su track record en
+    vivo (paper trading del usuario). Filtro opcional: ?interval=1d.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.reoptimize_strategies import BestStrategiesUseCase
+
+        interval = request.query_params.get("interval")
+        return Response(
+            BestStrategiesUseCase().execute(owner=request.user, interval=interval),
+            status=status.HTTP_200_OK,
+        )
+
+
 class AssetDetailInfoView(APIView):
     """
     GET /api/assets/<symbol>/info/ — Información de proyecto de un activo.

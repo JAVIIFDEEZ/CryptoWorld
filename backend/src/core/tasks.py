@@ -497,3 +497,27 @@ def evaluate_paper_trading(self) -> dict:
     except Exception as exc:
         logger.error("evaluate_paper_trading error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.reoptimize_strategies",
+    bind=True,
+    max_retries=0,
+)
+def reoptimize_strategies(self) -> dict:
+    """
+    Reoptimiza (regenera con datos frescos) las estrategias de los activos que el
+    usuario sigue —paper trading activo o monitorización— y persiste solo las
+    nuevas. Mantiene fresca la "mejor estrategia por activo" frente al drift.
+    Programada por celery beat (semanal: lunes 03:00 UTC, fuera de horas punta).
+    """
+    try:
+        from core.application.use_cases.reoptimize_strategies import ReoptimizeStrategiesUseCase
+
+        result = ReoptimizeStrategiesUseCase().execute()
+        logger.info("reoptimize_strategies: %d pares, %d nuevas",
+                    result["regenerated"], result["new_strategies"])
+        return result
+    except Exception as exc:
+        logger.error("reoptimize_strategies error: %s", exc, exc_info=True)
+        return {"error": str(exc)}

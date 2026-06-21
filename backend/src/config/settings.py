@@ -344,5 +344,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.evaluate_paper_trading",
         "schedule": 900.0,  # segundos — cada 15 min
     },
+    # Reoptimizar las estrategias de los activos seguidos (lunes 03:00 UTC)
+    "reoptimize-strategies": {
+        "task": "core.tasks.reoptimize_strategies",
+        "schedule": crontab(day_of_week=1, hour=3, minute=0),
+    },
 }
 
