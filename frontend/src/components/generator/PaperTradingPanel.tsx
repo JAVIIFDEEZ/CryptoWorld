@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { Area, AreaChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
 import {
   strategyGeneratorService,
   type PaperAccount,
@@ -86,9 +87,17 @@ function PaperCard({ account, onChange }: Readonly<{ account: PaperAccount; onCh
     <div className={`rounded-lg border p-3 ${account.is_active ? 'bg-slate-900/60 border-slate-700/60' : 'bg-slate-900/30 border-slate-800 opacity-70'}`}>
       <div className="flex items-center justify-between mb-1">
         <span className="text-[10px] text-emerald-300 font-semibold">{account.asset_symbol} · {account.interval}</span>
-        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[account.last_signal] ?? SIGNAL_STYLE.HOLD}`}>
-          {account.last_signal}
-        </span>
+        <div className="flex items-center gap-1">
+          {account.decayed && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-300 border-amber-500/40"
+              title="Estrategia degradada en vivo: se ha disparado la reoptimización del activo">
+              ⚠ decaída
+            </span>
+          )}
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[account.last_signal] ?? SIGNAL_STYLE.HOLD}`}>
+            {account.last_signal}
+          </span>
+        </div>
       </div>
       <p className="text-[11px] text-slate-300 font-mono line-clamp-1 leading-snug" title={account.strategy_name ?? ''}>
         {account.strategy_name ?? `#${account.strategy_id}`}
@@ -134,20 +143,56 @@ function PaperCard({ account, onChange }: Readonly<{ account: PaperAccount; onCh
       </div>
 
       {open && detail && (
-        <div className="mt-2 border-t border-slate-700/50 pt-2 max-h-44 overflow-y-auto space-y-1">
-          {detail.trades.length === 0 && <p className="text-[10px] text-slate-500">Aún sin operaciones.</p>}
-          {detail.trades.map((t) => (
-            <div key={t.id} className="flex items-center gap-2 text-[10px]">
-              <span className={`font-bold px-1 rounded border ${SIGNAL_STYLE[t.side]}`}>{t.side}</span>
-              <span className="text-slate-400 font-mono">${t.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-              {t.pnl_pct != null && (
-                <span className={`font-mono ml-auto ${pnlTone(t.pnl_pct)}`}>{t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%</span>
-              )}
-              <span className="text-slate-600 shrink-0">{new Date(t.created_at).toLocaleDateString()}</span>
-            </div>
-          ))}
+        <div className="mt-2 border-t border-slate-700/50 pt-2">
+          {detail.equity_curve.length >= 2 && <EquityCurve points={detail.equity_curve} initial={detail.initial_capital} />}
+          <div className="flex justify-between text-[10px] text-slate-500 mt-1.5 mb-1">
+            <span>Operaciones</span>
+            <span>Drawdown máx. actual <span className="text-amber-300 font-mono">{detail.drawdown_pct.toFixed(1)}%</span></span>
+          </div>
+          <div className="max-h-36 overflow-y-auto space-y-1">
+            {detail.trades.length === 0 && <p className="text-[10px] text-slate-500">Aún sin operaciones.</p>}
+            {detail.trades.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 text-[10px]">
+                <span className={`font-bold px-1 rounded border ${SIGNAL_STYLE[t.side]}`}>{t.side}</span>
+                <span className="text-slate-400 font-mono">${t.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                {t.pnl_pct != null && (
+                  <span className={`font-mono ml-auto ${pnlTone(t.pnl_pct)}`}>{t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%</span>
+                )}
+                <span className="text-slate-600 shrink-0">{new Date(t.created_at).toLocaleDateString()}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function EquityCurve({ points, initial }: Readonly<{ points: { t: string; equity: number }[]; initial: number }>) {
+  const data = points.map((p) => ({ t: p.t, equity: p.equity }))
+  const last = data[data.length - 1]?.equity ?? initial
+  const up = last >= initial
+  const stroke = up ? '#22c55e' : '#ef4444'
+  return (
+    <div className="mb-1">
+      <p className="text-[10px] text-slate-500 mb-0.5">Curva de equity (patrimonio en el tiempo)</p>
+      <ResponsiveContainer width="100%" height={90}>
+        <AreaChart data={data} margin={{ top: 2, right: 2, left: 2, bottom: 0 }}>
+          <defs>
+            <linearGradient id="eqfill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={stroke} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <YAxis domain={['dataMin', 'dataMax']} hide />
+          <Tooltip
+            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            labelFormatter={(l) => new Date(l as string).toLocaleString()}
+            formatter={(v) => [`$${typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : v}`, 'patrimonio']}
+          />
+          <Area type="monotone" dataKey="equity" stroke={stroke} strokeWidth={1.5} fill="url(#eqfill)" />
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   )
 }

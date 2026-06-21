@@ -281,14 +281,23 @@ export interface PaperAccount {
   equity: number
   realized_pnl: number
   total_return_pct: number
+  drawdown_pct: number
   in_position: boolean
   is_active: boolean
+  decayed: boolean
+  decayed_at: string | null
   trades_count: number
   wins: number
   win_rate: number | null
   last_signal: 'BUY' | 'SELL' | 'HOLD'
   last_eval_at: string | null
   started_at: string
+}
+
+export interface PaperEquityPoint {
+  t: string
+  equity: number
+  price: number
 }
 
 export interface PaperTrade {
@@ -307,6 +316,7 @@ export interface PaperTrade {
 
 export interface PaperAccountDetail extends PaperAccount {
   trades: PaperTrade[]
+  equity_curve: PaperEquityPoint[]
 }
 
 // ── Mejor estrategia por activo (campeona) con track record en vivo ─
