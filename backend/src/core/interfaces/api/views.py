@@ -1139,6 +1139,47 @@ class MultiChainStatsView(APIView):
         result = GetMultiChainStatsUseCase().execute(symbol=symbol)
         return Response(result, status=status.HTTP_200_OK)
 
+
+class WalletChainsView(APIView):
+    """
+    GET /api/blockchain/wallet/chains/ — Redes soportadas por el explorador de
+    wallets on-chain (Blockscout).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_wallet_overview import GetSupportedChainsUseCase
+
+        return Response(GetSupportedChainsUseCase().execute(), status=status.HTTP_200_OK)
+
+
+class WalletOverviewView(APIView):
+    """
+    GET /api/blockchain/wallet/?chain=ethereum&address=0x... — Retrato on-chain de
+    una dirección: saldo nativo y su valor en USD, cartera de tokens ERC-20
+    valorada, valor total y transacciones recientes (vía Blockscout, datos reales).
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120  # segundos — los saldos cambian poco entre bloques
+
+    def get(self, request):
+        from core.application.use_cases.get_wallet_overview import GetWalletOverviewUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+
+        cache_key = f"wallet_overview:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetWalletOverviewUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class NewsFeedView(APIView):
     """
     GET /api/news/ â€” Feed de noticias con filtro de sentimiento.

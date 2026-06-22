@@ -177,6 +177,8 @@ urlpatterns = [
     path("market/fx/", views.FxRatesView.as_view(), name="market-fx"),
     path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
     path("blockchain/multichain/", views.MultiChainStatsView.as_view(), name="blockchain-multichain"),
+    path("blockchain/wallet/", views.WalletOverviewView.as_view(), name="blockchain-wallet"),
+    path("blockchain/wallet/chains/", views.WalletChainsView.as_view(), name="blockchain-wallet-chains"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
 
     # ── Admin ───────────────────────────────────────────────────────
