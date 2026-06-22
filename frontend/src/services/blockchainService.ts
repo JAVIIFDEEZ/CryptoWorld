@@ -72,6 +72,57 @@ export interface MultiChainStatsResponse {
   error?: string
 }
 
+// ── Explorador on-chain de wallets (Blockscout) ────────────────────
+
+export interface WalletChain {
+  slug: string
+  name: string
+  native: string
+  chain_id: number
+  explorer_url: string
+}
+
+export interface WalletToken {
+  address: string | null
+  name: string
+  symbol: string
+  balance: number
+  price_usd: number | null
+  value_usd: number | null
+}
+
+export interface WalletTransaction {
+  hash: string | null
+  method: string | null
+  direction: 'in' | 'out' | 'self'
+  from: string | null
+  to: string | null
+  value_native: number
+  status: string | null
+  timestamp: string | null
+}
+
+export interface WalletOverview {
+  chain: string
+  chain_name: string
+  explorer_url: string
+  address: string
+  ens_name: string | null
+  is_contract: boolean
+  is_verified: boolean
+  native_symbol: string
+  native_balance: number
+  native_price_usd: number | null
+  native_value_usd: number | null
+  token_count: number
+  tokens_value_usd: number | null
+  portfolio_value_usd: number | null
+  tokens: WalletToken[]
+  transactions: WalletTransaction[]
+  source: string
+  error?: string
+}
+
 export const blockchainService = {
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
@@ -91,6 +142,19 @@ export const blockchainService = {
   getMultiChainStats: async (symbol: MultiChainSymbol): Promise<MultiChainStatsResponse> => {
     const params = new URLSearchParams({ symbol })
     const { data } = await apiClient.get(`/blockchain/multichain/?${params}`)
+    return data
+  },
+
+  /** Redes soportadas por el explorador de wallets on-chain (Blockscout). */
+  getWalletChains: async (): Promise<WalletChain[]> => {
+    const { data } = await apiClient.get<{ chains: WalletChain[] }>('/blockchain/wallet/chains/')
+    return data.chains
+  },
+
+  /** Retrato on-chain de una dirección: saldo, tokens valorados y transacciones. */
+  getWalletOverview: async (chain: string, address: string): Promise<WalletOverview> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/wallet/?${params}`)
     return data
   },
 }

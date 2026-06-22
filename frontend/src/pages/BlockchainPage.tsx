@@ -20,6 +20,7 @@ import {
   type MultiChainStatItem,
 } from '../services/blockchainService'
 import MultiChainComparePanel from '@/components/blockchain/MultiChainComparePanel'
+import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
 
 // ────────────────────────── Gráfico SVG simple ────────────────────
 
@@ -237,6 +238,9 @@ export default function BlockchainPage() {
             </button>
           ))}
         </div>
+
+        {/* ── Explorador on-chain de wallets (Blockscout) ── */}
+        <WalletExplorerPanel />
 
         {/* ── Comparador multi-cadena (3D/2D) ── */}
         <div className="mb-6">
