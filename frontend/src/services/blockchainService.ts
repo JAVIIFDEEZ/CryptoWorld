@@ -123,6 +123,88 @@ export interface WalletOverview {
   error?: string
 }
 
+// ── Salud de red / rastreador de gas (Blockscout /stats) ───────────
+
+export interface ChainHealth {
+  chain: string
+  chain_name: string
+  native_symbol: string
+  explorer_url: string
+  gas_slow: number | null
+  gas_average: number | null
+  gas_fast: number | null
+  gas_level: 'cheap' | 'normal' | 'high' | 'unknown'
+  gas_text: string
+  gas_unit: string
+  gas_updated_at: string | null
+  network_utilization_pct: number | null
+  block_time_sec: number | null
+  coin_price_usd: number | null
+  coin_price_change_pct: number | null
+  total_transactions: string | null
+  total_blocks: string | null
+  total_addresses: string | null
+  transactions_today: string | null
+  source: string
+  error?: string
+}
+
+// ── Historial de saldo (curva de patrimonio on-chain) ──────────────
+
+export interface BalancePoint {
+  date: string
+  balance: number
+  value_usd_at_today_price: number | null
+}
+
+export interface WalletBalanceHistory {
+  chain: string
+  address: string
+  native_symbol: string
+  price_now_usd: number | null
+  points: number
+  history: BalancePoint[]
+  note: string
+  source: string
+  error?: string
+}
+
+// ── Watchlist de direcciones + alertas ─────────────────────────────
+
+export interface WatchedAddress {
+  id: number
+  chain: string
+  address: string
+  label: string | null
+  native_symbol: string | null
+  alert_threshold_pct: number
+  last_balance: number | null
+  last_value_usd: number | null
+  last_checked_at: string | null
+  created_at: string
+  error?: string
+}
+
+export interface AddressAlert {
+  id: number
+  watched_id: number
+  chain: string
+  address: string
+  label: string | null
+  direction: 'increase' | 'decrease'
+  delta: number
+  delta_pct: number
+  balance_after: number
+  value_usd: number | null
+  created_at: string
+}
+
+export interface WatchlistResponse {
+  count: number
+  results: WatchedAddress[]
+  alerts: AddressAlert[]
+}
+
 export const blockchainService = {
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
@@ -155,6 +237,44 @@ export const blockchainService = {
   getWalletOverview: async (chain: string, address: string): Promise<WalletOverview> => {
     const params = new URLSearchParams({ chain, address })
     const { data } = await apiClient.get(`/blockchain/wallet/?${params}`)
+    return data
+  },
+
+  /** Serie diaria del saldo nativo de una dirección (curva de patrimonio). */
+  getWalletBalanceHistory: async (chain: string, address: string): Promise<WalletBalanceHistory> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/wallet/history/?${params}`)
+    return data
+  },
+
+  /** Salud de red y rastreador de gas de una cadena. */
+  getChainHealth: async (chain: string): Promise<ChainHealth> => {
+    const params = new URLSearchParams({ chain })
+    const { data } = await apiClient.get(`/blockchain/health/?${params}`)
+    return data
+  },
+
+  /** Watchlist de direcciones on-chain del usuario con sus alertas. */
+  getWatchlist: async (): Promise<WatchlistResponse> => {
+    const { data } = await apiClient.get('/blockchain/watchlist/')
+    return data
+  },
+
+  /** Añade una dirección a la watchlist. */
+  addWatchedAddress: async (
+    chain: string, address: string, label?: string, thresholdPct?: number,
+  ): Promise<WatchedAddress> => {
+    const { data } = await apiClient.post('/blockchain/watchlist/', {
+      chain, address,
+      ...(label ? { label } : {}),
+      ...(thresholdPct != null ? { threshold_pct: thresholdPct } : {}),
+    })
+    return data
+  },
+
+  /** Elimina una dirección vigilada. */
+  removeWatchedAddress: async (id: number): Promise<{ id: number; removed: boolean }> => {
+    const { data } = await apiClient.delete(`/blockchain/watchlist/${id}/`)
     return data
   },
 }

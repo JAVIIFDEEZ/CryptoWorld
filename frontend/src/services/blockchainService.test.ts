@@ -10,12 +10,14 @@ import apiClient from '@/services/api'
 import { blockchainService } from './blockchainService'
 
 vi.mock('@/services/api', () => ({
-  default: { get: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }))
 
-const mockApi = apiClient as unknown as { get: ReturnType<typeof vi.fn> }
+const mockApi = apiClient as unknown as {
+  get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn>
+}
 
-beforeEach(() => { mockApi.get.mockReset() })
+beforeEach(() => { mockApi.get.mockReset(); mockApi.post.mockReset(); mockApi.delete.mockReset() })
 
 describe('blockchainService wallet explorer', () => {
   it('getWalletChains unwraps the chains array', async () => {
@@ -40,5 +42,48 @@ describe('blockchainService wallet explorer', () => {
     const r = await blockchainService.getMultiChainStats('ETH')
     expect(mockApi.get).toHaveBeenCalledWith('/blockchain/multichain/?symbol=ETH')
     expect(r.symbol).toBe('ETH')
+  })
+
+  it('getChainHealth hits the health endpoint with chain', async () => {
+    mockApi.get.mockResolvedValue({ data: { chain: 'ethereum', gas_level: 'cheap' } })
+    const r = await blockchainService.getChainHealth('ethereum')
+    expect((mockApi.get.mock.calls[0][0] as string)).toContain('/blockchain/health/?chain=ethereum')
+    expect(r.gas_level).toBe('cheap')
+  })
+
+  it('getWalletBalanceHistory hits the history endpoint', async () => {
+    mockApi.get.mockResolvedValue({ data: { points: 2, history: [] } })
+    await blockchainService.getWalletBalanceHistory('base', '0xABC')
+    const url = mockApi.get.mock.calls[0][0] as string
+    expect(url).toContain('/blockchain/wallet/history/?')
+    expect(url).toContain('chain=base')
+  })
+
+  it('getWatchlist fetches the watchlist', async () => {
+    mockApi.get.mockResolvedValue({ data: { count: 0, results: [], alerts: [] } })
+    const r = await blockchainService.getWatchlist()
+    expect(mockApi.get).toHaveBeenCalledWith('/blockchain/watchlist/')
+    expect(r.count).toBe(0)
+  })
+
+  it('addWatchedAddress posts chain, address and optional fields', async () => {
+    mockApi.post.mockResolvedValue({ data: { id: 1, address: '0xABC' } })
+    await blockchainService.addWatchedAddress('ethereum', '0xABC', 'whale', 10)
+    expect(mockApi.post).toHaveBeenCalledWith('/blockchain/watchlist/', {
+      chain: 'ethereum', address: '0xABC', label: 'whale', threshold_pct: 10,
+    })
+  })
+
+  it('addWatchedAddress omits optional fields when not given', async () => {
+    mockApi.post.mockResolvedValue({ data: { id: 1 } })
+    await blockchainService.addWatchedAddress('base', '0xABC')
+    expect(mockApi.post).toHaveBeenCalledWith('/blockchain/watchlist/', { chain: 'base', address: '0xABC' })
+  })
+
+  it('removeWatchedAddress deletes by id', async () => {
+    mockApi.delete.mockResolvedValue({ data: { id: 3, removed: true } })
+    const r = await blockchainService.removeWatchedAddress(3)
+    expect(mockApi.delete).toHaveBeenCalledWith('/blockchain/watchlist/3/')
+    expect(r.removed).toBe(true)
   })
 })

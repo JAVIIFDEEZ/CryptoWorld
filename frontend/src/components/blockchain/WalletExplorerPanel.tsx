@@ -9,8 +9,10 @@
  */
 
 import { useEffect, useState } from 'react'
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   blockchainService,
+  type BalancePoint,
   type WalletChain,
   type WalletOverview,
 } from '@/services/blockchainService'
@@ -30,6 +32,7 @@ export default function WalletExplorerPanel() {
   const [chain, setChain] = useState('ethereum')
   const [address, setAddress] = useState('')
   const [data, setData] = useState<WalletOverview | null>(null)
+  const [history, setHistory] = useState<BalancePoint[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -40,11 +43,15 @@ export default function WalletExplorerPanel() {
   async function search() {
     const addr = address.trim()
     if (!addr) return
-    setLoading(true); setError(null); setData(null)
+    setLoading(true); setError(null); setData(null); setHistory([])
     try {
       const r = await blockchainService.getWalletOverview(chain, addr)
-      if (r.error) setError(r.error)
-      else setData(r)
+      if (r.error) { setError(r.error); return }
+      setData(r)
+      // Curva de patrimonio (best-effort: no bloquea la vista si falla).
+      blockchainService.getWalletBalanceHistory(chain, addr)
+        .then((h) => { if (!h.error) setHistory(h.history) })
+        .catch(() => { /* sin historial */ })
     } catch (e: unknown) {
       const resp = (e as { response?: { data?: { error?: string } } })?.response
       setError(resp?.data?.error ?? 'No se pudo consultar la dirección.')
@@ -93,12 +100,42 @@ export default function WalletExplorerPanel() {
 
       {error && <div className="text-red-400 text-sm bg-red-900/20 border border-red-700/40 rounded-lg px-3 py-2">{error}</div>}
 
-      {data && <WalletResult data={data} fmtUsd={fmtUsd} />}
+      {data && <WalletResult data={data} history={history} fmtUsd={fmtUsd} />}
     </div>
   )
 }
 
-function WalletResult({ data, fmtUsd }: Readonly<{ data: WalletOverview; fmtUsd: (n: number | null | undefined) => string }>) {
+function BalanceCurve({ history, symbol }: Readonly<{ history: BalancePoint[]; symbol: string }>) {
+  if (history.length < 2) return null
+  const data = history.map((p) => ({ date: p.date, balance: p.balance }))
+  const last = data[data.length - 1].balance
+  const first = data[0].balance
+  const stroke = last >= first ? '#22c55e' : '#ef4444'
+  return (
+    <div>
+      <p className="text-xs text-slate-400 uppercase mb-2">Saldo nativo en el tiempo ({symbol})</p>
+      <ResponsiveContainer width="100%" height={120}>
+        <AreaChart data={data} margin={{ top: 4, right: 6, left: -18, bottom: 0 }}>
+          <defs>
+            <linearGradient id="balfill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={stroke} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 9 }} axisLine={{ stroke: '#334155' }} tickLine={false} minTickGap={28} />
+          <YAxis tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} width={48} />
+          <Tooltip
+            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            formatter={(v) => [`${typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 6 }) : v} ${symbol}`, 'saldo']}
+          />
+          <Area type="monotone" dataKey="balance" stroke={stroke} strokeWidth={1.5} fill="url(#balfill)" />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function WalletResult({ data, history, fmtUsd }: Readonly<{ data: WalletOverview; history: BalancePoint[]; fmtUsd: (n: number | null | undefined) => string }>) {
   return (
     <div className="space-y-4">
       {/* Resumen */}
@@ -117,6 +154,9 @@ function WalletResult({ data, fmtUsd }: Readonly<{ data: WalletOverview; fmtUsd:
           <Metric label="Valor cartera" value={fmtUsd(data.portfolio_value_usd)} accent />
         </div>
       </div>
+
+      {/* Curva de patrimonio on-chain */}
+      {history.length >= 2 && <BalanceCurve history={history} symbol={data.native_symbol} />}
 
       {/* Tokens */}
       {data.tokens.length > 0 && (
