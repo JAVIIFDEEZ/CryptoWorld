@@ -179,6 +179,10 @@ urlpatterns = [
     path("blockchain/multichain/", views.MultiChainStatsView.as_view(), name="blockchain-multichain"),
     path("blockchain/wallet/", views.WalletOverviewView.as_view(), name="blockchain-wallet"),
     path("blockchain/wallet/chains/", views.WalletChainsView.as_view(), name="blockchain-wallet-chains"),
+    path("blockchain/wallet/history/", views.WalletBalanceHistoryView.as_view(), name="blockchain-wallet-history"),
+    path("blockchain/health/", views.ChainHealthView.as_view(), name="blockchain-health"),
+    path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
+    path("blockchain/watchlist/<int:watch_id>/", views.AddressWatchlistItemView.as_view(), name="blockchain-watchlist-item"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
 
     # ── Admin ───────────────────────────────────────────────────────

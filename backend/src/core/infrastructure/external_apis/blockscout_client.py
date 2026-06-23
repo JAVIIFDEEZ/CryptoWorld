@@ -37,13 +37,15 @@ _RETRY_STRATEGY = Retry(
 )
 
 # Redes soportadas: slug → (nombre, instancia Blockscout, símbolo nativo, chain_id).
-# Todas son instancias públicas mantenidas por Blockscout.
+# Todas son instancias públicas mantenidas por Blockscout. Los umbrales de gas
+# (Gwei) clasifican el coste como barato/normal/caro de forma específica por red
+# (en L2 el gas es órdenes de magnitud menor que en Ethereum mainnet).
 CHAINS: dict[str, dict[str, Any]] = {
-    "ethereum": {"name": "Ethereum", "base_url": "https://eth.blockscout.com", "native": "ETH", "chain_id": 1},
-    "base":     {"name": "Base",     "base_url": "https://base.blockscout.com", "native": "ETH", "chain_id": 8453},
-    "optimism": {"name": "Optimism", "base_url": "https://optimism.blockscout.com", "native": "ETH", "chain_id": 10},
-    "arbitrum": {"name": "Arbitrum", "base_url": "https://arbitrum.blockscout.com", "native": "ETH", "chain_id": 42161},
-    "gnosis":   {"name": "Gnosis",   "base_url": "https://gnosis.blockscout.com", "native": "xDAI", "chain_id": 100},
+    "ethereum": {"name": "Ethereum", "base_url": "https://eth.blockscout.com", "native": "ETH", "chain_id": 1, "gas_cheap": 10.0, "gas_high": 30.0},
+    "base":     {"name": "Base",     "base_url": "https://base.blockscout.com", "native": "ETH", "chain_id": 8453, "gas_cheap": 0.05, "gas_high": 0.5},
+    "optimism": {"name": "Optimism", "base_url": "https://optimism.blockscout.com", "native": "ETH", "chain_id": 10, "gas_cheap": 0.05, "gas_high": 0.5},
+    "arbitrum": {"name": "Arbitrum", "base_url": "https://arbitrum.blockscout.com", "native": "ETH", "chain_id": 42161, "gas_cheap": 0.1, "gas_high": 1.0},
+    "gnosis":   {"name": "Gnosis",   "base_url": "https://gnosis.blockscout.com", "native": "xDAI", "chain_id": 100, "gas_cheap": 2.0, "gas_high": 10.0},
 }
 
 SUPPORTED_CHAINS = list(CHAINS.keys())
@@ -119,6 +121,20 @@ class BlockscoutClient:
         """GET /api/v2/addresses/{address}/transactions — transacciones recientes
         (primera página)."""
         data = self._get(chain, f"/api/v2/addresses/{address}/transactions")
+        if isinstance(data, dict):
+            return data.get("items", []) or []
+        return data if isinstance(data, list) else []
+
+    def get_chain_stats(self, chain: str) -> dict[str, Any]:
+        """GET /api/v2/stats — salud de la red: precios de gas (Gwei), utilización,
+        tiempo de bloque, precio del nativo y totales."""
+        data = self._get(chain, "/api/v2/stats")
+        return data if isinstance(data, dict) else {}
+
+    def get_balance_history(self, chain: str, address: str) -> list[dict[str, Any]]:
+        """GET /api/v2/addresses/{address}/coin-balance-history-by-day — serie
+        diaria del saldo nativo (en unidades mínimas/wei)."""
+        data = self._get(chain, f"/api/v2/addresses/{address}/coin-balance-history-by-day")
         if isinstance(data, dict):
             return data.get("items", []) or []
         return data if isinstance(data, list) else []

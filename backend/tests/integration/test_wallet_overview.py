@@ -50,6 +50,25 @@ FAKE_TXS = [
 ]
 
 
+FAKE_STATS = {
+    "gas_prices": {"slow": 1.45, "average": 1.9, "fast": 3.14},
+    "gas_price_updated_at": "2026-06-24T14:20:10Z",
+    "network_utilization_percentage": 49.42,
+    "average_block_time": 12000,
+    "coin_price": "1643.1",
+    "coin_price_change_percentage": 2.5,
+    "total_transactions": "3563224565",
+    "total_blocks": "25387579",
+    "total_addresses": "662030795",
+    "transactions_today": "2869094",
+}
+FAKE_BALANCE_HISTORY = [
+    {"date": "2026-06-22", "value": "2000000000000000000"},  # 2 ETH
+    {"date": "2026-06-20", "value": "1000000000000000000"},  # 1 ETH (desordenado a propósito)
+    {"date": "2026-06-24", "value": "5000000000000000000"},  # 5 ETH
+]
+
+
 class _FakeClient:
     def get_address(self, chain, address):
         return FAKE_ADDRESS
@@ -59,6 +78,12 @@ class _FakeClient:
 
     def get_transactions(self, chain, address):
         return FAKE_TXS
+
+    def get_chain_stats(self, chain):
+        return FAKE_STATS
+
+    def get_balance_history(self, chain, address):
+        return FAKE_BALANCE_HISTORY
 
 
 class TestAddressValidation:
@@ -132,6 +157,54 @@ class TestWalletOverview:
         assert "error" in r and "Timeout" in r["error"]
 
 
+class TestChainHealth:
+
+    def _health(self, chain="ethereum"):
+        from core.application.use_cases.get_chain_health import GetChainHealthUseCase
+        return GetChainHealthUseCase(client=_FakeClient()).execute(chain=chain)
+
+    @pytest.mark.unit
+    def test_gas_and_network_normalized(self):
+        r = self._health()
+        assert r["gas_average"] == pytest.approx(1.9)
+        assert r["block_time_sec"] == pytest.approx(12.0)   # 12000 ms → 12 s
+        assert r["coin_price_usd"] == pytest.approx(1643.1)
+        assert r["network_utilization_pct"] == pytest.approx(49.42)
+
+    @pytest.mark.unit
+    def test_gas_level_is_chain_aware(self):
+        # 1.9 Gwei en Ethereum (umbral cheap=10) → barato
+        assert self._health("ethereum")["gas_level"] == "cheap"
+        # Mismo 1.9 Gwei en Base (umbral high=0.5) → caro
+        assert self._health("base")["gas_level"] == "high"
+
+    @pytest.mark.unit
+    def test_unsupported_chain_rejected(self):
+        assert "error" in self._health("dogechain")
+
+
+class TestBalanceHistory:
+
+    def _history(self):
+        from core.application.use_cases.get_wallet_overview import GetWalletBalanceHistoryUseCase
+        return GetWalletBalanceHistoryUseCase(client=_FakeClient()).execute(chain="ethereum", address=VITALIK)
+
+    @pytest.mark.unit
+    def test_history_sorted_and_valued(self):
+        r = self._history()
+        dates = [p["date"] for p in r["history"]]
+        assert dates == ["2026-06-20", "2026-06-22", "2026-06-24"]   # ordenado por fecha
+        assert r["history"][0]["balance"] == pytest.approx(1.0)
+        # valorado al precio actual (2000)
+        assert r["history"][2]["value_usd_at_today_price"] == pytest.approx(10000.0)
+
+    @pytest.mark.unit
+    def test_invalid_address_rejected(self):
+        from core.application.use_cases.get_wallet_overview import GetWalletBalanceHistoryUseCase
+        r = GetWalletBalanceHistoryUseCase(client=_FakeClient()).execute(chain="ethereum", address="0xbad")
+        assert "error" in r
+
+
 class TestApi:
 
     @pytest.mark.integration
@@ -163,3 +236,22 @@ class TestApi:
     def test_wallet_endpoint_rejects_bad_address(self, authenticated_client):
         resp = authenticated_client.get("/api/blockchain/wallet/", {"chain": "ethereum", "address": "0xbad"})
         assert resp.status_code == 400 and "error" in resp.data
+
+    @pytest.mark.integration
+    def test_health_endpoint_returns_gas(self, authenticated_client, monkeypatch):
+        monkeypatch.setattr(BlockscoutClient, "get_chain_stats", lambda self, c: FAKE_STATS)
+        resp = authenticated_client.get("/api/blockchain/health/", {"chain": "ethereum"})
+        assert resp.status_code == 200
+        assert resp.data["gas_level"] == "cheap" and resp.data["gas_average"] == pytest.approx(1.9)
+
+    @pytest.mark.integration
+    def test_health_requires_auth(self, api_client):
+        assert api_client.get("/api/blockchain/health/").status_code == 401
+
+    @pytest.mark.integration
+    def test_balance_history_endpoint(self, authenticated_client, monkeypatch):
+        monkeypatch.setattr(BlockscoutClient, "get_balance_history", lambda self, c, a: FAKE_BALANCE_HISTORY)
+        monkeypatch.setattr(BlockscoutClient, "get_address", lambda self, c, a: FAKE_ADDRESS)
+        resp = authenticated_client.get("/api/blockchain/wallet/history/", {"chain": "ethereum", "address": VITALIK})
+        assert resp.status_code == 200 and resp.data["points"] == 3
+        assert resp.data["history"][0]["date"] == "2026-06-20"

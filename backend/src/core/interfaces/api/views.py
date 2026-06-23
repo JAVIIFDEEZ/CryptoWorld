@@ -1180,6 +1180,98 @@ class WalletOverviewView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class WalletBalanceHistoryView(APIView):
+    """
+    GET /api/blockchain/wallet/history/?chain=ethereum&address=0x... — Serie diaria
+    del saldo nativo de una dirección (curva de patrimonio on-chain) vía Blockscout.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — la serie diaria cambia poco
+
+    def get(self, request):
+        from core.application.use_cases.get_wallet_overview import GetWalletBalanceHistoryUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        cache_key = f"wallet_history:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetWalletBalanceHistoryUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class ChainHealthView(APIView):
+    """
+    GET /api/blockchain/health/?chain=ethereum — Salud de red y rastreador de gas:
+    precios de gas (Gwei), utilización, tiempo de bloque y precio del nativo, con
+    aviso de gas barato/normal/caro específico por red (vía Blockscout).
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 60  # segundos — el gas cambia bloque a bloque
+
+    def get(self, request):
+        from core.application.use_cases.get_chain_health import GetChainHealthUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        cache_key = f"chain_health:{chain}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetChainHealthUseCase().execute(chain=chain)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class AddressWatchlistView(APIView):
+    """
+    GET  /api/blockchain/watchlist/ — Direcciones on-chain vigiladas del usuario,
+         con su saldo y las alertas recientes de movimientos.
+    POST /api/blockchain/watchlist/ — Añade una dirección.
+         Body: {"chain": "ethereum", "address": "0x...", "label"?: str, "threshold_pct"?: float}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.watchlist import WatchlistUseCase
+
+        return Response(WatchlistUseCase().execute(owner=request.user), status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from core.application.use_cases.watchlist import AddWatchedAddressUseCase
+
+        result = AddWatchedAddressUseCase().execute(
+            owner=request.user,
+            chain=request.data.get("chain", "ethereum"),
+            address=request.data.get("address", ""),
+            label=request.data.get("label", ""),
+            threshold_pct=request.data.get("threshold_pct", 5.0),
+        )
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class AddressWatchlistItemView(APIView):
+    """DELETE /api/blockchain/watchlist/<id>/ — Elimina una dirección vigilada."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, watch_id: int):
+        from core.application.use_cases.watchlist import RemoveWatchedAddressUseCase
+
+        result = RemoveWatchedAddressUseCase().execute(owner=request.user, watch_id=watch_id)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class NewsFeedView(APIView):
     """
     GET /api/news/ â€” Feed de noticias con filtro de sentimiento.

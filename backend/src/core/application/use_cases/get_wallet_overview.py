@@ -157,6 +157,56 @@ class GetWalletOverviewUseCase:
         return out
 
 
+class GetWalletBalanceHistoryUseCase:
+    """Serie diaria del saldo nativo de una dirección (curva de patrimonio
+    on-chain). Devuelve el saldo exacto en unidades nativas y, como referencia, su
+    valor al precio ACTUAL del nativo (no histórico: Blockscout no da precio por
+    día, así que se etiqueta claramente como valoración al precio de hoy)."""
+
+    def __init__(self, client: Optional[BlockscoutClient] = None) -> None:
+        self._client = client or BlockscoutClient()
+
+    def execute(self, chain: str, address: str) -> dict:
+        chain = (chain or "").strip().lower()
+        address = (address or "").strip()
+        if chain not in SUPPORTED_CHAINS:
+            return {"error": f"Red '{chain}' no soportada. Disponibles: {SUPPORTED_CHAINS}"}
+        if not is_valid_address(address):
+            return {"error": "Dirección inválida: debe ser 0x seguido de 40 caracteres hexadecimales."}
+
+        try:
+            raw = self._client.get_balance_history(chain, address)
+            info = self._client.get_address(chain, address)
+        except BlockscoutClientError as exc:
+            logger.warning("balance_history %s/%s: %s", chain, address, exc)
+            return {"error": str(exc)}
+
+        from core.infrastructure.external_apis.blockscout_client import CHAINS
+        meta = CHAINS[chain]
+        price_now = _to_float(info.get("exchange_rate"))
+
+        history = []
+        for point in raw:
+            balance = _adjust(point.get("value"), 18)
+            history.append({
+                "date": point.get("date"),
+                "balance": round(balance, 8),
+                "value_usd_at_today_price": round(balance * price_now, 2) if price_now else None,
+            })
+        history.sort(key=lambda p: p["date"] or "")
+
+        return {
+            "chain": chain,
+            "address": address,
+            "native_symbol": meta["native"],
+            "price_now_usd": price_now or None,
+            "points": len(history),
+            "history": history,
+            "note": "Saldo nativo exacto por día; la valoración usa el precio actual, no el histórico.",
+            "source": "blockscout",
+        }
+
+
 class GetSupportedChainsUseCase:
     """Lista de redes soportadas por el explorador de wallets."""
 

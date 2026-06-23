@@ -504,6 +504,30 @@ def evaluate_paper_trading(self) -> dict:
 
 
 @shared_task(
+    name="core.tasks.monitor_watched_addresses",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def monitor_watched_addresses(self) -> dict:
+    """
+    Revisa las direcciones on-chain vigiladas por los usuarios y crea alertas
+    cuando su saldo nativo varía por encima del umbral (whale tracking ligero).
+    Programada por celery beat (cada 30 min).
+    """
+    try:
+        from core.application.use_cases.watchlist import MonitorWatchedAddressesUseCase
+
+        result = MonitorWatchedAddressesUseCase().execute()
+        logger.info("monitor_watched_addresses: %d revisadas, %d alertas",
+                    result["checked"], result["alerts"])
+        return result
+    except Exception as exc:
+        logger.error("monitor_watched_addresses error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.reoptimize_asset",
     bind=True,
     max_retries=0,

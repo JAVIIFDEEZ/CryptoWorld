@@ -349,5 +349,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.reoptimize_strategies",
         "schedule": crontab(day_of_week=1, hour=3, minute=0),
     },
+    # Vigilar direcciones on-chain de la watchlist y alertar movimientos (cada 30 min)
+    "monitor-watched-addresses": {
+        "task": "core.tasks.monitor_watched_addresses",
+        "schedule": 1800.0,  # segundos — cada 30 min
+    },
 }
 

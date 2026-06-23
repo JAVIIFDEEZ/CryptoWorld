@@ -790,3 +790,79 @@ class PaperEquitySnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"#{self.account_id} {self.equity:.2f} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class WatchedAddress(models.Model):
+    """
+    Dirección on-chain vigilada por un usuario (watchlist). Una tarea periódica
+    consulta su saldo nativo y, cuando varía por encima de un umbral, registra una
+    alerta (whale tracking ligero). Permite seguir wallets de interés —ballenas,
+    tesorerías, contratos— sin construir un indexador propio: se apoya en la API
+    de Blockscout.
+    """
+
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="watched_addresses",
+    )
+    chain = models.CharField(max_length=20)            # slug de red (ethereum, base…)
+    address = models.CharField(max_length=42)          # dirección EVM (0x + 40 hex)
+    label = models.CharField(max_length=80, blank=True)  # alias legible opcional
+    native_symbol = models.CharField(max_length=10, blank=True)
+    # Umbral de variación (%) del saldo nativo que dispara una alerta.
+    alert_threshold_pct = models.FloatField(default=5.0)
+
+    last_balance = models.FloatField(null=True, blank=True)     # saldo nativo (unidades)
+    last_value_usd = models.FloatField(null=True, blank=True)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "watched_addresses"
+        verbose_name = "Dirección Vigilada"
+        verbose_name_plural = "Direcciones Vigiladas"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "chain", "address"], name="uniq_watched_owner_chain_address",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["owner", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.label or self.address[:10]} ({self.chain})"
+
+
+class AddressAlert(models.Model):
+    """Movimiento significativo detectado en una dirección vigilada."""
+
+    DIRECTION_CHOICES = [("increase", "Entrada"), ("decrease", "Salida")]
+
+    watched = models.ForeignKey(
+        WatchedAddress, on_delete=models.CASCADE, related_name="alerts",
+    )
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="address_alerts",
+    )
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    balance_before = models.FloatField()
+    balance_after = models.FloatField()
+    delta = models.FloatField()           # variación en unidades nativas (con signo)
+    delta_pct = models.FloatField()       # variación porcentual (con signo)
+    value_usd = models.FloatField(null=True, blank=True)  # valor del movimiento (precio actual)
+    notified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "address_alerts"
+        verbose_name = "Alerta de Dirección"
+        verbose_name_plural = "Alertas de Dirección"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.direction} {self.delta_pct:+.1f}% · {self.watched_id}"
