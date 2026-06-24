@@ -139,6 +139,40 @@ class BlockscoutClient:
             return data.get("items", []) or []
         return data if isinstance(data, list) else []
 
+    def _paginated_items(self, chain: str, path: str, pages: int = 1,
+                         params: dict | None = None) -> list[dict[str, Any]]:
+        """Recorre hasta `pages` páginas de un endpoint paginado de Blockscout
+        (sigue `next_page_params`) y acumula los `items`. Tolera errores de red
+        tras la primera página: devuelve lo acumulado."""
+        items: list = []
+        next_params = dict(params or {})
+        for page in range(max(1, pages)):
+            try:
+                data = self._get(chain, path, params=next_params)
+            except BlockscoutClientError:
+                if page == 0:
+                    raise
+                break
+            if not isinstance(data, dict):
+                break
+            items.extend(data.get("items", []) or [])
+            next_page = data.get("next_page_params")
+            if not next_page:
+                break
+            next_params = next_page
+        return items
+
+    def get_recent_transactions(self, chain: str, pages: int = 2) -> list[dict[str, Any]]:
+        """GET /api/v2/transactions — transacciones recientes de toda la cadena
+        (para detectar grandes transferencias de la moneda nativa)."""
+        return self._paginated_items(chain, "/api/v2/transactions", pages=pages)
+
+    def get_recent_token_transfers(self, chain: str, pages: int = 2) -> list[dict[str, Any]]:
+        """GET /api/v2/token-transfers — transferencias de tokens recientes de toda
+        la cadena (para detectar grandes movimientos de ERC-20, p. ej. stablecoins)."""
+        return self._paginated_items(chain, "/api/v2/token-transfers", pages=pages,
+                                     params={"type": "ERC-20"})
+
     @staticmethod
     def supported_chains() -> list[dict[str, Any]]:
         """Lista de redes soportadas con su metadata para la UI."""

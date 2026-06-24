@@ -1230,6 +1230,40 @@ class ChainHealthView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class WhaleMovementsView(APIView):
+    """
+    GET /api/blockchain/movements/?chain=ethereum&min_usd=100000&limit=25 — Mayores
+    movimientos on-chain recientes (transferencias nativas + de tokens ERC-20)
+    ordenados por valor en USD, con etiquetas de entidad cuando se conocen.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 60  # segundos
+
+    def get(self, request):
+        from core.application.use_cases.get_whale_movements import GetWhaleMovementsUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        try:
+            min_usd = float(request.query_params.get("min_usd", 100000))
+        except (TypeError, ValueError):
+            min_usd = 100000.0
+        try:
+            limit = min(int(request.query_params.get("limit", 25)), 100)
+        except (TypeError, ValueError):
+            limit = 25
+
+        cache_key = f"whale_movements:{chain}:{int(min_usd)}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetWhaleMovementsUseCase().execute(chain=chain, min_usd=min_usd, limit=limit)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class AddressWatchlistView(APIView):
     """
     GET  /api/blockchain/watchlist/ — Direcciones on-chain vigiladas del usuario,
