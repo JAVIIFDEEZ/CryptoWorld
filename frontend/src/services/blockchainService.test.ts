@@ -86,4 +86,14 @@ describe('blockchainService wallet explorer', () => {
     expect(mockApi.delete).toHaveBeenCalledWith('/blockchain/watchlist/3/')
     expect(r.removed).toBe(true)
   })
+
+  it('getWhaleMovements forwards chain, min_usd and limit', async () => {
+    mockApi.get.mockResolvedValue({ data: { count: 0, movements: [] } })
+    await blockchainService.getWhaleMovements('ethereum', 1000000, 10)
+    const url = mockApi.get.mock.calls[0][0] as string
+    expect(url).toContain('/blockchain/movements/?')
+    expect(url).toContain('chain=ethereum')
+    expect(url).toContain('min_usd=1000000')
+    expect(url).toContain('limit=10')
+  })
 })

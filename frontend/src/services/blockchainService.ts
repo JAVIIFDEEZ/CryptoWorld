@@ -205,6 +205,41 @@ export interface WatchlistResponse {
   alerts: AddressAlert[]
 }
 
+// ── Mayores movimientos on-chain (whale watch) ─────────────────────
+
+export interface MovementParty {
+  address: string | null
+  label: string | null
+  is_contract: boolean
+}
+
+export interface WhaleMovement {
+  kind: 'native' | 'token'
+  symbol: string
+  token_name?: string | null
+  amount: number
+  value_usd: number | null
+  from: MovementParty
+  to: MovementParty
+  hash: string | null
+  method: string | null
+  timestamp: string | null
+  explorer_url: string | null
+}
+
+export interface WhaleMovementsResponse {
+  chain: string
+  chain_name: string
+  native_symbol: string
+  min_usd: number
+  scanned: number
+  count: number
+  movements: WhaleMovement[]
+  note: string
+  source: string
+  error?: string
+}
+
 export const blockchainService = {
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
@@ -251,6 +286,13 @@ export const blockchainService = {
   getChainHealth: async (chain: string): Promise<ChainHealth> => {
     const params = new URLSearchParams({ chain })
     const { data } = await apiClient.get(`/blockchain/health/?${params}`)
+    return data
+  },
+
+  /** Mayores movimientos on-chain recientes (nativos + tokens) por valor en USD. */
+  getWhaleMovements: async (chain: string, minUsd = 100000, limit = 25): Promise<WhaleMovementsResponse> => {
+    const params = new URLSearchParams({ chain, min_usd: String(minUsd), limit: String(limit) })
+    const { data } = await apiClient.get(`/blockchain/movements/?${params}`)
     return data
   },
 
