@@ -77,13 +77,19 @@ class GetWhaleMovementsUseCase:
 
         try:
             stats = self._client.get_chain_stats(chain)
-            native_txs = self._client.get_recent_transactions(chain, pages=pages)
-            token_txs = self._client.get_recent_token_transfers(chain, pages=pages)
-        except BlockscoutClientError as exc:
-            logger.warning("whale_movements %s: %s", chain, exc)
-            return {"error": str(exc)}
-
+        except BlockscoutClientError:
+            stats = {}
         coin_price = _to_float(stats.get("coin_price"))
+
+        # Cada fuente se consulta de forma independiente: si una falla (timeout,
+        # endpoint no disponible en esa instancia), seguimos con la otra en vez de
+        # dejar la tabla vacía. Solo erramos si fallan AMBAS.
+        native_txs, native_err = self._safe(lambda: self._client.get_recent_transactions(chain, pages=pages))
+        token_txs, token_err = self._safe(lambda: self._client.get_recent_token_transfers(chain, pages=pages))
+        if native_err and token_err:
+            logger.warning("whale_movements %s: ambas fuentes fallaron: %s / %s", chain, native_err, token_err)
+            return {"error": native_err or token_err}
+
         movements = []
         movements.extend(self._native_movements(native_txs, coin_price, meta["native"]))
         movements.extend(self._token_movements(token_txs))
@@ -103,9 +109,21 @@ class GetWhaleMovementsUseCase:
             "scanned": len(native_txs) + len(token_txs),
             "count": len(top),
             "movements": top,
+            "partial": bool(native_err or token_err),
             "note": "Mayores movimientos entre las transacciones recientes (no histórico global).",
             "source": "blockscout",
         }
+
+    @staticmethod
+    def _safe(fn):
+        """Ejecuta una consulta y captura su error: devuelve (items, error_str)."""
+        from core.infrastructure.external_apis.blockscout_client import BlockscoutClientError
+        try:
+            return fn() or [], None
+        except BlockscoutClientError as exc:
+            return [], str(exc)
+        except Exception as exc:  # noqa: BLE001 — una fuente rota no debe tumbar el feed
+            return [], str(exc)
 
     @staticmethod
     def _native_movements(txs: list, coin_price: float, symbol: str) -> list:

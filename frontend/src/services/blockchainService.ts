@@ -235,6 +235,7 @@ export interface WhaleMovementsResponse {
   scanned: number
   count: number
   movements: WhaleMovement[]
+  partial?: boolean
   note: string
   source: string
   error?: string

@@ -106,6 +106,37 @@ class TestWhaleMovements:
         r = GetWhaleMovementsUseCase(client=_FakeClient()).execute(chain="dogechain")
         assert "error" in r
 
+    @pytest.mark.unit
+    def test_one_source_failing_still_returns_other(self):
+        """Si las transferencias de tokens fallan, seguimos mostrando las nativas."""
+        from core.infrastructure.external_apis.blockscout_client import BlockscoutClientError
+
+        class _PartialClient(_FakeClient):
+            def get_recent_token_transfers(self, chain, pages=2):
+                raise BlockscoutClientError("token-transfers no disponible")
+
+        r = GetWhaleMovementsUseCase(client=_PartialClient()).execute(chain="ethereum")
+        assert r.get("partial") is True
+        symbols = [m["symbol"] for m in r["movements"]]
+        assert "ETH" in symbols and "USDC" not in symbols   # solo nativas
+
+    @pytest.mark.unit
+    def test_both_sources_failing_errors(self):
+        from core.infrastructure.external_apis.blockscout_client import BlockscoutClientError
+
+        class _BrokenClient:
+            def get_chain_stats(self, chain):
+                return FAKE_STATS
+
+            def get_recent_transactions(self, chain, pages=2):
+                raise BlockscoutClientError("transactions caído")
+
+            def get_recent_token_transfers(self, chain, pages=2):
+                raise BlockscoutClientError("token-transfers caído")
+
+        r = GetWhaleMovementsUseCase(client=_BrokenClient()).execute(chain="ethereum")
+        assert "error" in r
+
 
 class TestApi:
 

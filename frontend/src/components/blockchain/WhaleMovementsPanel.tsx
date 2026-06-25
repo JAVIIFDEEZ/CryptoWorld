@@ -60,18 +60,28 @@ export default function WhaleMovementsPanel() {
   const [minUsd, setMinUsd] = useState(100_000)
   const [data, setData] = useState<WhaleMovementsResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     blockchainService.getWalletChains().then(setChains).catch(() => { /* sin redes */ })
   }, [])
 
-  useEffect(() => {
-    setLoading(true)
+  function load() {
+    setLoading(true); setError(null)
     blockchainService.getWhaleMovements(chain, minUsd)
-      .then((d) => setData(d.error ? null : d))
-      .catch(() => setData(null))
+      .then((d) => {
+        if (d.error) { setData(null); setError(d.error) }
+        else setData(d)
+      })
+      .catch((e: unknown) => {
+        setData(null)
+        const resp = (e as { response?: { data?: { error?: string } } })?.response
+        setError(resp?.data?.error ?? 'No se pudieron cargar los movimientos (¿red de Blockscout accesible?).')
+      })
       .finally(() => setLoading(false))
-  }, [chain, minUsd])
+  }
+
+  useEffect(load, [chain, minUsd])
 
   return (
     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 mb-6">
@@ -79,6 +89,10 @@ export default function WhaleMovementsPanel() {
         <span className="text-sky-400">🐋</span>
         <h2 className="text-lg font-bold text-white">Mayores movimientos</h2>
         <div className="ml-auto flex gap-2">
+          <button onClick={load} disabled={loading} title="Actualizar"
+            className="px-2 py-1.5 rounded-lg text-sm bg-slate-900 border border-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50">
+            ⟳
+          </button>
           <select value={minUsd} onChange={(e) => setMinUsd(Number(e.target.value))}
             className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-500">
             {THRESHOLDS.map((t) => <option key={t} value={t}>≥ {fmtUsd(t)}</option>)}
@@ -95,13 +109,22 @@ export default function WhaleMovementsPanel() {
         Las mayores transferencias recientes por valor en USD · nativas y tokens · vía Blockscout
       </p>
 
-      {loading && <p className="text-slate-500 text-sm">Cargando…</p>}
+      {loading && <p className="text-slate-500 text-sm">Cargando movimientos…</p>}
 
-      {!loading && data && data.movements.length === 0 && (
-        <p className="text-slate-500 text-sm">No hay movimientos por encima de {fmtUsd(minUsd)} entre las transacciones recientes.</p>
+      {!loading && error && (
+        <div className="text-amber-300/90 text-sm bg-amber-900/15 border border-amber-700/40 rounded-lg px-3 py-2">
+          {error} <button onClick={load} className="underline hover:text-amber-200 ml-1">Reintentar</button>
+        </div>
       )}
 
-      {!loading && data && data.movements.length > 0 && (
+      {!loading && !error && data && data.movements.length === 0 && (
+        <p className="text-slate-500 text-sm">
+          No hay movimientos por encima de {fmtUsd(minUsd)} entre las {data.scanned} transacciones recientes analizadas.
+          Prueba a bajar el umbral.
+        </p>
+      )}
+
+      {!loading && !error && data && data.movements.length > 0 && (
         <>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
