@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth, type AuthUser } from '@/hooks/useAuth'
 import TickerBar from '@/components/market/TickerBar'
+import CommandPalette from '@/components/layout/CommandPalette'
 
 /** Iniciales del usuario para el avatar (ej. "Javier" → "JA"). */
 function userInitials(user: AuthUser | null): string {
@@ -222,6 +223,9 @@ function AppShell() {
       {/* Ticker bar — cotizaciones en tiempo real */}
       <TickerBar />
 
+      {/* Paleta de comandos global (⌘K / Ctrl+K) */}
+      <CommandPalette />
+
       {mobileMenuOpen && (
         <button
           className="fixed inset-0 z-30 bg-black/50 lg:hidden"
@@ -245,6 +249,20 @@ function AppShell() {
               onClick={() => navigate('/dashboard')}
             >
               <span className="text-blue-400">Crypto</span>World
+            </button>
+          </div>
+
+          {/* Buscador global — abre la paleta de comandos (⌘K) */}
+          <div className="px-3 pt-3">
+            <button
+              onClick={() => window.dispatchEvent(new Event('open-command-palette'))}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors"
+            >
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span className="text-xs">Buscar…</span>
+              <kbd className="ml-auto text-[10px] border border-white/15 rounded px-1.5 py-0.5">⌘K</kbd>
             </button>
           </div>
 
