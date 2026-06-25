@@ -46,12 +46,28 @@ function ago(ts: string | null): string {
   return `${Math.floor(d / 86400)}d`
 }
 
-function Party({ p }: Readonly<{ p: MovementParty }>) {
+function Party({ p, watched, busy, onWatch }: Readonly<{
+  p: MovementParty; watched?: boolean; busy?: boolean; onWatch?: (addr: string | null) => void
+}>) {
   const short = p.address ? `${p.address.slice(0, 6)}…${p.address.slice(-4)}` : '—'
-  if (p.label) {
-    return <span className="text-cyan-300 font-medium" title={p.address ?? ''}>{p.label}</span>
-  }
-  return <span className="text-slate-400 font-mono" title={p.address ?? ''}>{short}{p.is_contract ? ' ⚙' : ''}</span>
+  const label = p.label
+    ? <span className="text-cyan-300 font-medium" title={p.address ?? ''}>{p.label}</span>
+    : <span className="text-slate-400 font-mono" title={p.address ?? ''}>{short}{p.is_contract ? ' ⚙' : ''}</span>
+  return (
+    <span className="inline-flex items-center gap-1">
+      {label}
+      {p.address && onWatch && (
+        <button
+          onClick={() => onWatch(p.address)}
+          disabled={busy}
+          title={watched ? 'Ya en tu watchlist' : 'Vigilar esta dirección'}
+          className={`text-[10px] transition-colors disabled:opacity-50 ${watched ? 'text-fuchsia-400' : 'text-slate-600 hover:text-fuchsia-300'}`}
+        >
+          {watched ? '✓👁' : '👁'}
+        </button>
+      )}
+    </span>
+  )
 }
 
 export default function WhaleMovementsPanel() {
@@ -61,6 +77,22 @@ export default function WhaleMovementsPanel() {
   const [data, setData] = useState<WhaleMovementsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [watched, setWatched] = useState<Set<string>>(new Set())
+  const [busyAddr, setBusyAddr] = useState<string | null>(null)
+
+  // Vigilar (añadir a la watchlist) una dirección que aparece en un movimiento,
+  // sin salir del feed. Conecta el whale watch con la watchlist.
+  async function watchAddress(addr: string | null) {
+    if (!addr || !data) return
+    const key = addr.toLowerCase()
+    if (watched.has(key)) return
+    setBusyAddr(addr)
+    try {
+      await blockchainService.addWatchedAddress(data.chain, addr)
+      setWatched((s) => new Set(s).add(key))   // marca también si ya estaba vigilada
+    } catch { /* ignora */ }
+    finally { setBusyAddr(null) }
+  }
 
   useEffect(() => {
     blockchainService.getWalletChains().then(setChains).catch(() => { /* sin redes */ })
@@ -150,8 +182,12 @@ export default function WhaleMovementsPanel() {
                     </td>
                     <td className="py-2 pr-3 text-right font-mono text-slate-300">{fmtAmount(m.amount)}</td>
                     <td className="py-2 pr-3 text-right font-mono text-emerald-300 font-bold">{fmtUsd(m.value_usd)}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap"><Party p={m.from} /></td>
-                    <td className="py-2 pr-3 whitespace-nowrap"><Party p={m.to} /></td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <Party p={m.from} watched={watched.has((m.from.address ?? '').toLowerCase())} busy={busyAddr === m.from.address} onWatch={watchAddress} />
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <Party p={m.to} watched={watched.has((m.to.address ?? '').toLowerCase())} busy={busyAddr === m.to.address} onWatch={watchAddress} />
+                    </td>
                     <td className="py-2 text-right text-slate-500 whitespace-nowrap">
                       {m.explorer_url
                         ? <a href={m.explorer_url} target="_blank" rel="noreferrer" className="hover:text-sky-300">{ago(m.timestamp)} ↗</a>
