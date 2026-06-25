@@ -13,9 +13,9 @@
 
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import ProtectedRoute from '@/components/ProtectedRoute'
-import { AdminRoute } from '@/components/AdminRoute'
-import AppShell from '@/components/AppShell'
+import ProtectedRoute from '@/components/layout/ProtectedRoute'
+import { AdminRoute } from '@/components/layout/AdminRoute'
+import AppShell from '@/components/layout/AppShell'
 
 // Code splitting: cada página se carga sólo cuando se navega a ella
 const LandingPage = lazy(() => import('@/pages/LandingPage'))

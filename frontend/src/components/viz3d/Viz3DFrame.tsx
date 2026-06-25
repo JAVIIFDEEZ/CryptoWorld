@@ -9,7 +9,7 @@
 import { Suspense, type ReactNode } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useReducedMotion } from '@/lib/useReducedMotion'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 interface Props {
   children: ReactNode

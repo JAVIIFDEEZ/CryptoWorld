@@ -21,7 +21,7 @@ import {
   type ClosePositionPayload,
   type AddToPositionPayload,
 } from '../services/portfolioService'
-import PortfolioInsights from '../components/PortfolioInsights'
+import PortfolioInsights from '@/components/portfolio/PortfolioInsights'
 import EmptyState from '../components/ui/EmptyState'
 import AnimatedNumber from '../components/ui/AnimatedNumber'
 import Skeleton from '../components/ui/Skeleton'

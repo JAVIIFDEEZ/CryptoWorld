@@ -12,7 +12,7 @@ import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import Viz3DFrame from '@/components/viz3d/Viz3DFrame'
-import { useReducedMotion } from '@/lib/useReducedMotion'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 import type { StrategySpec, SpecCondition } from '@/services/strategyGeneratorService'
 
 const R = 2.1            // radio de la hélice

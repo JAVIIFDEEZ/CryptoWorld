@@ -14,7 +14,7 @@ import { AuthProvider } from '@/hooks/useAuth'
 import { CurrencyProvider } from '@/hooks/useCurrency'
 import { ToastProvider } from '@/components/ui/Toast'
 import AppRoutes from '@/routes'
-import ErrorBoundary from '@/components/ErrorBoundary'
+import ErrorBoundary from '@/components/layout/ErrorBoundary'
 
 function App() {
   return (

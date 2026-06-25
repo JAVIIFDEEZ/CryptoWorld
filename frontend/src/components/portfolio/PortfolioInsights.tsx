@@ -16,9 +16,9 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
 } from 'recharts'
-import type { Position } from '../services/portfolioService'
-import AnimatedNumber from './ui/AnimatedNumber'
-import PortfolioVizPanel from './portfolio/PortfolioVizPanel'
+import type { Position } from '@/services/portfolioService'
+import AnimatedNumber from '@/components/ui/AnimatedNumber'
+import PortfolioVizPanel from '@/components/portfolio/PortfolioVizPanel'
 
 // Paleta cualitativa para segmentos del donut (consistente con el tema oscuro).
 const PALETTE = [

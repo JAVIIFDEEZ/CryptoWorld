@@ -19,7 +19,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { marketService } from '@/services/marketService'
 import { isWebGLAvailable } from '@/lib/webgl'
-import { useReducedMotion } from '@/lib/useReducedMotion'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 const HeroParticles3D = lazy(() => import('@/components/landing/HeroParticles3D'))
 

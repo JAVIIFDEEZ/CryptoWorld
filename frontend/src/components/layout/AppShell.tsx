@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth, type AuthUser } from '@/hooks/useAuth'
-import TickerBar from '@/components/TickerBar'
+import TickerBar from '@/components/market/TickerBar'
 
 /** Iniciales del usuario para el avatar (ej. "Javier" → "JA"). */
 function userInitials(user: AuthUser | null): string {

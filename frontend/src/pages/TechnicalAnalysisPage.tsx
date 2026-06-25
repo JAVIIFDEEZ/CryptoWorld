@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
-import AnalysisPanel from '@/components/AnalysisPanel'
-import RobustnessPanel from '@/components/RobustnessPanel'
+import AnalysisPanel from '@/components/analysis/AnalysisPanel'
+import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function TechnicalAnalysisPage() {
