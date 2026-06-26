@@ -1306,6 +1306,41 @@ class AddressWatchlistItemView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class NotificationsView(APIView):
+    """
+    GET  /api/notifications/ — Feed unificado de notificaciones del usuario
+         (señales, ballenas, predicciones resueltas, alertas de precio) + nº de
+         no leídas.
+    POST /api/notifications/seen/ — Marca todas como leídas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.notifications import NotificationsFeedUseCase
+
+        try:
+            limit = min(int(request.query_params.get("limit", 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+        return Response(
+            NotificationsFeedUseCase().execute(owner=request.user, limit=limit),
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationsSeenView(APIView):
+    """POST /api/notifications/seen/ — Marca todas las notificaciones como leídas."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.application.use_cases.notifications import MarkNotificationsSeenUseCase
+
+        return Response(
+            MarkNotificationsSeenUseCase().execute(owner=request.user),
+            status=status.HTTP_200_OK,
+        )
+
+
 class NewsFeedView(APIView):
     """
     GET /api/news/ â€” Feed de noticias con filtro de sentimiento.

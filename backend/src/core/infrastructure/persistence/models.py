@@ -102,6 +102,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="Recibir resúmenes periódicos del estado del mercado.",
     )
+    notifications_seen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Última vez que el usuario abrió el centro de notificaciones; "
+                  "los eventos posteriores cuentan como no leídos.",
+    )
 
     objects = UserManager()
 

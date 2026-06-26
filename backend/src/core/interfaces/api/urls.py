@@ -184,6 +184,8 @@ urlpatterns = [
     path("blockchain/movements/", views.WhaleMovementsView.as_view(), name="blockchain-movements"),
     path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
     path("blockchain/watchlist/<int:watch_id>/", views.AddressWatchlistItemView.as_view(), name="blockchain-watchlist-item"),
+    path("notifications/", views.NotificationsView.as_view(), name="notifications"),
+    path("notifications/seen/", views.NotificationsSeenView.as_view(), name="notifications-seen"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
 
     # ── Admin ───────────────────────────────────────────────────────
