@@ -132,7 +132,17 @@ function fmtValue(v: number): string {
 
 // ────────────────────────── Página principal ─────────────────────
 
+type BlockchainView = 'network' | 'whales' | 'wallets' | 'market'
+
+const BLOCKCHAIN_TABS: { key: BlockchainView; label: string; icon: string }[] = [
+  { key: 'network', label: 'Red y gas', icon: '⛽' },
+  { key: 'whales', label: 'Movimientos', icon: '🐋' },
+  { key: 'wallets', label: 'Wallets', icon: '🔍' },
+  { key: 'market', label: 'Mercado on-chain', icon: '📊' },
+]
+
 export default function BlockchainPage() {
+  const [view, setView] = useState<BlockchainView>('network')
   const [chain, setChain] = useState<MultiChainSymbol>('BTC')
 
   // ── Blockchair snapshot ──
@@ -226,6 +236,38 @@ export default function BlockchainPage() {
           </p>
         </div>
 
+        {/* ── Sub-navegación por submódulos ── */}
+        <div className="flex flex-wrap gap-1 mb-6 border-b border-slate-700">
+          {BLOCKCHAIN_TABS.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setView(t.key)}
+              className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                view === t.key ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span className="mr-1.5">{t.icon}</span>{t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Red y gas (Blockscout) ── */}
+        {view === 'network' && <NetworkHealthPanel />}
+
+        {/* ── Movimientos / ballenas (Blockscout) ── */}
+        {view === 'whales' && <WhaleMovementsPanel />}
+
+        {/* ── Wallets: explorador + vigilancia (Blockscout) ── */}
+        {view === 'wallets' && (
+          <>
+            <WalletExplorerPanel />
+            <WatchlistPanel />
+          </>
+        )}
+
+        {/* ── Mercado on-chain: comparador + estadísticas por cadena ── */}
+        {view === 'market' && (
+          <>
         {/* ── Selector de chain ── */}
         <div className="flex flex-wrap gap-2 mb-6">
           {MULTICHAIN_SYMBOLS.map(s => (
@@ -241,18 +283,6 @@ export default function BlockchainPage() {
             </button>
           ))}
         </div>
-
-        {/* ── Salud de red y rastreador de gas (Blockscout) ── */}
-        <NetworkHealthPanel />
-
-        {/* ── Mayores movimientos on-chain / whale watch (Blockscout) ── */}
-        <WhaleMovementsPanel />
-
-        {/* ── Explorador on-chain de wallets (Blockscout) ── */}
-        <WalletExplorerPanel />
-
-        {/* ── Vigilancia de direcciones + alertas (Blockscout) ── */}
-        <WatchlistPanel />
 
         {/* ── Comparador multi-cadena (3D/2D) ── */}
         <div className="mb-6">
@@ -483,6 +513,8 @@ export default function BlockchainPage() {
               </div>
             )}
           </div>
+        )}
+          </>
         )}
 
     </div>
