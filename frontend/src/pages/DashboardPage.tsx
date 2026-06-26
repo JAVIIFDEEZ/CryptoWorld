@@ -21,6 +21,7 @@ import Sparkline from '@/components/ui/Sparkline'
 import EmptyState from '@/components/ui/EmptyState'
 import DeltaChip from '@/components/ui/DeltaChip'
 import { SkeletonRow } from '@/components/ui/Skeleton'
+import { useDashboardLayout, WIDGET_LABELS } from '@/hooks/useDashboardLayout'
 
 function fearGreedLabel(v: number): string {
   if (v >= 75) return 'Codicia extrema'
@@ -46,6 +47,8 @@ function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [sparks, setSparks] = useState<Record<string, number[]>>({})
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
+  const { layout, toggle, move, reset } = useDashboardLayout()
+  const [customize, setCustomize] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -106,115 +109,169 @@ function DashboardPage() {
   const bullishCount = assets.filter((a) => a.is_bullish_24h).length
   const bearishCount = assets.length - bullishCount
 
+  function renderWidget(id: string) {
+    switch (id) {
+      case 'market':
+        return (
+          <section>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+              Mercado global
+            </h2>
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {overview ? (
+                  <>
+                    <StatCard label="Cap. total" value={formatCompact(overview.total_market_cap_usd)} animateValue={Number(overview.total_market_cap_usd)} format={formatCompact} tone="brand" />
+                    <StatCard label="Volumen 24h" value={formatCompact(overview.total_volume_24h_usd)} animateValue={Number(overview.total_volume_24h_usd)} format={formatCompact} tone="brand" />
+                    <StatCard label="Dominancia BTC" value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`} animateValue={parseFloat(overview.btc_dominance_pct)} format={(n) => `${n.toFixed(1)}%`} tone="brand" />
+                  </>
+                ) : (
+                  <>
+                    <StatCard label="Cap. total" value="—" />
+                    <StatCard label="Volumen 24h" value="—" />
+                    <StatCard label="Dominancia BTC" value="—" />
+                  </>
+                )}
+              </div>
+
+              {/* Fear & Greed como medidor */}
+              <div className="bg-slate-800/60 rounded-xl border border-slate-700 px-5 py-4 flex flex-col items-center justify-center">
+                <p className="text-slate-500 text-xs self-start mb-1">Miedo y codicia</p>
+                {overview ? (
+                  <Gauge value={overview.fear_greed_index} label={fearGreedLabel(overview.fear_greed_index)} />
+                ) : (
+                  <div className="text-slate-600 text-sm py-6">—</div>
+                )}
+              </div>
+            </div>
+          </section>
+        )
+
+      case 'catalog':
+        return (
+          <section>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+              Catálogo
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <StatCard label="Activos monitorizados" value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
+              <StatCard
+                label="Alcistas (24h)"
+                value={String(bullishCount)}
+                animateValue={bullishCount}
+                format={(n) => String(Math.round(n))}
+                sub={assets.length ? `${((bullishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
+                tone="positive"
+              />
+              <StatCard
+                label="Bajistas (24h)"
+                value={String(bearishCount)}
+                animateValue={bearishCount}
+                format={(n) => String(Math.round(n))}
+                sub={assets.length ? `${((bearishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
+                tone="negative"
+              />
+            </div>
+          </section>
+        )
+
+      case 'watchlist':
+        if (watchlistItems.length === 0) return null
+        return (
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                <span className="text-yellow-400">★</span> Mi seguimiento
+              </h2>
+              <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                Ver en mercado →
+              </Link>
+            </div>
+            <div className="bg-slate-800 rounded-xl border border-yellow-500/20 overflow-hidden">
+              <div className="divide-y divide-slate-700/50">
+                {watchlistItems.map((item) => (
+                  <WatchlistRow key={item.symbol} item={item} spark={sparks[item.symbol]} />
+                ))}
+              </div>
+            </div>
+          </section>
+        )
+
+      case 'movers':
+        return (
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                Movimiento del mercado (24h)
+              </h2>
+              <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                Ver mercado completo →
+              </Link>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <MoversCard title="Mayores subidas" tone="positive" assets={gainers} sparks={sparks} loading={isLoading} />
+              <MoversCard title="Mayores bajadas" tone="negative" assets={losers} sparks={sparks} loading={isLoading} />
+            </div>
+          </section>
+        )
+
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="space-y-8 cw-stagger">
       {/* Cabecera */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          {greeting()},{' '}
-          <span className="text-slate-200 font-medium">{user?.username}</span>
-          {' '}— aquí está el resumen del mercado.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-slate-400 text-sm mt-1">
+            {greeting()},{' '}
+            <span className="text-slate-200 font-medium">{user?.username}</span>
+            {' '}— aquí está el resumen del mercado.
+          </p>
+        </div>
+        <button
+          onClick={() => setCustomize((v) => !v)}
+          className={`shrink-0 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+            customize ? 'border-blue-500/50 text-blue-300 bg-blue-600/10' : 'border-slate-700 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          ⚙ Personalizar
+        </button>
       </div>
 
-      {/* Métricas globales del mercado */}
-      <section>
-        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-          Mercado global
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-          <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {overview ? (
-              <>
-                <StatCard label="Cap. total" value={formatCompact(overview.total_market_cap_usd)} animateValue={Number(overview.total_market_cap_usd)} format={formatCompact} tone="brand" />
-                <StatCard label="Volumen 24h" value={formatCompact(overview.total_volume_24h_usd)} animateValue={Number(overview.total_volume_24h_usd)} format={formatCompact} tone="brand" />
-                <StatCard label="Dominancia BTC" value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`} animateValue={parseFloat(overview.btc_dominance_pct)} format={(n) => `${n.toFixed(1)}%`} tone="brand" />
-              </>
-            ) : (
-              <>
-                <StatCard label="Cap. total" value="—" />
-                <StatCard label="Volumen 24h" value="—" />
-                <StatCard label="Dominancia BTC" value="—" />
-              </>
-            )}
+      {/* Panel de personalización: mostrar/ocultar y reordenar widgets */}
+      {customize && (
+        <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-slate-300">Personalizar panel</p>
+            <button onClick={reset} className="text-[11px] text-slate-400 hover:text-slate-200">Restablecer</button>
           </div>
-
-          {/* Fear & Greed como medidor */}
-          <div className="bg-slate-800/60 rounded-xl border border-slate-700 px-5 py-4 flex flex-col items-center justify-center">
-            <p className="text-slate-500 text-xs self-start mb-1">Miedo y codicia</p>
-            {overview ? (
-              <Gauge value={overview.fear_greed_index} label={fearGreedLabel(overview.fear_greed_index)} />
-            ) : (
-              <div className="text-slate-600 text-sm py-6">—</div>
-            )}
+          <div className="space-y-1.5">
+            {layout.map((w, i) => (
+              <div key={w.id} className="flex items-center gap-2 text-sm">
+                <label className="flex items-center gap-2 flex-1 cursor-pointer">
+                  <input type="checkbox" checked={w.visible} onChange={() => toggle(w.id)} className="accent-blue-500" />
+                  <span className={w.visible ? 'text-slate-200' : 'text-slate-500 line-through'}>{WIDGET_LABELS[w.id] ?? w.id}</span>
+                </label>
+                <button onClick={() => move(w.id, -1)} disabled={i === 0}
+                  className="text-slate-500 hover:text-slate-200 disabled:opacity-30" aria-label="Subir">↑</button>
+                <button onClick={() => move(w.id, 1)} disabled={i === layout.length - 1}
+                  className="text-slate-500 hover:text-slate-200 disabled:opacity-30" aria-label="Bajar">↓</button>
+              </div>
+            ))}
           </div>
+          <p className="text-[10px] text-slate-600 mt-2">Tu configuración se guarda en este dispositivo.</p>
         </div>
-      </section>
-
-      {/* Catálogo */}
-      <section>
-        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-          Catálogo
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatCard label="Activos monitorizados" value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
-          <StatCard
-            label="Alcistas (24h)"
-            value={String(bullishCount)}
-            animateValue={bullishCount}
-            format={(n) => String(Math.round(n))}
-            sub={assets.length ? `${((bullishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
-            tone="positive"
-          />
-          <StatCard
-            label="Bajistas (24h)"
-            value={String(bearishCount)}
-            animateValue={bearishCount}
-            format={(n) => String(Math.round(n))}
-            sub={assets.length ? `${((bearishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
-            tone="negative"
-          />
-        </div>
-      </section>
-
-      {/* Mi seguimiento */}
-      {watchlistItems.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-              <span className="text-yellow-400">★</span> Mi seguimiento
-            </h2>
-            <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-              Ver en mercado →
-            </Link>
-          </div>
-          <div className="bg-slate-800 rounded-xl border border-yellow-500/20 overflow-hidden">
-            <div className="divide-y divide-slate-700/50">
-              {watchlistItems.map((item) => (
-                <WatchlistRow key={item.symbol} item={item} spark={sparks[item.symbol]} />
-              ))}
-            </div>
-          </div>
-        </section>
       )}
 
-      {/* Mayores subidas / bajadas */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Movimiento del mercado (24h)
-          </h2>
-          <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-            Ver mercado completo →
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <MoversCard title="Mayores subidas" tone="positive" assets={gainers} sparks={sparks} loading={isLoading} />
-          <MoversCard title="Mayores bajadas" tone="negative" assets={losers} sparks={sparks} loading={isLoading} />
-        </div>
-      </section>
+      {/* Widgets en el orden configurado */}
+      {layout.filter((w) => w.visible).map((w) => (
+        <div key={w.id}>{renderWidget(w.id)}</div>
+      ))}
     </div>
   )
 }
