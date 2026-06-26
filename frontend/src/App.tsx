@@ -13,12 +13,14 @@ import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/hooks/useAuth'
 import { CurrencyProvider } from '@/hooks/useCurrency'
 import { ToastProvider } from '@/components/ui/Toast'
+import { ThemeProvider } from '@/hooks/useTheme'
 import AppRoutes from '@/routes'
 import ErrorBoundary from '@/components/layout/ErrorBoundary'
 
 function App() {
   return (
     <ErrorBoundary>
+      <ThemeProvider>
       <BrowserRouter>
         {/*
           AuthProvider debe envolver AppRoutes para que ProtectedRoute
@@ -34,6 +36,7 @@ function App() {
           </CurrencyProvider>
         </AuthProvider>
       </BrowserRouter>
+      </ThemeProvider>
     </ErrorBoundary>
   )
 }

@@ -12,6 +12,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
+    <!-- Aplica el tema antes de pintar para evitar el parpadeo (FOUC) -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('cw.theme') || 'dark';
+          var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var light = t === 'light' || (t === 'system' && !dark);
+          if (light) document.documentElement.classList.add('theme-light');
+        } catch (e) { /* sin tema */ }
+      })();
+    </script>
     <!-- Punto de montaje de la SPA React -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

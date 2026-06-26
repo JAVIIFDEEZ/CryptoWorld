@@ -10,6 +10,41 @@
     --color-border: #334155;
     --color-text: #f1f5f9;
     --color-muted: #94a3b8;
+
+    /* Rampa neutra (canales RGB) — TEMA OSCURO por defecto: valores reales de
+       slate, así el modo oscuro es idéntico al de siempre (cero regresión). */
+    --c-slate-50: 248 250 252;
+    --c-slate-100: 241 245 249;
+    --c-slate-200: 226 232 240;
+    --c-slate-300: 203 213 225;
+    --c-slate-400: 148 163 184;
+    --c-slate-500: 100 116 139;
+    --c-slate-600: 71 85 105;
+    --c-slate-700: 51 65 85;
+    --c-slate-800: 30 41 59;
+    --c-slate-900: 15 23 42;
+    --c-slate-950: 2 6 23;
+    --c-white: 255 255 255;
+  }
+
+  /* TEMA CLARO: invierte la rampa neutra (50↔950, 100↔900, …) y oscurece el
+     blanco, de modo que fondos oscuros pasan a claros y textos claros a oscuros
+     en toda la app sin tocar los componentes. Los acentos (verde/rojo/azul/
+     ámbar) mantienen su color y funcionan sobre ambos fondos. */
+  .theme-light {
+    --c-slate-50: 2 6 23;
+    --c-slate-100: 15 23 42;
+    --c-slate-200: 30 41 59;
+    --c-slate-300: 51 65 85;
+    --c-slate-400: 71 85 105;
+    --c-slate-500: 100 116 139;
+    --c-slate-600: 148 163 184;
+    --c-slate-700: 203 213 225;
+    --c-slate-800: 226 232 240;
+    --c-slate-900: 241 245 249;
+    --c-slate-950: 248 250 252;
+    --c-white: 15 23 42;
+    color-scheme: light;
   }
 
   body {

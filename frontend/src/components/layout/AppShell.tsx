@@ -8,6 +8,7 @@ import { useAuth, type AuthUser } from '@/hooks/useAuth'
 import TickerBar from '@/components/market/TickerBar'
 import CommandPalette from '@/components/layout/CommandPalette'
 import NotificationBell from '@/components/layout/NotificationBell'
+import { useTheme, type Theme } from '@/hooks/useTheme'
 
 /** Iniciales del usuario para el avatar (ej. "Javier" → "JA"). */
 function userInitials(user: AuthUser | null): string {
@@ -20,6 +21,36 @@ function userInitials(user: AuthUser | null): string {
  * accesos a Ajustes, Seguridad 2FA, Panel Admin y Cerrar sesión.
  * Se cierra al hacer click fuera o al pulsar Escape.
  */
+/**
+ * Selector de tema (claro / oscuro / sistema) dentro del menú de cuenta.
+ */
+function ThemeSwitcher() {
+  const { theme, setTheme } = useTheme()
+  const options: { value: Theme; label: string; icon: string }[] = [
+    { value: 'light', label: 'Claro', icon: '☀' },
+    { value: 'dark', label: 'Oscuro', icon: '☾' },
+    { value: 'system', label: 'Auto', icon: '⛶' },
+  ]
+  return (
+    <div className="px-2 py-1.5">
+      <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 px-1">Tema</p>
+      <div className="flex gap-0.5 bg-slate-900 rounded-lg p-0.5">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => setTheme(o.value)}
+            className={`flex-1 flex items-center justify-center gap-1 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              theme === o.value ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>{o.icon}</span>{o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function AccountMenu({ onLogout }: { onLogout: () => void }) {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -80,6 +111,8 @@ function AccountMenu({ onLogout }: { onLogout: () => void }) {
               Panel de administración
             </button>
           )}
+          <hr className="border-slate-700 my-1" />
+          <ThemeSwitcher />
           <hr className="border-slate-700 my-1" />
           <button
             role="menuitem"
