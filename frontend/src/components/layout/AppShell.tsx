@@ -7,6 +7,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth, type AuthUser } from '@/hooks/useAuth'
 import TickerBar from '@/components/market/TickerBar'
 import CommandPalette from '@/components/layout/CommandPalette'
+import NotificationBell from '@/components/layout/NotificationBell'
 
 /** Iniciales del usuario para el avatar (ej. "Javier" → "JA"). */
 function userInitials(user: AuthUser | null): string {
@@ -243,13 +244,14 @@ function AppShell() {
             bg-gradient-to-b from-[#0b1120] to-[#0f1f3d] border-r border-white/10
           `}
         >
-          <div className="h-16 px-5 flex items-center border-b border-white/10">
+          <div className="h-16 px-5 flex items-center justify-between border-b border-white/10">
             <button
               className="text-lg font-bold tracking-tight"
               onClick={() => navigate('/dashboard')}
             >
               <span className="text-blue-400">Crypto</span>World
             </button>
+            <NotificationBell />
           </div>
 
           {/* Buscador global — abre la paleta de comandos (⌘K) */}
@@ -347,6 +349,7 @@ function AppShell() {
             >
               <span className="text-blue-400">Crypto</span>World
             </button>
+            <NotificationBell className="ml-auto" />
           </div>
 
           <main className="flex-1 overflow-y-auto p-4 md:p-6">
