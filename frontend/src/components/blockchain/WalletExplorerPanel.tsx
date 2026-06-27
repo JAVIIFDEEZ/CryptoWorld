@@ -16,6 +16,7 @@ import {
   type WalletChain,
   type WalletOverview,
 } from '@/services/blockchainService'
+import { useWallet } from '@/hooks/useWallet'
 
 function fmtUsd(n: number | null | undefined): string {
   if (n == null) return '—'
@@ -28,6 +29,7 @@ function shorten(addr: string | null): string {
 }
 
 export default function WalletExplorerPanel() {
+  const wallet = useWallet()
   const [chains, setChains] = useState<WalletChain[]>([])
   const [chain, setChain] = useState('ethereum')
   const [address, setAddress] = useState('')
@@ -40,16 +42,17 @@ export default function WalletExplorerPanel() {
     blockchainService.getWalletChains().then(setChains).catch(() => { /* sin redes */ })
   }, [])
 
-  async function search() {
-    const addr = address.trim()
+  async function search(addrArg?: string, chainArg?: string) {
+    const addr = (addrArg ?? address).trim()
+    const ch = chainArg ?? chain
     if (!addr) return
     setLoading(true); setError(null); setData(null); setHistory([])
     try {
-      const r = await blockchainService.getWalletOverview(chain, addr)
+      const r = await blockchainService.getWalletOverview(ch, addr)
       if (r.error) { setError(r.error); return }
       setData(r)
       // Curva de patrimonio (best-effort: no bloquea la vista si falla).
-      blockchainService.getWalletBalanceHistory(chain, addr)
+      blockchainService.getWalletBalanceHistory(ch, addr)
         .then((h) => { if (!h.error) setHistory(h.history) })
         .catch(() => { /* sin historial */ })
     } catch (e: unknown) {
@@ -60,15 +63,46 @@ export default function WalletExplorerPanel() {
     }
   }
 
+  // Al conectar la wallet, carga automáticamente la cartera del usuario.
+  useEffect(() => {
+    if (!wallet.address) return
+    const ch = wallet.chainSlug ?? 'ethereum'
+    setAddress(wallet.address)
+    setChain(ch)
+    search(wallet.address, ch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.address, wallet.chainSlug])
+
   return (
     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 mb-6">
       <div className="flex items-center gap-2 mb-1">
         <span className="text-indigo-400">🔍</span>
         <h2 className="text-lg font-bold text-white">Explorador de wallets on-chain</h2>
+        {wallet.available && (
+          wallet.address ? (
+            <button
+              onClick={wallet.disconnect}
+              title="Desconectar wallet"
+              className="ml-auto text-[11px] px-2.5 py-1 rounded-lg bg-emerald-600/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/25 transition-colors font-mono"
+            >
+              ● {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+            </button>
+          ) : (
+            <button
+              onClick={wallet.connect}
+              disabled={wallet.connecting}
+              className="ml-auto text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:opacity-50"
+            >
+              {wallet.connecting ? 'Conectando…' : '🦊 Conectar wallet'}
+            </button>
+          )
+        )}
       </div>
       <p className="text-slate-400 text-xs mb-4">
         Saldo, tokens y transacciones reales de cualquier dirección · multi-cadena vía Blockscout
+        {wallet.available && !wallet.address && ' · o conecta tu wallet para ver la tuya'}
       </p>
+      {wallet.error && <p className="text-amber-300/80 text-[11px] mb-2">{wallet.error}</p>}
 
       {/* Controles */}
       <div className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -90,7 +124,7 @@ export default function WalletExplorerPanel() {
           className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
         />
         <button
-          onClick={search}
+          onClick={() => search()}
           disabled={loading || !address.trim()}
           className="px-5 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors disabled:opacity-50"
         >
