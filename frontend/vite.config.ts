@@ -30,6 +30,8 @@ export default defineConfig({
     proxy: {
       // Durante desarrollo, redirige al backend Django
       '/api': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
+      // WebSockets (Channels): proxy con ws habilitado hacia el ASGI del backend
+      '/ws': { target: BACKEND_TARGET, ws: true, changeOrigin: true, secure: false },
       '/cripto': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
       '/sitemap.xml': { target: BACKEND_TARGET, changeOrigin: true, secure: false },
       '/robots.txt': { target: BACKEND_TARGET, changeOrigin: true, secure: false },

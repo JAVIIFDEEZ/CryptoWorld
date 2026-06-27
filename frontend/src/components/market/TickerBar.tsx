@@ -10,6 +10,7 @@ import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { useCurrency } from '@/hooks/useCurrency'
+import { usePriceStream } from '@/hooks/usePriceStream'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -18,6 +19,7 @@ const SCROLL_SPEED = 0.6
 
 export default function TickerBar() {
   const { formatPrice } = useCurrency()
+  const { prices: live, connected } = usePriceStream()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   // Dirección del último cambio de precio por símbolo, para el flash visual.
   const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
@@ -66,6 +68,23 @@ export default function TickerBar() {
     return () => { cancelled = true; clearInterval(timer); window.clearTimeout(flashTimerRef.current) }
   }, [])
 
+  // ── Actualizaciones en vivo por WebSocket (flash + precio al momento) ──
+  useEffect(() => {
+    const prev = prevPricesRef.current
+    const next: Record<string, 'up' | 'down'> = {}
+    for (const [sym, lp] of Object.entries(live)) {
+      if (lp.price == null) continue
+      const before = prev.get(sym)
+      if (before !== undefined && lp.price !== before) next[sym] = lp.price > before ? 'up' : 'down'
+      prev.set(sym, lp.price)
+    }
+    if (Object.keys(next).length > 0) {
+      setFlashes(next)
+      window.clearTimeout(flashTimerRef.current)
+      flashTimerRef.current = window.setTimeout(() => setFlashes({}), 1200)
+    }
+  }, [live])
+
   // ── Animación continua ────────────────────────────────────────
   useEffect(() => {
     if (assets.length === 0) return
@@ -98,14 +117,25 @@ export default function TickerBar() {
       className="w-full bg-slate-950 border-b border-slate-800 overflow-hidden h-8 flex items-center"
       onMouseEnter={() => { pausedRef.current = true }}
       onMouseLeave={() => { pausedRef.current = false }}
+      title={connected ? 'Precios en tiempo real (WebSocket)' : 'Precios (actualización periódica)'}
     >
+      {connected && (
+        <span className="shrink-0 ml-2 mr-1 flex items-center" aria-label="En vivo">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-70" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+          </span>
+        </span>
+      )}
       <div
         ref={innerRef}
         className="flex items-center whitespace-nowrap will-change-transform"
         style={{ gap: '2rem' }}
       >
         {items.map((a, idx) => {
-          const change = parseFloat(a.price_change_24h ?? '0')
+          const lp = live[a.symbol]
+          const priceStr = lp?.price != null ? String(lp.price) : a.current_price
+          const change = lp?.change != null ? lp.change : parseFloat(a.price_change_24h ?? '0')
           const isUp   = change >= 0
           const flash  = flashes[a.symbol]
 
@@ -119,7 +149,7 @@ export default function TickerBar() {
                 <img src={a.logo_url} alt="" className="w-4 h-4 rounded-full" />
               )}
               <span className="text-slate-400 font-medium">{a.symbol}</span>
-              <span className={`text-slate-200 font-mono rounded px-0.5 ${flash === 'up' ? 'cw-flash-up' : flash === 'down' ? 'cw-flash-down' : ''}`}>{formatPrice(a.current_price)}</span>
+              <span className={`text-slate-200 font-mono rounded px-0.5 ${flash === 'up' ? 'cw-flash-up' : flash === 'down' ? 'cw-flash-down' : ''}`}>{formatPrice(priceStr)}</span>
               <span className={`font-mono font-medium ${isUp ? 'text-green-400' : 'text-red-400'}`}>
                 {isUp ? '▲' : '▼'}{Math.abs(change).toFixed(2)}%
               </span>
