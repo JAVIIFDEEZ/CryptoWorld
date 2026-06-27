@@ -152,8 +152,26 @@ class SyncPricesQuickUseCase:
                 errors = len(to_update)
                 return QuickSyncResultDTO(updated=0, skipped=skipped, errors=errors)
 
+            # Empujar los precios actualizados a los clientes WebSocket (tiempo real).
+            self._broadcast(to_update)
+
         logger.info(
             "SyncPricesQuickUseCase: updated=%d, skipped=%d, errors=%d",
             len(to_update), skipped, errors,
         )
         return QuickSyncResultDTO(updated=len(to_update), skipped=skipped, errors=errors)
+
+    @staticmethod
+    def _broadcast(assets: list[CryptoAsset]) -> None:
+        """Emite los precios actualizados al stream WebSocket (tiempo real)."""
+        from core.interfaces.ws.broadcast import broadcast_price_update
+
+        items = [
+            {
+                "symbol": a.symbol,
+                "price": float(a.current_price) if a.current_price is not None else None,
+                "change": float(a.price_change_24h) if a.price_change_24h is not None else None,
+            }
+            for a in assets
+        ]
+        broadcast_price_update(items)

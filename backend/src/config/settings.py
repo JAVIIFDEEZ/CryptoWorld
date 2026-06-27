@@ -40,6 +40,10 @@ ALLOWED_HOSTS = re.split(r'[,\s]+', os.environ.get("DJANGO_ALLOWED_HOSTS", "loca
 # Aplicaciones instaladas
 # ------------------------------------------------------------------
 INSTALLED_APPS = [
+    # Daphne (servidor ASGI) debe ir el primero para que `runserver` sirva
+    # WebSockets en desarrollo (Channels). En producción se usa daphne/uvicorn.
+    "daphne",
+
     # Apps de Django
     "django.contrib.admin",
     "django.contrib.auth",
@@ -55,6 +59,7 @@ INSTALLED_APPS = [
     "corsheaders",                             # CORS para comunicación con el frontend
     "django_celery_beat",                      # Scheduler persistente para Celery beat
     "anymail",                                 # SendGrid API nativa (mejor que SMTP)
+    "channels",                                # WebSockets / ASGI (tiempo real)
 
     # Apps del proyecto (capa interfaces expone los endpoints)
     "core",
@@ -289,6 +294,20 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_ENABLE_UTC = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True  # Evita CPendingDeprecationWarning en Celery 6
+
+# ------------------------------------------------------------------
+# Channels / WebSockets (tiempo real)
+# ------------------------------------------------------------------
+# La capa de canales usa Redis (DB 2, sin colisión con Celery /0 ni la caché /1).
+# En producción se sirve con un servidor ASGI (daphne/uvicorn) apuntando a
+# config.asgi:application. Los tests sustituyen esta capa por InMemory.
+ASGI_APPLICATION = "config.asgi.application"
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [REDIS_URL.rstrip("/0") + "/2"]},
+    }
+}
 
 # Despliegues SIN worker dedicado (p. ej. Railway con un solo servicio):
 # con CELERY_TASK_ALWAYS_EAGER=True las llamadas .delay() se ejecutan de

@@ -55,3 +55,8 @@ django-anymail[sendgrid]==10.3  # Integración API nativa SendGrid (mejor que SM
 celery==5.4.0
 redis==5.0.8                    # Cliente Redis para Python (broker/backend)
 django-celery-beat==2.6.0       # Scheduler persistente en BD para celery beat
+
+# ── Tiempo real — WebSockets vía Django Channels (ASGI) ────────────
+channels==4.3.2                 # Capa ASGI + consumers WebSocket
+channels-redis==4.3.0           # Channel layer sobre Redis (broadcast multi-proceso)
+daphne==4.2.2                   # Servidor ASGI (runserver WS en dev + producción)
