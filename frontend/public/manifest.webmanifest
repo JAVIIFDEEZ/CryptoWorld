@@ -1,0 +1,15 @@
+{
+  "name": "CryptoWorld",
+  "short_name": "CryptoWorld",
+  "description": "Análisis de criptomonedas: mercado, análisis técnico, generador de estrategias y analítica on-chain.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
