@@ -22,6 +22,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import DeltaChip from '@/components/ui/DeltaChip'
 import { SkeletonRow } from '@/components/ui/Skeleton'
 import { useDashboardLayout, WIDGET_LABELS } from '@/hooks/useDashboardLayout'
+import { useTranslation } from 'react-i18next'
 
 function fearGreedLabel(v: number): string {
   if (v >= 75) return 'Codicia extrema'
@@ -31,12 +32,12 @@ function fearGreedLabel(v: number): string {
   return 'Miedo extremo'
 }
 
-function greeting(): string {
+function greetingKey(): string {
   const h = new Date().getHours()
-  if (h < 6) return 'Buenas noches'
-  if (h < 12) return 'Buenos días'
-  if (h < 20) return 'Buenas tardes'
-  return 'Buenas noches'
+  if (h < 6) return 'dashboard.greetingEvening'
+  if (h < 12) return 'dashboard.greetingMorning'
+  if (h < 20) return 'dashboard.greetingAfternoon'
+  return 'dashboard.greetingEvening'
 }
 
 function DashboardPage() {
@@ -48,6 +49,7 @@ function DashboardPage() {
   const [sparks, setSparks] = useState<Record<string, number[]>>({})
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
   const { layout, toggle, move, reset } = useDashboardLayout()
+  const { t } = useTranslation()
   const [customize, setCustomize] = useState(false)
 
   useEffect(() => {
@@ -115,28 +117,28 @@ function DashboardPage() {
         return (
           <section>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-              Mercado global
+              {t('dashboard.globalMarket')}
             </h2>
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
               <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {overview ? (
                   <>
-                    <StatCard label="Cap. total" value={formatCompact(overview.total_market_cap_usd)} animateValue={Number(overview.total_market_cap_usd)} format={formatCompact} tone="brand" />
-                    <StatCard label="Volumen 24h" value={formatCompact(overview.total_volume_24h_usd)} animateValue={Number(overview.total_volume_24h_usd)} format={formatCompact} tone="brand" />
-                    <StatCard label="Dominancia BTC" value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`} animateValue={parseFloat(overview.btc_dominance_pct)} format={(n) => `${n.toFixed(1)}%`} tone="brand" />
+                    <StatCard label={t('dashboard.totalCap')} value={formatCompact(overview.total_market_cap_usd)} animateValue={Number(overview.total_market_cap_usd)} format={formatCompact} tone="brand" />
+                    <StatCard label={t('dashboard.volume24h')} value={formatCompact(overview.total_volume_24h_usd)} animateValue={Number(overview.total_volume_24h_usd)} format={formatCompact} tone="brand" />
+                    <StatCard label={t('dashboard.btcDominance')} value={`${parseFloat(overview.btc_dominance_pct).toFixed(1)}%`} animateValue={parseFloat(overview.btc_dominance_pct)} format={(n) => `${n.toFixed(1)}%`} tone="brand" />
                   </>
                 ) : (
                   <>
-                    <StatCard label="Cap. total" value="—" />
-                    <StatCard label="Volumen 24h" value="—" />
-                    <StatCard label="Dominancia BTC" value="—" />
+                    <StatCard label={t('dashboard.totalCap')} value="—" />
+                    <StatCard label={t('dashboard.volume24h')} value="—" />
+                    <StatCard label={t('dashboard.btcDominance')} value="—" />
                   </>
                 )}
               </div>
 
               {/* Fear & Greed como medidor */}
               <div className="bg-slate-800/60 rounded-xl border border-slate-700 px-5 py-4 flex flex-col items-center justify-center">
-                <p className="text-slate-500 text-xs self-start mb-1">Miedo y codicia</p>
+                <p className="text-slate-500 text-xs self-start mb-1">{t('dashboard.fearGreed')}</p>
                 {overview ? (
                   <Gauge value={overview.fear_greed_index} label={fearGreedLabel(overview.fear_greed_index)} />
                 ) : (
@@ -151,24 +153,24 @@ function DashboardPage() {
         return (
           <section>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-              Catálogo
+              {t('dashboard.catalog')}
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard label="Activos monitorizados" value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
+              <StatCard label={t('dashboard.monitoredAssets')} value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
               <StatCard
-                label="Alcistas (24h)"
+                label={t('dashboard.bullish24h')}
                 value={String(bullishCount)}
                 animateValue={bullishCount}
                 format={(n) => String(Math.round(n))}
-                sub={assets.length ? `${((bullishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
+                sub={assets.length ? `${((bullishCount / assets.length) * 100).toFixed(0)}${t('dashboard.ofTotal')}` : '—'}
                 tone="positive"
               />
               <StatCard
-                label="Bajistas (24h)"
+                label={t('dashboard.bearish24h')}
                 value={String(bearishCount)}
                 animateValue={bearishCount}
                 format={(n) => String(Math.round(n))}
-                sub={assets.length ? `${((bearishCount / assets.length) * 100).toFixed(0)}% del total` : '—'}
+                sub={assets.length ? `${((bearishCount / assets.length) * 100).toFixed(0)}${t('dashboard.ofTotal')}` : '—'}
                 tone="negative"
               />
             </div>
@@ -181,10 +183,10 @@ function DashboardPage() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                <span className="text-yellow-400">★</span> Mi seguimiento
+                <span className="text-yellow-400">★</span> {t('dashboard.myWatchlist')}
               </h2>
               <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-                Ver en mercado →
+                {t('dashboard.viewInMarket')}
               </Link>
             </div>
             <div className="bg-slate-800 rounded-xl border border-yellow-500/20 overflow-hidden">
@@ -202,16 +204,16 @@ function DashboardPage() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Movimiento del mercado (24h)
+                {t('dashboard.marketMovement')}
               </h2>
               <Link to="/market" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-                Ver mercado completo →
+                {t('dashboard.viewFullMarket')}
               </Link>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <MoversCard title="Mayores subidas" tone="positive" assets={gainers} sparks={sparks} loading={isLoading} />
-              <MoversCard title="Mayores bajadas" tone="negative" assets={losers} sparks={sparks} loading={isLoading} />
+              <MoversCard title={t('dashboard.topGainers')} tone="positive" assets={gainers} sparks={sparks} loading={isLoading} />
+              <MoversCard title={t('dashboard.topLosers')} tone="negative" assets={losers} sparks={sparks} loading={isLoading} />
             </div>
           </section>
         )
@@ -226,11 +228,11 @@ function DashboardPage() {
       {/* Cabecera */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-white">{t('dashboard.title')}</h1>
           <p className="text-slate-400 text-sm mt-1">
-            {greeting()},{' '}
+            {t(greetingKey())},{' '}
             <span className="text-slate-200 font-medium">{user?.username}</span>
-            {' '}— aquí está el resumen del mercado.
+            {' '}{t('dashboard.summary')}
           </p>
         </div>
         <button
@@ -239,7 +241,7 @@ function DashboardPage() {
             customize ? 'border-blue-500/50 text-blue-300 bg-blue-600/10' : 'border-slate-700 text-slate-400 hover:text-slate-200'
           }`}
         >
-          ⚙ Personalizar
+          ⚙ {t('dashboard.customize')}
         </button>
       </div>
 
@@ -247,15 +249,15 @@ function DashboardPage() {
       {customize && (
         <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-slate-300">Personalizar panel</p>
-            <button onClick={reset} className="text-[11px] text-slate-400 hover:text-slate-200">Restablecer</button>
+            <p className="text-xs font-semibold text-slate-300">{t('dashboard.customizePanel')}</p>
+            <button onClick={reset} className="text-[11px] text-slate-400 hover:text-slate-200">{t('dashboard.reset')}</button>
           </div>
           <div className="space-y-1.5">
             {layout.map((w, i) => (
               <div key={w.id} className="flex items-center gap-2 text-sm">
                 <label className="flex items-center gap-2 flex-1 cursor-pointer">
                   <input type="checkbox" checked={w.visible} onChange={() => toggle(w.id)} className="accent-blue-500" />
-                  <span className={w.visible ? 'text-slate-200' : 'text-slate-500 line-through'}>{WIDGET_LABELS[w.id] ?? w.id}</span>
+                  <span className={w.visible ? 'text-slate-200' : 'text-slate-500 line-through'}>{WIDGET_LABELS[w.id] ? t(WIDGET_LABELS[w.id]) : w.id}</span>
                 </label>
                 <button onClick={() => move(w.id, -1)} disabled={i === 0}
                   className="text-slate-500 hover:text-slate-200 disabled:opacity-30" aria-label="Subir">↑</button>
@@ -264,7 +266,7 @@ function DashboardPage() {
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-slate-600 mt-2">Tu configuración se guarda en este dispositivo.</p>
+          <p className="text-[10px] text-slate-600 mt-2">{t('dashboard.savedOnDevice')}</p>
         </div>
       )}
 

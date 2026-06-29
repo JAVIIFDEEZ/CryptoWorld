@@ -14,11 +14,12 @@ export interface DashboardWidget {
   visible: boolean
 }
 
+// Claves i18n: el panel de personalización las traduce con t().
 export const WIDGET_LABELS: Record<string, string> = {
-  market: 'Mercado global',
-  catalog: 'Catálogo',
-  watchlist: 'Mi seguimiento',
-  movers: 'Movimiento del mercado',
+  market: 'dashboard.globalMarket',
+  catalog: 'dashboard.catalog',
+  watchlist: 'dashboard.myWatchlist',
+  movers: 'dashboard.marketMovement',
 }
 
 const DEFAULT_LAYOUT: DashboardWidget[] = [
