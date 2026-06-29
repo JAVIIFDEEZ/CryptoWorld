@@ -66,6 +66,7 @@ export default function StrategyGeneratorPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [signalEvents, setSignalEvents] = useState<SignalEvent[]>([])
   const [paperKey, setPaperKey] = useState(0)
+  const [genView, setGenView] = useState<'generate' | 'live'>('generate')
 
   const pollRef = useRef<number>(0)
   const tickRef = useRef<number>(0)
@@ -165,6 +166,26 @@ export default function StrategyGeneratorPage() {
         )}
       </header>
 
+      {/* Sub-navegación por submódulos: generar vs. seguimiento en vivo */}
+      <div className="flex flex-wrap gap-1 border-b border-slate-700">
+        {([
+          { key: 'generate', label: '⚡ Generador' },
+          { key: 'live', label: '📡 Seguimiento en vivo' },
+        ] as const).map((tabDef) => (
+          <button
+            key={tabDef.key}
+            onClick={() => setGenView(tabDef.key)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+              genView === tabDef.key ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {tabDef.label}
+          </button>
+        ))}
+      </div>
+
+      {genView === 'generate' && (
+      <>
       {/* Panel de lanzamiento */}
       <div className="bg-slate-800 rounded-xl border border-slate-700">
         <div className="flex flex-wrap items-end gap-3 px-4 py-4">
@@ -262,15 +283,6 @@ export default function StrategyGeneratorPage() {
         {showHistory && <HistoryStrip items={history} onStartPaper={() => setPaperKey((k) => k + 1)} />}
       </div>
 
-      {/* Mejor estrategia por activo (campeona) con su track record en vivo */}
-      <BestStrategiesPanel refreshKey={paperKey} />
-
-      {/* Carteras de paper trading (forward test en vivo de las estrategias) */}
-      <PaperTradingPanel refreshKey={paperKey} />
-
-      {/* Señales recientes de estrategias monitorizadas */}
-      {signalEvents.length > 0 && <SignalFeed events={signalEvents} />}
-
       {/* Estados */}
       {phase === 'idle' && <IdleHint symbol={symbol} />}
       {phase === 'running' && <RunningState elapsed={elapsed} message={runMsg} preset={preset} />}
@@ -278,6 +290,28 @@ export default function StrategyGeneratorPage() {
         <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">{errorMsg}</div>
       )}
       {phase === 'done' && report && <ResultsView report={report} />}
+      </>
+      )}
+
+      {genView === 'live' && (
+      <>
+      {/* Mejor estrategia por activo (campeona) con su track record en vivo */}
+      <BestStrategiesPanel refreshKey={paperKey} />
+
+      {/* Carteras de paper trading (forward test en vivo de las estrategias) */}
+      <PaperTradingPanel refreshKey={paperKey} />
+
+      {/* Señales recientes de estrategias monitorizadas */}
+      {signalEvents.length > 0 ? (
+        <SignalFeed events={signalEvents} />
+      ) : (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 text-sm text-slate-500">
+          Aún no hay señales de estrategias monitorizadas. Activa una estrategia guardada
+          (pestaña «⚡ Generador» → Historial) para recibir sus señales aquí.
+        </div>
+      )}
+      </>
+      )}
     </section>
   )
 }
