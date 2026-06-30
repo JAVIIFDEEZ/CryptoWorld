@@ -241,6 +241,47 @@ export interface WhaleMovementsResponse {
   error?: string
 }
 
+// ── Presión on-chain (flujo hacia/desde exchanges) ─────────────────
+
+export interface PressureBucket {
+  start_ms: number
+  inflow_usd: number
+  outflow_usd: number
+  pressure: number
+  count: number
+}
+
+export interface PressureMovement {
+  symbol: string
+  kind: 'native' | 'token'
+  amount: number
+  value_usd: number
+  direction: 'to_exchange' | 'from_exchange' | 'between_exchanges' | 'unknown'
+  from_label: string | null
+  to_label: string | null
+  tx_hash: string
+  moved_at: string
+}
+
+export interface OnChainPressure {
+  chain: string
+  window_hours: number
+  bucket_hours: number
+  total_movements: number
+  inflow_usd: number
+  outflow_usd: number
+  net_flow_usd: number
+  pressure: number
+  classified_count: number
+  unknown_count: number
+  verdict: 'ACUMULACION' | 'PRESION_VENDEDORA' | 'EQUILIBRIO' | 'INSUFICIENTE'
+  verdict_text: string
+  series: PressureBucket[]
+  top_movements: PressureMovement[]
+  note: string
+  error?: string
+}
+
 export const blockchainService = {
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
@@ -287,6 +328,13 @@ export const blockchainService = {
   getChainHealth: async (chain: string): Promise<ChainHealth> => {
     const params = new URLSearchParams({ chain })
     const { data } = await apiClient.get(`/blockchain/health/?${params}`)
+    return data
+  },
+
+  /** Indicador de presión on-chain: depósitos vs retiradas de exchanges. */
+  getOnChainPressure: async (chain: string, hours = 24): Promise<OnChainPressure> => {
+    const params = new URLSearchParams({ chain, hours: String(hours) })
+    const { data } = await apiClient.get(`/blockchain/pressure/?${params}`)
     return data
   },
 

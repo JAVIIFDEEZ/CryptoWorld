@@ -23,6 +23,7 @@ import MultiChainComparePanel from '@/components/blockchain/MultiChainComparePan
 import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
 import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
 import WhaleMovementsPanel from '@/components/blockchain/WhaleMovementsPanel'
+import OnChainPressurePanel from '@/components/blockchain/OnChainPressurePanel'
 import WatchlistPanel from '@/components/blockchain/WatchlistPanel'
 
 // ────────────────────────── Gráfico SVG simple ────────────────────
@@ -254,8 +255,13 @@ export default function BlockchainPage() {
         {/* ── Red y gas (Blockscout) ── */}
         {view === 'network' && <NetworkHealthPanel />}
 
-        {/* ── Movimientos / ballenas (Blockscout) ── */}
-        {view === 'whales' && <WhaleMovementsPanel />}
+        {/* ── Movimientos / ballenas: presión de exchanges + feed (Blockscout) ── */}
+        {view === 'whales' && (
+          <>
+            <OnChainPressurePanel />
+            <WhaleMovementsPanel />
+          </>
+        )}
 
         {/* ── Wallets: explorador + vigilancia (Blockscout) ── */}
         {view === 'wallets' && (
