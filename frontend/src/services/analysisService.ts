@@ -162,6 +162,33 @@ export interface PredictionMonitoring {
   thresholds: { watch: number; drift: number }
 }
 
+// Confluencia multi-marco temporal (MTF)
+export interface MtfFrame {
+  interval: string
+  weight: number
+  verdict?: string
+  score?: number
+  max_score?: number
+  normalized?: number
+  buy_count?: number
+  neutral_count?: number
+  sell_count?: number
+  last_price?: number | null
+  error?: string
+}
+
+export interface MtfConfluence {
+  asset_symbol: string
+  frames: MtfFrame[]
+  frames_analyzed: number
+  alignment_score: number
+  agreement_pct: number
+  verdict: 'ALINEADO_ALCISTA' | 'ALINEADO_BAJISTA' | 'MIXTO' | 'NEUTRAL'
+  verdict_text: string
+  disclaimer?: string
+  error?: string
+}
+
 // Patrones
 export interface CandlePattern {
   name: string
@@ -263,6 +290,14 @@ export const analysisService = {
     const { data } = await apiClient.post<SignalsResult>('/analysis/signals/', {
       asset_symbol: assetSymbol,
       interval,
+    })
+    return data
+  },
+
+  /** Confluencia multi-marco temporal: señales en 15m/1h/4h/1d con alineación. */
+  async getMtfConfluence(assetSymbol: string): Promise<MtfConfluence> {
+    const { data } = await apiClient.get<MtfConfluence>('/analysis/mtf/', {
+      params: { asset_symbol: assetSymbol },
     })
     return data
   },
