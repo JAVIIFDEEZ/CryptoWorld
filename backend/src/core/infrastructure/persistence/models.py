@@ -872,3 +872,57 @@ class AddressAlert(models.Model):
 
     def __str__(self) -> str:
         return f"{self.direction} {self.delta_pct:+.1f}% · {self.watched_id}"
+
+
+class WhaleMovementSnapshot(models.Model):
+    """
+    Movimiento on-chain grande persistido por el escáner periódico.
+
+    El feed de ballenas en vivo es efímero (se consulta y se pierde); persistir
+    los movimientos construye el HISTÓRICO propio que permite el análisis de
+    flujo hacia/desde exchanges (presión vendedora vs acumulación) con series
+    temporales — el edge on-chain. La dirección se clasifica al guardar usando
+    las etiquetas públicas de entidad (dominio: onchain_flow.classify_flow).
+    """
+
+    DIRECTION_CHOICES = [
+        ("to_exchange", "Depósito en exchange"),
+        ("from_exchange", "Retirada de exchange"),
+        ("between_exchanges", "Entre exchanges"),
+        ("unknown", "Desconocida"),
+    ]
+
+    chain = models.CharField(max_length=20, db_index=True)   # slug de red (ethereum…)
+    symbol = models.CharField(max_length=20)                 # activo movido (ETH, USDC…)
+    kind = models.CharField(max_length=10, default="native") # native | token
+    amount = models.FloatField()
+    value_usd = models.FloatField(db_index=True)
+    from_address = models.CharField(max_length=64, blank=True)
+    to_address = models.CharField(max_length=64, blank=True)
+    from_label = models.CharField(max_length=120, blank=True)
+    to_label = models.CharField(max_length=120, blank=True)
+    direction = models.CharField(max_length=20, choices=DIRECTION_CHOICES, db_index=True)
+    tx_hash = models.CharField(max_length=80)
+    moved_at = models.DateTimeField(db_index=True)           # timestamp del movimiento
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "whale_movement_snapshots"
+        verbose_name = "Movimiento de Ballena"
+        verbose_name_plural = "Movimientos de Ballena"
+        ordering = ["-moved_at"]
+        constraints = [
+            # Un mismo hash puede mover varios activos (nativo + tokens); la
+            # combinación identifica el movimiento concreto.
+            models.UniqueConstraint(
+                fields=["chain", "tx_hash", "symbol", "from_address", "to_address"],
+                name="uniq_whale_movement",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["chain", "-moved_at"]),
+            models.Index(fields=["direction", "-moved_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.symbol} ${self.value_usd:,.0f} {self.direction} ({self.chain})"

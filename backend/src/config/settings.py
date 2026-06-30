@@ -373,5 +373,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.monitor_watched_addresses",
         "schedule": 1800.0,  # segundos — cada 30 min
     },
+    # Persistir grandes movimientos on-chain para el indicador de presión (cada 15 min)
+    "scan-whale-movements": {
+        "task": "core.tasks.scan_whale_movements",
+        "schedule": 900.0,  # segundos — cada 15 min
+    },
 }
 

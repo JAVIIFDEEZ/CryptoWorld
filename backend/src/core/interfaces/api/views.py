@@ -1264,6 +1264,35 @@ class WhaleMovementsView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class OnChainPressureView(APIView):
+    """
+    GET /api/blockchain/pressure/?chain=ethereum&hours=24 — Indicador de presión
+    on-chain: flujo de depósitos (presión vendedora potencial) vs retiradas
+    (acumulación) de exchanges sobre el histórico propio de grandes movimientos,
+    con puntuación en [-1, +1], serie temporal y mayores movimientos.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120  # segundos
+
+    def get(self, request):
+        from core.application.use_cases.onchain_pressure import OnChainPressureUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        try:
+            hours = min(max(int(request.query_params.get("hours", 24)), 1), 720)
+        except (TypeError, ValueError):
+            hours = 24
+
+        cache_key = f"onchain_pressure:{chain}:{hours}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = OnChainPressureUseCase().execute(chain=chain, hours=hours)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class AddressWatchlistView(APIView):
     """
     GET  /api/blockchain/watchlist/ — Direcciones on-chain vigiladas del usuario,

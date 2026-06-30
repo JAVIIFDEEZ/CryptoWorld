@@ -528,6 +528,31 @@ def monitor_watched_addresses(self) -> dict:
 
 
 @shared_task(
+    name="core.tasks.scan_whale_movements",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def scan_whale_movements(self) -> dict:
+    """
+    Escanea los mayores movimientos on-chain recientes y los persiste
+    clasificados por dirección respecto a exchanges (depósito/retirada). Nutre
+    el histórico del indicador de presión on-chain. Programada por celery beat
+    (cada 15 min).
+    """
+    try:
+        from core.application.use_cases.onchain_pressure import ScanWhaleMovementsUseCase
+
+        result = ScanWhaleMovementsUseCase().execute()
+        logger.info("scan_whale_movements: %d redes, %d nuevos",
+                    result["chains_scanned"], result["created"])
+        return result
+    except Exception as exc:
+        logger.error("scan_whale_movements error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.reoptimize_asset",
     bind=True,
     max_retries=0,
