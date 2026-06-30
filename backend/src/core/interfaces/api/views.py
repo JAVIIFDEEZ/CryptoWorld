@@ -1469,6 +1469,34 @@ class SignalsDashboardView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class MtfConfluenceView(APIView):
+    """
+    GET /api/analysis/mtf/?asset_symbol=BTC — Confluencia multi-marco temporal:
+    señales multi-indicador en 15m/1h/4h/1d con puntuación de alineación
+    ponderada (los marcos altos pesan más) y % de acuerdo entre marcos.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # segundos — calcula 4 marcos, se cachea 5 min
+
+    def get(self, request):
+        from core.application.use_cases.get_mtf_confluence import GetMtfConfluenceUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"mtf_confluence:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetMtfConfluenceUseCase().execute(asset_symbol=symbol)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class PredictPriceView(APIView):
     """
     POST /api/analysis/predict/ — Predicción ML de dirección de precio.
