@@ -1526,6 +1526,35 @@ class MtfConfluenceView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class PriceStructureView(APIView):
+    """
+    GET /api/analysis/levels/?asset_symbol=BTC&interval=1h — Estructura de
+    precio: niveles de soporte/resistencia por agrupación de pivotes (fuerza =
+    nº de toques) y divergencias RSI/precio recientes.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # segundos
+
+    def get(self, request):
+        from core.application.use_cases.get_price_structure import GetPriceStructureUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        interval = (request.query_params.get("interval") or "1h").strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"price_structure:{symbol}:{interval}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetPriceStructureUseCase().execute(asset_symbol=symbol, interval=interval)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class PredictPriceView(APIView):
     """
     POST /api/analysis/predict/ — Predicción ML de dirección de precio.

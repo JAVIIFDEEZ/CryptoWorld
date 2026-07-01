@@ -94,6 +94,7 @@ urlpatterns = [
     path("analysis/calculate/", views.CalculateAnalysisView.as_view(), name="analysis-calculate"),
     path("analysis/signals/", views.SignalsDashboardView.as_view(), name="analysis-signals"),
     path("analysis/mtf/", views.MtfConfluenceView.as_view(), name="analysis-mtf"),
+    path("analysis/levels/", views.PriceStructureView.as_view(), name="analysis-levels"),
     path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
     path("analysis/predictions/", views.PredictionTrackRecordView.as_view(), name="analysis-predictions"),
     path("analysis/predictions/monitoring/", views.PredictionMonitoringView.as_view(), name="analysis-predictions-monitoring"),
