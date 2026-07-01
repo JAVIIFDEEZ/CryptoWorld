@@ -2059,6 +2059,36 @@ class PaperTradingDetailView(APIView):
         return Response({"id": acc.id, "is_active": False}, status=status.HTTP_200_OK)
 
 
+class StrategyPortfolioView(APIView):
+    """
+    GET /api/strategies/portfolio/?top=5 — Análisis de cartera de las estrategias
+    campeonas: matriz de correlación entre sus retornos diarios, correlación
+    media y métricas de la cartera equiponderada (equity, retorno, drawdown,
+    Sharpe) sobre la ventana común de datos.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 900  # segundos — re-ejecuta hasta 6 backtests
+
+    def get(self, request):
+        from core.application.use_cases.strategy_portfolio import StrategyPortfolioUseCase
+
+        try:
+            top = min(max(int(request.query_params.get("top", 5)), 2), 6)
+        except (TypeError, ValueError):
+            top = 5
+
+        cache_key = f"strategy_portfolio:{top}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = StrategyPortfolioUseCase().execute(top_n=top)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class BestStrategiesView(APIView):
     """
     GET /api/strategies/best/ — Mejor estrategia validada de cada activo (la
