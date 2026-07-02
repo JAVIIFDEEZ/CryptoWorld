@@ -190,6 +190,7 @@ urlpatterns = [
     path("blockchain/health/", views.ChainHealthView.as_view(), name="blockchain-health"),
     path("blockchain/movements/", views.WhaleMovementsView.as_view(), name="blockchain-movements"),
     path("blockchain/pressure/", views.OnChainPressureView.as_view(), name="blockchain-pressure"),
+    path("blockchain/smartmoney/", views.SmartMoneyView.as_view(), name="blockchain-smartmoney"),
     path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
     path("blockchain/watchlist/<int:watch_id>/", views.AddressWatchlistItemView.as_view(), name="blockchain-watchlist-item"),
     # ── Trading real multi-exchange (ccxt, manual, testnet por defecto) ──

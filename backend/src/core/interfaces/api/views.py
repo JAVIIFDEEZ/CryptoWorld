@@ -1293,6 +1293,34 @@ class OnChainPressureView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class SmartMoneyView(APIView):
+    """
+    GET /api/blockchain/smartmoney/?chain=ethereum&days=30 — Radar de dinero
+    inteligente: direcciones cuyos depósitos/retiradas de exchanges anticiparon
+    el precio (acierto y retorno capturado ponderados por tamaño).
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — evalúa precios por cada activo implicado
+
+    def get(self, request):
+        from core.application.use_cases.get_smart_money import GetSmartMoneyUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        try:
+            days = min(max(int(request.query_params.get("days", 30)), 1), 90)
+        except (TypeError, ValueError):
+            days = 30
+
+        cache_key = f"smart_money:{chain}:{days}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetSmartMoneyUseCase().execute(chain=chain, days=days)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class AddressWatchlistView(APIView):
     """
     GET  /api/blockchain/watchlist/ — Direcciones on-chain vigiladas del usuario,
