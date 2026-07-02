@@ -24,6 +24,7 @@ import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
 import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
 import WhaleMovementsPanel from '@/components/blockchain/WhaleMovementsPanel'
 import OnChainPressurePanel from '@/components/blockchain/OnChainPressurePanel'
+import SmartMoneyPanel from '@/components/blockchain/SmartMoneyPanel'
 import WatchlistPanel from '@/components/blockchain/WatchlistPanel'
 
 // ────────────────────────── Gráfico SVG simple ────────────────────
@@ -259,6 +260,7 @@ export default function BlockchainPage() {
         {view === 'whales' && (
           <>
             <OnChainPressurePanel />
+            <SmartMoneyPanel />
             <WhaleMovementsPanel />
           </>
         )}

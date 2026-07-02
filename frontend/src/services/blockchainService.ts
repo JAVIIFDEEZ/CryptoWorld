@@ -282,6 +282,29 @@ export interface OnChainPressure {
   error?: string
 }
 
+// ── Radar de dinero inteligente ────────────────────────────────────
+
+export interface SmartMoneyRow {
+  address: string
+  moves: number
+  hit_rate: number
+  avg_captured_pct: number
+  total_value_usd: number
+  last_move_ts: number
+}
+
+export interface SmartMoneyRadar {
+  chain: string
+  window_days: number
+  horizon_hours: number
+  min_moves: number
+  movements_total: number
+  movements_evaluated: number
+  leaderboard: SmartMoneyRow[]
+  note: string
+  error?: string
+}
+
 export const blockchainService = {
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
@@ -328,6 +351,13 @@ export const blockchainService = {
   getChainHealth: async (chain: string): Promise<ChainHealth> => {
     const params = new URLSearchParams({ chain })
     const { data } = await apiClient.get(`/blockchain/health/?${params}`)
+    return data
+  },
+
+  /** Radar de dinero inteligente: direcciones que anticiparon el precio. */
+  getSmartMoney: async (chain: string, days = 30): Promise<SmartMoneyRadar> => {
+    const params = new URLSearchParams({ chain, days: String(days) })
+    const { data } = await apiClient.get(`/blockchain/smartmoney/?${params}`)
     return data
   },
 
