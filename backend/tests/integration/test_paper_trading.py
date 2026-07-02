@@ -375,3 +375,71 @@ class TestLivePromotion:
             {"enable": True, "connection_id": foreign.id}, format="json",
         )
         assert resp.status_code == 400
+
+
+class TestLiveOrderAudit:
+    """Auditoría de órdenes reales: todo intento queda registrado."""
+
+    @pytest.mark.integration
+    def test_sent_order_recorded(self, strategy, test_user):
+        from core.application.use_cases.paper_trading import _apply_signal, _mirror_live
+        from core.infrastructure.persistence.models import LiveOrderRecord
+        acc, conn = _live_account(strategy, test_user, cap=100.0)
+        broker = _FakeLiveBroker()
+        trade = _apply_signal(acc, "BUY", price=100.0)
+        _mirror_live(acc, trade, 100.0, broker_factory=lambda c: broker)
+
+        rec = LiveOrderRecord.objects.get()
+        assert rec.status == "sent" and rec.side == "buy"
+        assert rec.symbol == "BTC/USDT" and rec.is_testnet is True
+        assert rec.notional_usd == pytest.approx(rec.amount * 100.0, rel=1e-6)
+        assert rec.connection_id == conn.id and rec.broker_order_id == "1"
+
+    @pytest.mark.integration
+    def test_failed_order_recorded_with_error(self, strategy, test_user):
+        from core.application.use_cases.paper_trading import _apply_signal, _mirror_live
+        from core.infrastructure.persistence.models import LiveOrderRecord
+        acc, _ = _live_account(strategy, test_user)
+        trade = _apply_signal(acc, "BUY", price=100.0)
+        _mirror_live(acc, trade, 100.0, broker_factory=lambda c: _FakeLiveBroker(fail=True))
+
+        rec = LiveOrderRecord.objects.get()
+        assert rec.status == "failed"
+        assert "insuficientes" in rec.error.lower()
+        assert acc.live_enabled is False   # kill-switch sigue funcionando
+
+    @pytest.mark.integration
+    def test_live_pnl_estimated_by_pairing(self, strategy, test_user):
+        from core.application.use_cases.paper_trading import (
+            LiveOrdersUseCase, _apply_signal, _mirror_live,
+        )
+        acc, _ = _live_account(strategy, test_user, cap=100.0)
+        broker = _FakeLiveBroker()
+        # Compra a 100 (≈1 unidad con tope 100) y venta a 120
+        t1 = _apply_signal(acc, "BUY", price=100.0)
+        _mirror_live(acc, t1, 100.0, broker_factory=lambda c: broker)
+        t2 = _apply_signal(acc, "SELL", price=120.0)
+        _mirror_live(acc, t2, 120.0, broker_factory=lambda c: broker)
+
+        out = LiveOrdersUseCase().execute(owner=test_user, account_id=acc.id)
+        assert out["orders_sent"] == 2 and out["orders_failed"] == 0
+        # 1 unidad: vendida a 120 − comprada a 100 ≈ +20 USD (precios de referencia)
+        assert out["live_realized_pnl_usd"] == pytest.approx(20.0, rel=0.01)
+        assert out["pnl_is_estimate"] is True   # el broker falso no devuelve fill
+        assert len(out["orders"]) == 2
+
+    @pytest.mark.integration
+    def test_orders_endpoint_and_ownership(self, authenticated_client, strategy, test_user, db):
+        from core.infrastructure.persistence.models import User
+        acc, _ = _live_account(strategy, test_user)
+        resp = authenticated_client.get(f"/api/strategies/paper/{acc.id}/live/orders/")
+        assert resp.status_code == 200
+        assert set(resp.data) >= {"orders", "orders_sent", "live_realized_pnl_usd"}
+
+        other = User.objects.create_user(email="x@e.com", username="x", password="x")
+        from core.infrastructure.persistence.models import PaperTradingAccount
+        foreign = PaperTradingAccount.objects.create(
+            strategy=strategy, owner=other, asset_symbol="BTC", interval="1d",
+            initial_capital=1000.0, cash=1000.0,
+        )
+        assert authenticated_client.get(f"/api/strategies/paper/{foreign.id}/live/orders/").status_code == 404

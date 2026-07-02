@@ -137,6 +137,7 @@ def _order_dto(order: dict) -> dict:
         "amount": order.get("amount"),
         "price": order.get("price"),
         "filled": order.get("filled"),
+        "average": order.get("average"),
         "status": order.get("status"),
         "datetime": order.get("datetime"),
     }

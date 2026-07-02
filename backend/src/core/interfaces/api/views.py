@@ -2146,6 +2146,23 @@ class StrategyPortfolioView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class PaperLiveOrdersView(APIView):
+    """
+    GET /api/strategies/paper/<id>/live/orders/ — Auditoría de las órdenes
+    reales espejadas por la promoción (enviadas y fallidas) con el P&L real
+    estimado frente al del paper.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, account_id: int):
+        from core.application.use_cases.paper_trading import LiveOrdersUseCase
+
+        result = LiveOrdersUseCase().execute(owner=request.user, account_id=account_id)
+        if result is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class PaperLivePromotionView(APIView):
     """
     POST /api/strategies/paper/<id>/live/ — Activa/desactiva la ejecución REAL

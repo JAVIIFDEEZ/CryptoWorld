@@ -123,27 +123,50 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
 
     from core.application.use_cases.broker_trading import _broker_for
     from core.infrastructure.external_apis.ccxt_broker import BrokerError
+    from core.infrastructure.persistence.models import LiveOrderRecord
 
     factory = broker_factory or _broker_for
     symbol = f"{account.asset_symbol.upper()}/USDT"
+
+    # Determinar la orden a espejar (lado y cantidad) antes de tocar el broker.
+    if trade.side == "BUY":
+        notional = min(float(account.live_cap_usd), float(account.cash) + trade.units * price)
+        base_amount = round(notional / price, 8) if price > 0 else 0.0
+        side = "buy"
+    elif trade.side == "SELL" and account.live_base_position > 0:
+        base_amount = round(account.live_base_position, 8)
+        side = "sell"
+    else:
+        return
+    if base_amount <= 0:
+        return
+
+    record = LiveOrderRecord(
+        account=account, connection=connection, symbol=symbol, side=side,
+        amount=base_amount, ref_price=float(price),
+        notional_usd=round(base_amount * float(price), 2),
+        is_testnet=connection.is_testnet,
+    )
     try:
-        broker = factory(connection)
-        if trade.side == "BUY":
-            notional = min(float(account.live_cap_usd), float(account.cash) + trade.units * price)
-            base_amount = round(notional / price, 8) if price > 0 else 0.0
-            if base_amount <= 0:
-                return
-            broker.create_order(symbol, "buy", "market", base_amount)
+        order = factory(connection).create_order(symbol, side, "market", base_amount)
+        if side == "buy":
             account.live_base_position += base_amount
-        elif trade.side == "SELL" and account.live_base_position > 0:
-            broker.create_order(symbol, "sell", "market", round(account.live_base_position, 8))
+        else:
             account.live_base_position = 0.0
-        logger.info("paper→real #%s %s %s (%s)", account.id, trade.side, symbol,
+        record.status = "sent"
+        record.broker_order_id = str(order.get("id") or "")[:80]
+        fill = order.get("average") or order.get("price")
+        record.fill_price = float(fill) if fill else None
+        logger.info("paper→real #%s %s %s (%s)", account.id, side, symbol,
                     "testnet" if connection.is_testnet else "REAL")
     except BrokerError as exc:
         account.live_enabled = False
         account.live_error = f"Ejecución real desactivada: {exc}"
+        record.status = "failed"
+        record.error = str(exc)[:300]
         logger.error("paper→real kill-switch #%s: %s", account.id, exc)
+    finally:
+        record.save()
 
 
 class EvaluatePaperTradingUseCase:
@@ -212,6 +235,70 @@ class EvaluatePaperTradingUseCase:
         logger.info("paper_trading: %d carteras evaluadas, %d operaciones, %d decaídas",
                     evaluated, trades, len(decayed_pairs))
         return {"evaluated": evaluated, "trades": trades, "decayed_pairs": sorted(decayed_pairs)}
+
+
+class LiveOrdersUseCase:
+    """Auditoría de las órdenes reales de una cartera + P&L real estimado.
+
+    Como la promoción opera una única posición (compra(s) hasta el tope y venta
+    que liquida todo), el P&L realizado se estima emparejando cada venta con el
+    coste acumulado de las compras previas, usando el precio de ejecución del
+    broker cuando existe y el de referencia si no (y diciéndolo)."""
+
+    def execute(self, owner, account_id: int, limit: int = 50) -> dict | None:
+        from core.infrastructure.persistence.models import PaperTradingAccount
+
+        acc = PaperTradingAccount.objects.filter(id=account_id, owner=owner).first()
+        if acc is None:
+            return None
+
+        records = list(acc.live_orders.order_by("created_at"))
+        sent = [r for r in records if r.status == "sent"]
+        failed = [r for r in records if r.status == "failed"]
+
+        # P&L realizado estimado (posición única, la venta liquida todo).
+        realized = 0.0
+        est_used = False           # True si algún precio fue el de referencia
+        pos_amount = pos_cost = 0.0
+        for r in sent:
+            px = r.fill_price if r.fill_price else r.ref_price
+            if not r.fill_price:
+                est_used = True
+            if r.side == "buy":
+                pos_amount += r.amount
+                pos_cost += r.amount * px
+            elif r.side == "sell" and pos_amount > 0:
+                realized += r.amount * px - pos_cost
+                pos_amount = pos_cost = 0.0
+
+        items = [
+            {
+                "id": r.id,
+                "side": r.side,
+                "symbol": r.symbol,
+                "amount": round(r.amount, 8),
+                "ref_price": round(r.ref_price, 6),
+                "fill_price": round(r.fill_price, 6) if r.fill_price else None,
+                "notional_usd": r.notional_usd,
+                "is_testnet": r.is_testnet,
+                "status": r.status,
+                "error": r.error or None,
+                "broker_order_id": r.broker_order_id or None,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in list(reversed(records))[:limit]
+        ]
+        return {
+            "account_id": acc.id,
+            "orders": items,
+            "orders_sent": len(sent),
+            "orders_failed": len(failed),
+            "live_realized_pnl_usd": round(realized, 2),
+            "pnl_is_estimate": est_used,
+            "paper_realized_pnl_usd": round(acc.realized_pnl, 2),
+            "note": "P&L real estimado emparejando ventas con el coste de las compras previas; "
+                    "usa el precio de ejecución del broker cuando lo devuelve.",
+        }
 
 
 class PaperTradingListUseCase:

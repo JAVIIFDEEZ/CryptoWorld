@@ -940,6 +940,51 @@ class WhaleMovementSnapshot(models.Model):
         return f"{self.symbol} ${self.value_usd:,.0f} {self.direction} ({self.chain})"
 
 
+class LiveOrderRecord(models.Model):
+    """
+    Auditoría de cada orden REAL espejada por la promoción paper→real.
+
+    Se registra TODO intento: las enviadas (con el id del broker y el precio de
+    ejecución si el exchange lo devuelve) y las fallidas (con el motivo). Es la
+    trazabilidad que permite comparar el P&L real contra el del paper y auditar
+    qué hizo exactamente la promoción en cada señal.
+    """
+
+    STATUS_CHOICES = [("sent", "Enviada"), ("failed", "Fallida")]
+
+    account = models.ForeignKey(
+        "PaperTradingAccount", on_delete=models.CASCADE, related_name="live_orders",
+    )
+    connection = models.ForeignKey(
+        "ExchangeConnection", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="live_orders",
+    )
+    symbol = models.CharField(max_length=20)         # par unificado (BTC/USDT)
+    side = models.CharField(max_length=4)            # buy | sell
+    amount = models.FloatField()                     # unidades base
+    ref_price = models.FloatField()                  # precio de referencia (vela del paper)
+    fill_price = models.FloatField(null=True, blank=True)  # ejecución real si el broker la devuelve
+    notional_usd = models.FloatField(default=0.0)    # amount × ref_price
+    is_testnet = models.BooleanField(default=True)
+    broker_order_id = models.CharField(max_length=80, blank=True, default="")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, db_index=True)
+    error = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "live_order_records"
+        verbose_name = "Orden Real (auditoría)"
+        verbose_name_plural = "Órdenes Reales (auditoría)"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["account", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        mode = "testnet" if self.is_testnet else "REAL"
+        return f"{self.side} {self.amount:.6f} {self.symbol} ({self.status}, {mode})"
+
+
 class OnChainSignalEvent(models.Model):
     """
     Cambio de régimen del indicador de presión on-chain (señal global).
