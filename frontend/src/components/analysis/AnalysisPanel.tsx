@@ -22,6 +22,7 @@ import {
   type AnalysisResult,
   type StrategyInfo,
   type MtfConfluence,
+  type PriceStructure,
 } from '@/services/analysisService'
 import { NumField, TextField } from '@/components/analysis/analysisShared'
 import SignalsTab from '@/components/analysis/tabs/SignalsTab'
@@ -30,14 +31,16 @@ import PredictTab from '@/components/analysis/tabs/PredictTab'
 import PatternsTab from '@/components/analysis/tabs/PatternsTab'
 import BacktestTab from '@/components/analysis/tabs/BacktestTab'
 import MtfTab from '@/components/analysis/tabs/MtfTab'
+import LevelsTab from '@/components/analysis/tabs/LevelsTab'
 
 // ── Configuración de pestañas / controles ────────────────────────
 
-type Tab = 'signals' | 'mtf' | 'indicator' | 'predict' | 'patterns' | 'backtest'
+type Tab = 'signals' | 'mtf' | 'levels' | 'indicator' | 'predict' | 'patterns' | 'backtest'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'signals',   label: 'Señales' },
   { key: 'mtf',       label: 'Multi-marco' },
+  { key: 'levels',    label: 'Niveles' },
   { key: 'indicator', label: 'Indicadores' },
   { key: 'predict',   label: 'Predicción ML' },
   { key: 'patterns',  label: 'Patrones' },
@@ -68,6 +71,13 @@ function IcoMtf() {
   return (
     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+    </svg>
+  )
+}
+function IcoLevels() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
     </svg>
   )
 }
@@ -103,6 +113,7 @@ function IcoBacktest() {
 const TAB_ICONS: Record<string, JSX.Element> = {
   signals:   <IcoSignals />,
   mtf:       <IcoMtf />,
+  levels:    <IcoLevels />,
   indicator: <IcoIndicator />,
   predict:   <IcoPredict />,
   patterns:  <IcoPatterns />,
@@ -128,6 +139,9 @@ export default function AnalysisPanel({ symbol }: Props) {
 
   // ── MTF state ──
   const [mtf, setMtf]               = useState<MtfConfluence | null>(null)
+
+  // ── Levels state ──
+  const [structure, setStructure]   = useState<PriceStructure | null>(null)
 
   // ── Indicator state ──
   const [indType, setIndType]       = useState<AnalysisType>('RSI')
@@ -169,6 +183,16 @@ export default function AnalysisPanel({ symbol }: Props) {
       if (res.error) { setError(res.error); setMtf(null) }
       else setMtf(res)
     } catch { setError('Error al calcular la confluencia multi-marco.') }
+    finally { setLoading(false) }
+  }
+
+  async function loadLevels() {
+    setLoading(true); setError(null)
+    try {
+      const res = await analysisService.getPriceStructure(symbol, interval)
+      if (res.error) { setError(res.error); setStructure(null) }
+      else setStructure(res)
+    } catch { setError('Error al calcular los niveles.') }
     finally { setLoading(false) }
   }
 
@@ -235,6 +259,7 @@ export default function AnalysisPanel({ symbol }: Props) {
     switch (tab) {
       case 'signals':   return loadSignals()
       case 'mtf':       return loadMtf()
+      case 'levels':    return loadLevels()
       case 'indicator': return loadIndicator()
       case 'predict':   return loadPrediction()
       case 'patterns':  return loadPatterns()
@@ -393,6 +418,7 @@ export default function AnalysisPanel({ symbol }: Props) {
 
         {!loading && tab === 'signals' && <SignalsTab data={signals} />}
         {!loading && tab === 'mtf' && <MtfTab data={mtf} />}
+        {!loading && tab === 'levels' && <LevelsTab data={structure} />}
         {!loading && tab === 'indicator' && <IndicatorTab data={indResult} indType={indType} />}
         {!loading && tab === 'predict' && <PredictTab data={prediction} />}
         {!loading && tab === 'patterns' && <PatternsTab data={patterns} />}

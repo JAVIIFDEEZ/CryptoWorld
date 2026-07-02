@@ -189,6 +189,37 @@ export interface MtfConfluence {
   error?: string
 }
 
+// Estructura de precio: soportes/resistencias + divergencias
+export interface PriceLevel {
+  price: number
+  touches: number
+  kind: 'support' | 'resistance'
+  distance_pct: number
+}
+
+export interface Divergence {
+  type: 'bearish' | 'bullish'
+  detail: string
+  price_from: number
+  price_to: number
+  rsi_from: number
+  rsi_to: number
+}
+
+export interface PriceStructure {
+  asset_symbol: string
+  interval: string
+  last_price: number
+  levels: PriceLevel[]
+  nearest_support: PriceLevel | null
+  nearest_resistance: PriceLevel | null
+  divergences: Divergence[]
+  candles_analyzed: number
+  data_source: string
+  note: string
+  error?: string
+}
+
 // Patrones
 export interface CandlePattern {
   name: string
@@ -298,6 +329,14 @@ export const analysisService = {
   async getMtfConfluence(assetSymbol: string): Promise<MtfConfluence> {
     const { data } = await apiClient.get<MtfConfluence>('/analysis/mtf/', {
       params: { asset_symbol: assetSymbol },
+    })
+    return data
+  },
+
+  /** Soportes/resistencias por pivotes + divergencias RSI/precio. */
+  async getPriceStructure(assetSymbol: string, interval: IntervalType = '1h'): Promise<PriceStructure> {
+    const { data } = await apiClient.get<PriceStructure>('/analysis/levels/', {
+      params: { asset_symbol: assetSymbol, interval },
     })
     return data
   },
