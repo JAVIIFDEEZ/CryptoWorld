@@ -339,6 +339,33 @@ export interface BestStrategy {
   } | null
 }
 
+// ── Cartera de estrategias campeonas (correlación + equity conjunta) ─
+export interface PortfolioMember {
+  strategy_id: number
+  label: string
+  name: string
+  asset_symbol: string
+  interval: string
+  fitness: number | null
+  window_return_pct: number | null
+}
+
+export interface StrategyPortfolio {
+  members: PortfolioMember[]
+  labels: string[]
+  correlation_matrix: (number | null)[][]
+  avg_correlation: number | null
+  common_days: number
+  portfolio: {
+    equity: { date: string; value: number }[]
+    total_return_pct: number
+    max_drawdown_pct: number
+    sharpe: number
+  }
+  note: string
+  error?: string
+}
+
 // ── Servicio ───────────────────────────────────────────────────────
 
 export const strategyGeneratorService = {
@@ -414,6 +441,12 @@ export const strategyGeneratorService = {
   /** Detiene una cartera de paper trading (deja de operar). */
   async stopPaperAccount(accountId: number): Promise<{ id: number; is_active: boolean }> {
     const { data } = await apiClient.delete(`/strategies/paper/${accountId}/`)
+    return data
+  },
+
+  /** Análisis de cartera de las campeonas: correlaciones + equity conjunta. */
+  async getStrategyPortfolio(top = 5): Promise<StrategyPortfolio> {
+    const { data } = await apiClient.get<StrategyPortfolio>('/strategies/portfolio/', { params: { top } })
     return data
   },
 

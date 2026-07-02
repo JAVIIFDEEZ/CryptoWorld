@@ -24,6 +24,7 @@ import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
 import PaperTradingPanel from '@/components/generator/PaperTradingPanel'
 import BestStrategiesPanel from '@/components/generator/BestStrategiesPanel'
+import StrategyPortfolioPanel from '@/components/generator/StrategyPortfolioPanel'
 import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
 import ParetoFrontier2D from '@/components/generator/ParetoFrontier2D'
 const ParetoFrontier3D = lazy(() => import('@/components/generator/ParetoFrontier3D'))
@@ -297,6 +298,9 @@ export default function StrategyGeneratorPage() {
       <>
       {/* Mejor estrategia por activo (campeona) con su track record en vivo */}
       <BestStrategiesPanel refreshKey={paperKey} />
+
+      {/* Cartera de estrategias: correlaciones y equity conjunta */}
+      <StrategyPortfolioPanel refreshKey={paperKey} />
 
       {/* Carteras de paper trading (forward test en vivo de las estrategias) */}
       <PaperTradingPanel refreshKey={paperKey} />
