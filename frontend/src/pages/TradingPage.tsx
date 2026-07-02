@@ -18,16 +18,19 @@ import {
 } from '@/services/tradingService'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import { useTranslation } from 'react-i18next'
 
 function ModeBadge({ testnet }: Readonly<{ testnet: boolean }>) {
+  const { t } = useTranslation()
   return testnet ? (
-    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">TESTNET</span>
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">{t('trading.testnetBadge')}</span>
   ) : (
-    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse">DINERO REAL</span>
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse">{t('trading.realBadge')}</span>
   )
 }
 
 export default function TradingPage() {
+  const { t } = useTranslation()
   const { showToast } = useToast()
   const [connections, setConnections] = useState<ExchangeConnection[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -151,26 +154,26 @@ export default function TradingPage() {
       {/* Cabecera */}
       <header>
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold text-white">Trading</h1>
+          <h1 className="text-2xl font-bold text-white">{t('trading.title')}</h1>
           <span className="text-[10px] font-semibold uppercase tracking-wider bg-gradient-to-r from-emerald-500/20 to-sky-500/20 text-emerald-300 border border-emerald-500/30 rounded-full px-2 py-0.5">
-            Multi-exchange · ccxt
+            {t('trading.badge')}
           </span>
         </div>
         <p className="text-slate-400 text-sm mt-1 max-w-2xl">
-          Ejecución manual contra tu exchange: cada orden la decides tú. Las conexiones nacen en
-          <span className="text-sky-300 font-medium"> testnet</span>; operar con dinero real exige activarlo explícitamente.
+          {t('trading.subtitle1')}
+          <span className="text-sky-300 font-medium"> {t('trading.subtitleTestnet')}</span>{t('trading.subtitle2')}
         </p>
       </header>
 
       {/* Conexiones */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h2 className="text-sm font-semibold text-white">Conexiones de exchange</h2>
+          <h2 className="text-sm font-semibold text-white">{t('trading.connections')}</h2>
           <button
             onClick={() => setShowAdd((v) => !v)}
             className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors"
           >
-            {showAdd ? 'Cerrar' : '+ Conectar exchange'}
+            {showAdd ? t('trading.close') : t('trading.connect')}
           </button>
         </div>
 
@@ -215,7 +218,7 @@ export default function TradingPage() {
               </label>
               <button onClick={handleConnect} disabled={busy || !apiKey.trim() || !apiSecret.trim()}
                 className="text-xs px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-50">
-                {busy ? 'Verificando…' : 'Verificar y conectar'}
+                {busy ? t('trading.verifying') : t('trading.verifyConnect')}
               </button>
             </div>
             {!testnet && (
@@ -231,7 +234,7 @@ export default function TradingPage() {
         {loadingConn && <p className="text-sm text-slate-500">Cargando…</p>}
         {!loadingConn && connections.length === 0 && !showAdd && (
           <p className="text-sm text-slate-500">
-            Sin conexiones todavía. Conecta un exchange para operar (empieza en testnet).
+            {t('trading.noConnections')}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
@@ -259,7 +262,7 @@ export default function TradingPage() {
           {/* Balance */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-white">Balance · <span className="capitalize">{selected.exchange}</span></h2>
+              <h2 className="text-sm font-semibold text-white">{t('trading.balance')} · <span className="capitalize">{selected.exchange}</span></h2>
               <div className="flex items-center gap-2">
                 <ModeBadge testnet={selected.is_testnet} />
                 <button onClick={reloadBroker} className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700">⟳</button>
@@ -273,10 +276,10 @@ export default function TradingPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-[10px] uppercase text-slate-500 border-b border-slate-700/60">
-                    <th className="text-left py-1.5">Activo</th>
-                    <th className="text-right py-1.5">Libre</th>
-                    <th className="text-right py-1.5">En órdenes</th>
-                    <th className="text-right py-1.5">Total</th>
+                    <th className="text-left py-1.5">{t('trading.asset')}</th>
+                    <th className="text-right py-1.5">{t('trading.free')}</th>
+                    <th className="text-right py-1.5">{t('trading.inOrders')}</th>
+                    <th className="text-right py-1.5">{t('trading.total')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -295,25 +298,25 @@ export default function TradingPage() {
 
           {/* Nueva orden */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-            <h2 className="text-sm font-semibold text-white mb-3">Nueva orden</h2>
+            <h2 className="text-sm font-semibold text-white mb-3">{t('trading.newOrder')}</h2>
             <div className="space-y-3">
               <div className="flex flex-wrap gap-3">
                 <label className="text-[11px] text-slate-400 flex-1 min-w-[140px]">
-                  <span className="block mb-1 uppercase">Par</span>
+                  <span className="block mb-1 uppercase">{t('trading.pair')}</span>
                   <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="BTC/USDT" spellCheck={false}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono" />
                 </label>
                 <label className="text-[11px] text-slate-400">
-                  <span className="block mb-1 uppercase">Lado</span>
+                  <span className="block mb-1 uppercase">{t('trading.side')}</span>
                   <div className="flex gap-0.5 bg-slate-900 rounded-lg p-0.5">
                     <button onClick={() => setSide('buy')}
-                      className={`px-4 py-1.5 rounded-md text-xs font-bold ${side === 'buy' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}>Comprar</button>
+                      className={`px-4 py-1.5 rounded-md text-xs font-bold ${side === 'buy' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}>{t('trading.buy')}</button>
                     <button onClick={() => setSide('sell')}
-                      className={`px-4 py-1.5 rounded-md text-xs font-bold ${side === 'sell' ? 'bg-red-600 text-white' : 'text-slate-400'}`}>Vender</button>
+                      className={`px-4 py-1.5 rounded-md text-xs font-bold ${side === 'sell' ? 'bg-red-600 text-white' : 'text-slate-400'}`}>{t('trading.sell')}</button>
                   </div>
                 </label>
                 <label className="text-[11px] text-slate-400">
-                  <span className="block mb-1 uppercase">Tipo</span>
+                  <span className="block mb-1 uppercase">{t('trading.type')}</span>
                   <div className="flex gap-0.5 bg-slate-900 rounded-lg p-0.5">
                     <button onClick={() => setOrderType('market')}
                       className={`px-3 py-1.5 rounded-md text-xs font-medium ${orderType === 'market' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>Market</button>
@@ -324,13 +327,13 @@ export default function TradingPage() {
               </div>
               <div className="flex flex-wrap gap-3">
                 <label className="text-[11px] text-slate-400">
-                  <span className="block mb-1 uppercase">Cantidad (base)</span>
+                  <span className="block mb-1 uppercase">{t('trading.amountBase')}</span>
                   <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="any" placeholder="0.001"
                     className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono" />
                 </label>
                 {orderType === 'limit' && (
                   <label className="text-[11px] text-slate-400">
-                    <span className="block mb-1 uppercase">Precio</span>
+                    <span className="block mb-1 uppercase">{t('trading.price')}</span>
                     <input value={price} onChange={(e) => setPrice(e.target.value)} type="number" min="0" step="any" placeholder="60000"
                       className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono" />
                   </label>
@@ -341,7 +344,7 @@ export default function TradingPage() {
                   className={`self-end text-sm font-bold px-5 py-2 rounded-lg text-white transition-colors disabled:opacity-50 ${
                     side === 'buy' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'
                   }`}>
-                  {side === 'buy' ? 'Comprar' : 'Vender'} {symbol.split('/')[0] || ''}
+                  {side === 'buy' ? t('trading.buy') : t('trading.sell')} {symbol.split('/')[0] || ''}
                 </button>
               </div>
               {!selected.is_testnet && (
@@ -351,8 +354,8 @@ export default function TradingPage() {
 
             {/* Órdenes abiertas */}
             <div className="mt-4 border-t border-slate-700/60 pt-3">
-              <p className="text-[10px] text-slate-500 uppercase mb-2">Órdenes abiertas</p>
-              {orders.length === 0 && <p className="text-xs text-slate-500">Ninguna.</p>}
+              <p className="text-[10px] text-slate-500 uppercase mb-2">{t('trading.openOrders')}</p>
+              {orders.length === 0 && <p className="text-xs text-slate-500">{t('trading.none')}</p>}
               {orders.map((o) => (
                 <div key={o.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-slate-800 last:border-0">
                   <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${o.side === 'buy' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>

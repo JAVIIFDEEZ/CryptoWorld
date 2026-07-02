@@ -69,5 +69,43 @@
     "search": "Search",
     "noResults": "No results",
     "seeMore": "See more"
+  },
+  "blockchain": {
+    "title": "Blockchain Analytics",
+    "subtitle": "Real-time on-chain statistics · 10 blockchains",
+    "tabNetwork": "Network & gas",
+    "tabWhales": "Movements",
+    "tabWallets": "Wallets",
+    "tabMarket": "On-chain market"
+  },
+  "trading": {
+    "title": "Trading",
+    "badge": "Multi-exchange · ccxt",
+    "subtitle1": "Manual execution against your exchange: you decide every order. Connections start in",
+    "subtitleTestnet": "testnet",
+    "subtitle2": "; trading real money requires enabling it explicitly.",
+    "connections": "Exchange connections",
+    "connect": "+ Connect exchange",
+    "close": "Close",
+    "verifyConnect": "Verify & connect",
+    "verifying": "Verifying…",
+    "noConnections": "No connections yet. Connect an exchange to trade (start on testnet).",
+    "balance": "Balance",
+    "newOrder": "New order",
+    "pair": "Pair",
+    "side": "Side",
+    "buy": "Buy",
+    "sell": "Sell",
+    "type": "Type",
+    "amountBase": "Amount (base)",
+    "price": "Price",
+    "openOrders": "Open orders",
+    "none": "None.",
+    "testnetBadge": "TESTNET",
+    "realBadge": "REAL MONEY",
+    "asset": "Asset",
+    "free": "Free",
+    "inOrders": "In orders",
+    "total": "Total"
   }
 }
