@@ -926,3 +926,49 @@ class WhaleMovementSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.symbol} ${self.value_usd:,.0f} {self.direction} ({self.chain})"
+
+
+class ExchangeConnection(models.Model):
+    """
+    Conexión de un usuario con un exchange para operar en mercado real (ccxt).
+
+    Las credenciales se guardan CIFRADAS (Fernet con clave derivada de
+    SECRET_KEY; ver infrastructure.security.crypto) — nunca en claro — y la API
+    jamás las devuelve. `is_testnet` es True por defecto: toda conexión nace en
+    el sandbox del exchange y pasar a real exige activarlo explícitamente.
+    """
+
+    SUPPORTED_EXCHANGES = [
+        ("binance", "Binance"),
+        ("kraken", "Kraken"),
+        ("coinbase", "Coinbase Advanced"),
+        ("bybit", "Bybit"),
+        ("okx", "OKX"),
+    ]
+
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="exchange_connections",
+    )
+    exchange = models.CharField(max_length=20, choices=SUPPORTED_EXCHANGES)
+    label = models.CharField(max_length=80, blank=True)
+    api_key_enc = models.TextField()          # cifrado Fernet
+    api_secret_enc = models.TextField()       # cifrado Fernet
+    api_password_enc = models.TextField(blank=True, default="")  # passphrase (OKX…)
+    is_testnet = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "exchange_connections"
+        verbose_name = "Conexión de Exchange"
+        verbose_name_plural = "Conexiones de Exchange"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "is_active"]),
+        ]
+
+    def __str__(self) -> str:
+        mode = "testnet" if self.is_testnet else "REAL"
+        return f"{self.exchange} ({mode}) · {self.owner_id}"

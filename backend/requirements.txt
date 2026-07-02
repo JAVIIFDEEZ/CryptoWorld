@@ -60,3 +60,7 @@ django-celery-beat==2.6.0       # Scheduler persistente en BD para celery beat
 channels==4.3.2                 # Capa ASGI + consumers WebSocket
 channels-redis==4.3.0           # Channel layer sobre Redis (broadcast multi-proceso)
 daphne==4.2.2                   # Servidor ASGI (runserver WS en dev + producción)
+
+# ── Trading real — conexión multi-exchange ─────────────────────────
+ccxt==4.5.63                    # API unificada de exchanges (Binance, Kraken, Coinbase…)
+cryptography>=41.0.7            # Cifrado Fernet de las claves API por usuario

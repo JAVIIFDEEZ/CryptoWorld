@@ -2136,6 +2136,123 @@ class BestStrategiesView(APIView):
         )
 
 
+class TradingConnectionsView(APIView):
+    """
+    GET  /api/trading/connections/ — Conexiones de exchange del usuario (sin
+         credenciales: nunca se devuelven).
+    POST /api/trading/connections/ — Conecta un exchange. Body: {"exchange",
+         "api_key", "api_secret", "api_password"?, "is_testnet"?, "label"?}.
+         Se verifica contra el exchange antes de guardarse (cifrada).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.broker_trading import ListConnectionsUseCase
+
+        return Response(ListConnectionsUseCase().execute(owner=request.user), status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from core.application.use_cases.broker_trading import ConnectExchangeUseCase
+
+        result = ConnectExchangeUseCase().execute(
+            owner=request.user,
+            exchange=request.data.get("exchange", ""),
+            api_key=request.data.get("api_key", ""),
+            api_secret=request.data.get("api_secret", ""),
+            api_password=request.data.get("api_password", ""),
+            is_testnet=bool(request.data.get("is_testnet", True)),
+            label=request.data.get("label", ""),
+        )
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class TradingConnectionDetailView(APIView):
+    """DELETE /api/trading/connections/<id>/ — Desconecta el exchange."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import RemoveConnectionUseCase
+
+        result = RemoveConnectionUseCase().execute(owner=request.user, connection_id=connection_id)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class TradingBalanceView(APIView):
+    """GET /api/trading/connections/<id>/balance/ — Saldos de la conexión."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import GetBrokerBalanceUseCase
+
+        result = GetBrokerBalanceUseCase().execute(owner=request.user, connection_id=connection_id)
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class TradingOrdersView(APIView):
+    """
+    GET  /api/trading/connections/<id>/orders/?symbol= — Órdenes abiertas.
+    POST /api/trading/connections/<id>/orders/ — Lanza una orden manual.
+         Body: {"symbol": "BTC/USDT", "side": "buy|sell", "type": "market|limit",
+                "amount": float, "price"?: float}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import OpenOrdersUseCase
+
+        result = OpenOrdersUseCase().execute(
+            owner=request.user, connection_id=connection_id,
+            symbol=request.query_params.get("symbol"),
+        )
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_200_OK)
+
+    def post(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import PlaceOrderUseCase
+
+        result = PlaceOrderUseCase().execute(
+            owner=request.user,
+            connection_id=connection_id,
+            symbol=request.data.get("symbol", ""),
+            side=request.data.get("side", ""),
+            order_type=request.data.get("type", ""),
+            amount=request.data.get("amount"),
+            price=request.data.get("price"),
+        )
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class TradingCancelOrderView(APIView):
+    """POST /api/trading/connections/<id>/orders/cancel/ — Cancela una orden.
+    Body: {"order_id", "symbol"}."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import CancelOrderUseCase
+
+        result = CancelOrderUseCase().execute(
+            owner=request.user, connection_id=connection_id,
+            order_id=str(request.data.get("order_id", "")),
+            symbol=request.data.get("symbol", ""),
+        )
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class AssetDetailInfoView(APIView):
     """
     GET /api/assets/<symbol>/info/ — Información de proyecto de un activo.

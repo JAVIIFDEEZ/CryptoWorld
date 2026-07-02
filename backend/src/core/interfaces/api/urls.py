@@ -192,6 +192,13 @@ urlpatterns = [
     path("blockchain/pressure/", views.OnChainPressureView.as_view(), name="blockchain-pressure"),
     path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
     path("blockchain/watchlist/<int:watch_id>/", views.AddressWatchlistItemView.as_view(), name="blockchain-watchlist-item"),
+    # ── Trading real multi-exchange (ccxt, manual, testnet por defecto) ──
+    path("trading/connections/", views.TradingConnectionsView.as_view(), name="trading-connections"),
+    path("trading/connections/<int:connection_id>/", views.TradingConnectionDetailView.as_view(), name="trading-connection-detail"),
+    path("trading/connections/<int:connection_id>/balance/", views.TradingBalanceView.as_view(), name="trading-balance"),
+    path("trading/connections/<int:connection_id>/orders/", views.TradingOrdersView.as_view(), name="trading-orders"),
+    path("trading/connections/<int:connection_id>/orders/cancel/", views.TradingCancelOrderView.as_view(), name="trading-cancel-order"),
+
     path("notifications/", views.NotificationsView.as_view(), name="notifications"),
     path("notifications/seen/", views.NotificationsSeenView.as_view(), name="notifications-seen"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
