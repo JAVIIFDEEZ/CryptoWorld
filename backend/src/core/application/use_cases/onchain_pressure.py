@@ -26,9 +26,10 @@ from core.domain.services.onchain_flow import (
 
 logger = logging.getLogger(__name__)
 
-# Redes que escanea la tarea periódica. Ethereum concentra el grueso del flujo
-# de exchanges; se amplía según se necesite (cada red = 2 llamadas por pasada).
-SCAN_CHAINS: tuple[str, ...] = ("ethereum", "base")
+# Redes que escanea la tarea periódica (cada red = 2 llamadas a Blockscout por
+# pasada, 8 en total cada 15 min — muy por debajo de cualquier límite). Ethereum
+# concentra el grueso del flujo de exchanges; las L2 aportan el flujo minorista.
+SCAN_CHAINS: tuple[str, ...] = ("ethereum", "base", "arbitrum", "optimism")
 
 _SCAN_MIN_USD = 100_000.0
 _SCAN_LIMIT = 100

@@ -19,6 +19,7 @@ import {
   type MultiChainSymbol,
   type MultiChainStatItem,
 } from '../services/blockchainService'
+import { useTranslation } from 'react-i18next'
 import MultiChainComparePanel from '@/components/blockchain/MultiChainComparePanel'
 import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
 import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
@@ -136,15 +137,25 @@ function fmtValue(v: number): string {
 
 type BlockchainView = 'network' | 'whales' | 'wallets' | 'market'
 
+// Las etiquetas son claves i18n (se traducen en render).
 const BLOCKCHAIN_TABS: { key: BlockchainView; label: string; icon: string }[] = [
-  { key: 'network', label: 'Red y gas', icon: '⛽' },
-  { key: 'whales', label: 'Movimientos', icon: '🐋' },
-  { key: 'wallets', label: 'Wallets', icon: '🔍' },
-  { key: 'market', label: 'Mercado on-chain', icon: '📊' },
+  { key: 'network', label: 'blockchain.tabNetwork', icon: '⛽' },
+  { key: 'whales', label: 'blockchain.tabWhales', icon: '🐋' },
+  { key: 'wallets', label: 'blockchain.tabWallets', icon: '🔍' },
+  { key: 'market', label: 'blockchain.tabMarket', icon: '📊' },
+]
+
+const SCAN_CHAINS = [
+  { slug: 'ethereum', label: 'Ethereum' },
+  { slug: 'base', label: 'Base' },
+  { slug: 'arbitrum', label: 'Arbitrum' },
+  { slug: 'optimism', label: 'Optimism' },
 ]
 
 export default function BlockchainPage() {
+  const { t } = useTranslation()
   const [view, setView] = useState<BlockchainView>('network')
+  const [whaleChain, setWhaleChain] = useState('ethereum')
   const [chain, setChain] = useState<MultiChainSymbol>('BTC')
 
   // ── Blockchair snapshot ──
@@ -232,23 +243,23 @@ export default function BlockchainPage() {
 
         {/* ── Cabecera ── */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Blockchain Analytics</h1>
+          <h1 className="text-2xl font-bold text-white">{t('blockchain.title')}</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Estadísticas on-chain en tiempo real · 10 blockchains
+            {t('blockchain.subtitle')}
           </p>
         </div>
 
         {/* ── Sub-navegación por submódulos ── */}
         <div className="flex flex-wrap gap-1 mb-6 border-b border-slate-700">
-          {BLOCKCHAIN_TABS.map(t => (
+          {BLOCKCHAIN_TABS.map(tabDef => (
             <button
-              key={t.key}
-              onClick={() => setView(t.key)}
+              key={tabDef.key}
+              onClick={() => setView(tabDef.key)}
               className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-                view === t.key ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+                view === tabDef.key ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
-              <span className="mr-1.5">{t.icon}</span>{t.label}
+              <span className="mr-1.5">{tabDef.icon}</span>{t(tabDef.label)}
             </button>
           ))}
         </div>
@@ -259,8 +270,24 @@ export default function BlockchainPage() {
         {/* ── Movimientos / ballenas: presión de exchanges + feed (Blockscout) ── */}
         {view === 'whales' && (
           <>
-            <OnChainPressurePanel />
-            <SmartMoneyPanel />
+            {/* Selector de red del histórico escaneado (presión + smart money) */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              {SCAN_CHAINS.map((c) => (
+                <button
+                  key={c.slug}
+                  onClick={() => setWhaleChain(c.slug)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    whaleChain === c.slug
+                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <OnChainPressurePanel chain={whaleChain} />
+            <SmartMoneyPanel chain={whaleChain} />
             <WhaleMovementsPanel />
           </>
         )}
