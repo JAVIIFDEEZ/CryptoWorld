@@ -320,6 +320,30 @@ export interface PaperTrade {
   created_at: string
 }
 
+export interface LiveOrderAudit {
+  account_id: number
+  orders: {
+    id: number
+    side: 'buy' | 'sell'
+    symbol: string
+    amount: number
+    ref_price: number
+    fill_price: number | null
+    notional_usd: number
+    is_testnet: boolean
+    status: 'sent' | 'failed'
+    error: string | null
+    broker_order_id: string | null
+    created_at: string
+  }[]
+  orders_sent: number
+  orders_failed: number
+  live_realized_pnl_usd: number
+  pnl_is_estimate: boolean
+  paper_realized_pnl_usd: number
+  note: string
+}
+
 export interface PaperAccountDetail extends PaperAccount {
   trades: PaperTrade[]
   equity_curve: PaperEquityPoint[]
@@ -441,6 +465,12 @@ export const strategyGeneratorService = {
   /** Detalle de una cartera con su historial de operaciones. */
   async getPaperAccount(accountId: number): Promise<PaperAccountDetail> {
     const { data } = await apiClient.get<PaperAccountDetail>(`/strategies/paper/${accountId}/`)
+    return data
+  },
+
+  /** Auditoría de las órdenes reales espejadas por la promoción. */
+  async getPaperLiveOrders(accountId: number): Promise<LiveOrderAudit> {
+    const { data } = await apiClient.get<LiveOrderAudit>(`/strategies/paper/${accountId}/live/orders/`)
     return data
   },
 

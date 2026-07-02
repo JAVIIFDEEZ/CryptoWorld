@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
 import {
   strategyGeneratorService,
+  type LiveOrderAudit,
   type PaperAccount,
   type PaperAccountDetail,
 } from '@/services/strategyGeneratorService'
@@ -74,6 +75,7 @@ function PaperCard({ account, connections, onChange }: Readonly<{
   const [detail, setDetail] = useState<PaperAccountDetail | null>(null)
   const [busy, setBusy] = useState(false)
   const [showLive, setShowLive] = useState(false)
+  const [liveAudit, setLiveAudit] = useState<LiveOrderAudit | null>(null)
   const [liveConnId, setLiveConnId] = useState<number | ''>('')
   const [liveCap, setLiveCap] = useState('100')
 
@@ -102,6 +104,11 @@ function PaperCard({ account, connections, onChange }: Readonly<{
     setOpen(next)
     if (next && !detail) {
       try { setDetail(await strategyGeneratorService.getPaperAccount(account.id)) } catch { /* ignora */ }
+      // Auditoría de órdenes reales (solo si la cartera llegó a operar en real)
+      try {
+        const audit = await strategyGeneratorService.getPaperLiveOrders(account.id)
+        if (audit.orders.length > 0) setLiveAudit(audit)
+      } catch { /* sin auditoría */ }
     }
   }
 
@@ -247,6 +254,37 @@ function PaperCard({ account, connections, onChange }: Readonly<{
               </div>
             ))}
           </div>
+
+          {/* Auditoría de órdenes reales (promoción) */}
+          {liveAudit && (
+            <div className="mt-2 border-t border-slate-700/50 pt-2">
+              <div className="flex items-center justify-between text-[10px] mb-1">
+                <span className="text-slate-500 uppercase">Órdenes reales</span>
+                <span>
+                  <span className="text-slate-500">P&L real{liveAudit.pnl_is_estimate ? ' (est.)' : ''} </span>
+                  <span className={`font-mono font-bold ${pnlTone(liveAudit.live_realized_pnl_usd)}`}>
+                    ${liveAudit.live_realized_pnl_usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-slate-600"> · paper ${liveAudit.paper_realized_pnl_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                </span>
+              </div>
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {liveAudit.orders.map((o) => (
+                  <div key={o.id} className="flex items-center gap-2 text-[10px]">
+                    <span className={`font-bold px-1 rounded border text-[9px] ${o.side === 'buy' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-red-500/15 text-red-300 border-red-500/30'}`}>
+                      {o.side.toUpperCase()}
+                    </span>
+                    <span className="text-slate-300 font-mono">{o.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
+                    <span className="text-slate-500 font-mono">@ {(o.fill_price ?? o.ref_price).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                    <span className={`text-[9px] px-1 rounded ${o.is_testnet ? 'text-sky-300' : 'text-red-300'}`}>{o.is_testnet ? 'testnet' : 'REAL'}</span>
+                    {o.status === 'failed'
+                      ? <span className="ml-auto text-red-400" title={o.error ?? ''}>✕ fallida</span>
+                      : <span className="ml-auto text-slate-600">{new Date(o.created_at).toLocaleDateString()}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
