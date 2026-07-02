@@ -14,6 +14,7 @@ import {
   type PaperAccount,
   type PaperAccountDetail,
 } from '@/services/strategyGeneratorService'
+import { tradingService, type ExchangeConnection } from '@/services/tradingService'
 
 const SIGNAL_STYLE: Record<string, string> = {
   BUY: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
@@ -27,7 +28,12 @@ function pnlTone(v: number): string {
 
 export default function PaperTradingPanel({ refreshKey = 0 }: Readonly<{ refreshKey?: number }>) {
   const [accounts, setAccounts] = useState<PaperAccount[]>([])
+  const [connections, setConnections] = useState<ExchangeConnection[]>([])
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    tradingService.listConnections().then(setConnections).catch(() => { /* sin conexiones */ })
+  }, [refreshKey])
 
   const reload = useCallback(() => {
     strategyGeneratorService.listPaperAccounts()
@@ -51,7 +57,7 @@ export default function PaperTradingPanel({ refreshKey = 0 }: Readonly<{ refresh
         <span className="text-[11px] text-slate-500">carteras virtuales que siguen tus estrategias en vivo</span>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {accounts.map((a) => <PaperCard key={a.id} account={a} onChange={reload} />)}
+        {accounts.map((a) => <PaperCard key={a.id} account={a} connections={connections} onChange={reload} />)}
       </div>
       <p className="text-[10px] text-slate-600 mt-3">
         Capital ficticio invertido según las señales de cada estrategia (con comisión y slippage).
@@ -61,10 +67,35 @@ export default function PaperTradingPanel({ refreshKey = 0 }: Readonly<{ refresh
   )
 }
 
-function PaperCard({ account, onChange }: Readonly<{ account: PaperAccount; onChange: () => void }>) {
+function PaperCard({ account, connections, onChange }: Readonly<{
+  account: PaperAccount; connections: ExchangeConnection[]; onChange: () => void
+}>) {
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<PaperAccountDetail | null>(null)
   const [busy, setBusy] = useState(false)
+  const [showLive, setShowLive] = useState(false)
+  const [liveConnId, setLiveConnId] = useState<number | ''>('')
+  const [liveCap, setLiveCap] = useState('100')
+
+  async function enableLive() {
+    if (!liveConnId) return
+    setBusy(true)
+    try {
+      await strategyGeneratorService.setPaperLive(account.id, {
+        enable: true, connection_id: Number(liveConnId), cap_usd: Number.parseFloat(liveCap) || 100,
+      })
+      setShowLive(false)
+      onChange()
+    } catch { /* ignora */ } finally { setBusy(false) }
+  }
+
+  async function disableLive() {
+    setBusy(true)
+    try {
+      await strategyGeneratorService.setPaperLive(account.id, { enable: false })
+      onChange()
+    } catch { /* ignora */ } finally { setBusy(false) }
+  }
 
   async function toggleDetail() {
     const next = !open
@@ -92,6 +123,15 @@ function PaperCard({ account, onChange }: Readonly<{ account: PaperAccount; onCh
             <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-300 border-amber-500/40"
               title="Estrategia degradada en vivo: se ha disparado la reoptimización del activo">
               ⚠ decaída
+            </span>
+          )}
+          {account.live_enabled && (
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+              account.live_is_testnet
+                ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                : 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse'
+            }`} title={`Ejecución real activa · tope $${account.live_cap_usd} por orden`}>
+              {account.live_is_testnet ? '⚡ LIVE testnet' : '⚡ LIVE REAL'}
             </span>
           )}
           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[account.last_signal] ?? SIGNAL_STYLE.HOLD}`}>
@@ -127,6 +167,51 @@ function PaperCard({ account, onChange }: Readonly<{ account: PaperAccount; onCh
         <p className="text-[10px] text-amber-300/80 mt-1.5">
           En posición · entrada ${account.entry_price?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
         </p>
+      )}
+
+      {account.live_error && (
+        <p className="text-[10px] text-red-300 mt-1.5" title={account.live_error}>
+          ⛔ {account.live_error}
+        </p>
+      )}
+
+      {account.is_active && (
+        account.live_enabled ? (
+          <button onClick={disableLive} disabled={busy}
+            className="mt-1.5 w-full text-[11px] font-medium rounded-md py-1.5 border bg-red-600/15 text-red-300 border-red-500/40 hover:bg-red-600/25 transition-colors disabled:opacity-50">
+            ⏹ Parar ejecución real
+          </button>
+        ) : showLive ? (
+          <div className="mt-1.5 bg-slate-800/80 border border-slate-600 rounded-md p-2 space-y-1.5">
+            <select value={liveConnId} onChange={(e) => setLiveConnId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200">
+              <option value="">Elige conexión…</option>
+              {connections.map((c) => (
+                <option key={c.id} value={c.id}>{c.exchange}{c.label ? ` · ${c.label}` : ''} ({c.is_testnet ? 'testnet' : 'REAL'})</option>
+              ))}
+            </select>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-500">tope $</span>
+              <input type="number" min={10} max={10000} value={liveCap} onChange={(e) => setLiveCap(e.target.value)}
+                className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 font-mono" />
+              <button onClick={enableLive} disabled={busy || !liveConnId}
+                className="text-[11px] px-2.5 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50">
+                Activar
+              </button>
+              <button onClick={() => setShowLive(false)} className="text-[11px] text-slate-500 hover:text-slate-300">✕</button>
+            </div>
+            <p className="text-[9px] text-slate-500">
+              Espeja las señales de esta cartera en tu exchange con tope de nocional por orden.
+              Cualquier error del broker desactiva la ejecución (kill-switch).
+            </p>
+          </div>
+        ) : (
+          <button onClick={() => setShowLive(true)} disabled={connections.length === 0}
+            title={connections.length === 0 ? 'Conecta un exchange en Trading primero' : 'Ejecutar las señales en tu exchange con tope'}
+            className="mt-1.5 w-full text-[11px] font-medium rounded-md py-1.5 border bg-slate-800 text-slate-400 border-slate-600 hover:text-slate-200 transition-colors disabled:opacity-40">
+            ⚡ Operar en real (con tope)
+          </button>
+        )
       )}
 
       <div className="flex gap-1.5 mt-2">

@@ -286,6 +286,12 @@ export interface PaperAccount {
   is_active: boolean
   decayed: boolean
   decayed_at: string | null
+  live_enabled: boolean
+  live_connection_id: number | null
+  live_is_testnet: boolean | null
+  live_cap_usd: number
+  live_base_position: number
+  live_error: string | null
   trades_count: number
   wins: number
   win_rate: number | null
@@ -435,6 +441,14 @@ export const strategyGeneratorService = {
   /** Detalle de una cartera con su historial de operaciones. */
   async getPaperAccount(accountId: number): Promise<PaperAccountDetail> {
     const { data } = await apiClient.get<PaperAccountDetail>(`/strategies/paper/${accountId}/`)
+    return data
+  },
+
+  /** Activa/desactiva la ejecución REAL de una cartera (promoción con tope). */
+  async setPaperLive(accountId: number, payload: { enable: boolean; connection_id?: number; cap_usd?: number }): Promise<{
+    id: number; live_enabled: boolean; live_cap_usd?: number; live_is_testnet?: boolean
+  }> {
+    const { data } = await apiClient.post(`/strategies/paper/${accountId}/live/`, payload)
     return data
   },
 
