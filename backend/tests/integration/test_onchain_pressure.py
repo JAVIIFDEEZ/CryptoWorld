@@ -14,7 +14,7 @@ from core.domain.services.onchain_flow import (
     aggregate_pressure, bucket_flows, classify_flow, is_exchange_label, pressure_verdict,
 )
 from core.application.use_cases.onchain_pressure import (
-    OnChainPressureUseCase, ScanWhaleMovementsUseCase,
+    DetectPressureSignalUseCase, OnChainPressureUseCase, ScanWhaleMovementsUseCase,
 )
 
 
@@ -167,3 +167,55 @@ class TestApi:
         resp = authenticated_client.get("/api/blockchain/pressure/", {"chain": "ethereum", "hours": 24})
         assert resp.status_code == 200
         assert set(resp.data) >= {"pressure", "inflow_usd", "outflow_usd", "verdict", "series"}
+
+
+class TestPressureSignals:
+    """Cambios de régimen del indicador → eventos para el centro de notificaciones."""
+
+    def _snapshot(self, direction, value, tx, hours_ago=1):
+        from core.infrastructure.persistence.models import WhaleMovementSnapshot
+        WhaleMovementSnapshot.objects.create(
+            chain="ethereum", symbol="ETH", kind="native", amount=1.0,
+            value_usd=value, direction=direction, tx_hash=tx,
+            from_address="0xa", to_address="0xb",
+            moved_at=datetime.now(dt_tz.utc) - timedelta(hours=hours_ago),
+        )
+
+    def _accumulation(self):
+        for i in range(6):
+            self._snapshot("from_exchange", 1_000_000, f"0xacc{i}")
+
+    @pytest.mark.integration
+    def test_regime_change_creates_event_once(self, db):
+        from core.infrastructure.persistence.models import OnChainSignalEvent
+        self._accumulation()
+        out1 = DetectPressureSignalUseCase().execute(chains=("ethereum",))
+        assert out1["created"] == 1
+        ev = OnChainSignalEvent.objects.get()
+        assert ev.verdict == "ACUMULACION" and ev.previous_verdict == ""
+
+        # Mismo régimen en la siguiente pasada → sin evento nuevo
+        out2 = DetectPressureSignalUseCase().execute(chains=("ethereum",))
+        assert out2["created"] == 0
+        assert OnChainSignalEvent.objects.count() == 1
+
+    @pytest.mark.integration
+    def test_transition_records_previous_verdict(self, db):
+        from core.infrastructure.persistence.models import OnChainSignalEvent
+        self._accumulation()
+        DetectPressureSignalUseCase().execute(chains=("ethereum",))
+        # El régimen gira a presión vendedora (muchos depósitos grandes)
+        for i in range(20):
+            self._snapshot("to_exchange", 5_000_000, f"0xsell{i}")
+        DetectPressureSignalUseCase().execute(chains=("ethereum",))
+        latest = OnChainSignalEvent.objects.first()
+        assert latest.verdict == "PRESION_VENDEDORA"
+        assert latest.previous_verdict == "ACUMULACION"
+
+    @pytest.mark.integration
+    def test_insufficient_sample_never_signals(self, db):
+        from core.infrastructure.persistence.models import OnChainSignalEvent
+        self._snapshot("to_exchange", 1_000_000, "0xlone")   # 1 solo movimiento
+        out = DetectPressureSignalUseCase().execute(chains=("ethereum",))
+        assert out["created"] == 0
+        assert OnChainSignalEvent.objects.count() == 0

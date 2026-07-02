@@ -24,16 +24,35 @@ def _signal_label(signal: str) -> str:
     return "COMPRA" if signal == "BUY" else "VENTA"
 
 
+_PRESSURE_TITLES = {
+    "ACUMULACION": "Presión on-chain: ACUMULACIÓN",
+    "PRESION_VENDEDORA": "Presión on-chain: PRESIÓN VENDEDORA",
+    "EQUILIBRIO": "Presión on-chain: equilibrio",
+}
+
+
 class NotificationsFeedUseCase:
     """Feed unificado de notificaciones del usuario + contador de no leídas."""
 
     def execute(self, owner, limit: int = 30) -> dict:
         from core.infrastructure.persistence.models import (
-            AddressAlert, PredictionRecord, PriceAlert, StrategySignalEvent,
+            AddressAlert, OnChainSignalEvent, PredictionRecord, PriceAlert,
+            StrategySignalEvent,
         )
 
         seen = getattr(owner, "notifications_seen_at", None)
         items: list[dict] = []
+
+        # ── Señales de presión on-chain (globales: cambios de régimen) ──
+        for ev in OnChainSignalEvent.objects.order_by("-created_at")[:limit]:
+            items.append({
+                "id": f"pressure-{ev.id}",
+                "kind": "pressure",
+                "title": _PRESSURE_TITLES.get(ev.verdict, f"Presión on-chain: {ev.verdict}"),
+                "body": f"{ev.chain} · puntuación {ev.pressure:+.2f} (ventana {ev.window_hours}h)",
+                "link": "/blockchain",
+                "ts": ev.created_at,
+            })
 
         # ── Señales de estrategia ──
         for e in (StrategySignalEvent.objects.select_related("strategy", "strategy__asset")
@@ -106,8 +125,10 @@ class NotificationsFeedUseCase:
     @staticmethod
     def _count_unread(owner, since) -> int:
         from core.infrastructure.persistence.models import (
-            AddressAlert, PredictionRecord, PriceAlert, StrategySignalEvent,
+            AddressAlert, OnChainSignalEvent, PredictionRecord, PriceAlert,
+            StrategySignalEvent,
         )
+        pressure = OnChainSignalEvent.objects.all()
         sig = StrategySignalEvent.objects.filter(owner=owner)
         whale = AddressAlert.objects.filter(owner=owner)
         pred = PredictionRecord.objects.filter(
@@ -117,9 +138,11 @@ class NotificationsFeedUseCase:
             total = (sig.filter(created_at__gt=since).count()
                      + whale.filter(created_at__gt=since).count()
                      + pred.filter(resolved_at__gt=since).count()
-                     + price.filter(triggered_at__gt=since).count())
+                     + price.filter(triggered_at__gt=since).count()
+                     + pressure.filter(created_at__gt=since).count())
         else:
-            total = sig.count() + whale.count() + pred.count() + price.count()
+            total = (sig.count() + whale.count() + pred.count() + price.count()
+                     + pressure.count())
         return min(total, _UNREAD_CAP)
 
 

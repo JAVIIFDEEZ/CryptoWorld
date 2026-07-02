@@ -541,11 +541,17 @@ def scan_whale_movements(self) -> dict:
     (cada 15 min).
     """
     try:
-        from core.application.use_cases.onchain_pressure import ScanWhaleMovementsUseCase
+        from core.application.use_cases.onchain_pressure import (
+            DetectPressureSignalUseCase, ScanWhaleMovementsUseCase,
+        )
 
         result = ScanWhaleMovementsUseCase().execute()
-        logger.info("scan_whale_movements: %d redes, %d nuevos",
-                    result["chains_scanned"], result["created"])
+        # Tras nutrir el histórico, detectar cambios de régimen (señal global
+        # que alimenta el centro de notificaciones).
+        signals = DetectPressureSignalUseCase().execute()
+        result["signals_created"] = signals["created"]
+        logger.info("scan_whale_movements: %d redes, %d nuevos, %d señales",
+                    result["chains_scanned"], result["created"], signals["created"])
         return result
     except Exception as exc:
         logger.error("scan_whale_movements error: %s", exc, exc_info=True)

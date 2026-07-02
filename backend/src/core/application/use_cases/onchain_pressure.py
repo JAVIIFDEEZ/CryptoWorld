@@ -94,6 +94,42 @@ class ScanWhaleMovementsUseCase:
         return {"chains_scanned": scanned, "created": created}
 
 
+class DetectPressureSignalUseCase:
+    """Registra un evento cuando el RÉGIMEN de presión de una red cambia.
+
+    Se ejecuta tras cada pasada del escáner: compara el veredicto actual (24h)
+    con el del último evento registrado y solo crea uno nuevo en la transición.
+    INSUFICIENTE nunca genera evento (sin muestra no hay señal) ni resetea el
+    último régimen conocido.
+    """
+
+    def execute(self, chains: tuple[str, ...] = SCAN_CHAINS) -> dict:
+        from core.infrastructure.persistence.models import OnChainSignalEvent
+
+        created = 0
+        for chain in chains:
+            pressure = OnChainPressureUseCase().execute(chain=chain, hours=24)
+            verdict = pressure.get("verdict")
+            if verdict in (None, "INSUFICIENTE"):
+                continue
+            last = OnChainSignalEvent.objects.filter(chain=chain).first()  # ordering -created_at
+            if last is not None and last.verdict == verdict:
+                continue
+            OnChainSignalEvent.objects.create(
+                chain=chain,
+                verdict=verdict,
+                previous_verdict=last.verdict if last else "",
+                pressure=pressure["pressure"],
+                window_hours=24,
+                inflow_usd=pressure["inflow_usd"],
+                outflow_usd=pressure["outflow_usd"],
+            )
+            created += 1
+            logger.info("señal on-chain %s: %s → %s (%.2f)",
+                        chain, last.verdict if last else "—", verdict, pressure["pressure"])
+        return {"created": created}
+
+
 class OnChainPressureUseCase:
     """Indicador de presión on-chain a partir del histórico persistido."""
 

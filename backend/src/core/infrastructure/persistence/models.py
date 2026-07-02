@@ -928,6 +928,39 @@ class WhaleMovementSnapshot(models.Model):
         return f"{self.symbol} ${self.value_usd:,.0f} {self.direction} ({self.chain})"
 
 
+class OnChainSignalEvent(models.Model):
+    """
+    Cambio de régimen del indicador de presión on-chain (señal global).
+
+    El escáner de ballenas, tras cada pasada, recalcula la presión de la ventana
+    de 24h y registra un evento SOLO cuando el veredicto cambia (acumulación ↔
+    presión vendedora ↔ equilibrio). Estos eventos alimentan el centro de
+    notificaciones de todos los usuarios: el cruce de régimen es la señal
+    accionable, no el valor continuo.
+    """
+
+    chain = models.CharField(max_length=20, db_index=True)
+    verdict = models.CharField(max_length=20)      # ACUMULACION | PRESION_VENDEDORA | EQUILIBRIO
+    previous_verdict = models.CharField(max_length=20, blank=True)
+    pressure = models.FloatField()
+    window_hours = models.PositiveSmallIntegerField(default=24)
+    inflow_usd = models.FloatField(default=0.0)
+    outflow_usd = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "onchain_signal_events"
+        verbose_name = "Señal On-Chain"
+        verbose_name_plural = "Señales On-Chain"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["chain", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.chain}: {self.previous_verdict or '—'} → {self.verdict} ({self.pressure:+.2f})"
+
+
 class ExchangeConnection(models.Model):
     """
     Conexión de un usuario con un exchange para operar en mercado real (ccxt).
