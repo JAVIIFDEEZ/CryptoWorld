@@ -27,7 +27,8 @@
     "language": "Language",
     "openMenu": "Open navigation menu",
     "closeMenu": "Close menu",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "trading": "Trading"
   },
   "dashboard": {
     "title": "Dashboard",
