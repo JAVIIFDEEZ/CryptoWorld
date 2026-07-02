@@ -102,9 +102,56 @@ def _apply_signal(account, signal: str, price: float) -> "object | None":
     return trade
 
 
+def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
+    """Espeja una operación de paper en el exchange REAL del usuario, con tope.
+
+    Reglas de seguridad:
+      · Solo si la promoción está activa, con conexión viva del MISMO dueño.
+      · El nocional de compra se CAPA a live_cap_usd por operación.
+      · La venta liquida exactamente lo comprado en real (live_base_position),
+        nunca más.
+      · Cualquier error del broker DESACTIVA la ejecución real (kill-switch) y
+        guarda el motivo: un fallo no puede repetirse en bucle cada 15 min.
+    """
+    if trade is None or not account.live_enabled:
+        return
+    connection = account.live_connection
+    if connection is None or not connection.is_active or connection.owner_id != account.owner_id:
+        account.live_enabled = False
+        account.live_error = "Conexión de exchange no disponible: promoción desactivada."
+        return
+
+    from core.application.use_cases.broker_trading import _broker_for
+    from core.infrastructure.external_apis.ccxt_broker import BrokerError
+
+    factory = broker_factory or _broker_for
+    symbol = f"{account.asset_symbol.upper()}/USDT"
+    try:
+        broker = factory(connection)
+        if trade.side == "BUY":
+            notional = min(float(account.live_cap_usd), float(account.cash) + trade.units * price)
+            base_amount = round(notional / price, 8) if price > 0 else 0.0
+            if base_amount <= 0:
+                return
+            broker.create_order(symbol, "buy", "market", base_amount)
+            account.live_base_position += base_amount
+        elif trade.side == "SELL" and account.live_base_position > 0:
+            broker.create_order(symbol, "sell", "market", round(account.live_base_position, 8))
+            account.live_base_position = 0.0
+        logger.info("paper→real #%s %s %s (%s)", account.id, trade.side, symbol,
+                    "testnet" if connection.is_testnet else "REAL")
+    except BrokerError as exc:
+        account.live_enabled = False
+        account.live_error = f"Ejecución real desactivada: {exc}"
+        logger.error("paper→real kill-switch #%s: %s", account.id, exc)
+
+
 class EvaluatePaperTradingUseCase:
     """Reevalúa todas las carteras de paper trading activas sobre los datos más
     recientes y ejecuta sus señales. Pensada para Celery beat."""
+
+    def __init__(self, broker_factory=None) -> None:
+        self._broker_factory = broker_factory
 
     def execute(self) -> dict:
         from django.db import transaction
@@ -116,7 +163,9 @@ class EvaluatePaperTradingUseCase:
         )
 
         accounts = list(
-            PaperTradingAccount.objects.select_related("strategy").filter(is_active=True)
+            PaperTradingAccount.objects
+            .select_related("strategy", "live_connection")
+            .filter(is_active=True)
         )
         evaluated = trades = 0
         decayed_pairs: set = set()
@@ -137,6 +186,8 @@ class EvaluatePaperTradingUseCase:
             price = float(df["close"].iloc[-1])
             with transaction.atomic():
                 trade = _apply_signal(acc, signal, price)
+                # Promoción a real: espejar la operación con tope y kill-switch.
+                _mirror_live(acc, trade, price, broker_factory=self._broker_factory)
                 acc.last_signal = signal
                 acc.last_eval_at = now
                 # Mark-to-market: actualizar pico y detectar decadencia (decay).
@@ -146,6 +197,7 @@ class EvaluatePaperTradingUseCase:
                     "cash", "units", "entry_price", "last_price", "realized_pnl",
                     "trades_count", "wins", "last_signal", "last_eval_at",
                     "peak_equity", "decayed", "decayed_at", "updated_at",
+                    "live_enabled", "live_base_position", "live_error",
                 ]
                 acc.save(update_fields=fields)
                 PaperEquitySnapshot.objects.create(
@@ -245,6 +297,12 @@ def _serialize_account(a) -> dict:
         "is_active": a.is_active,
         "decayed": a.decayed,
         "decayed_at": a.decayed_at.isoformat() if a.decayed_at else None,
+        "live_enabled": a.live_enabled,
+        "live_connection_id": a.live_connection_id,
+        "live_is_testnet": a.live_connection.is_testnet if a.live_connection else None,
+        "live_cap_usd": a.live_cap_usd,
+        "live_base_position": round(a.live_base_position, 8),
+        "live_error": a.live_error or None,
         "trades_count": a.trades_count,
         "wins": a.wins,
         "win_rate": win_rate,

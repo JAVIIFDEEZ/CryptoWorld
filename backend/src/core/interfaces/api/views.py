@@ -2146,6 +2146,52 @@ class StrategyPortfolioView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class PaperLivePromotionView(APIView):
+    """
+    POST /api/strategies/paper/<id>/live/ — Activa/desactiva la ejecución REAL
+    de una cartera de paper trading. Body: {"enable": bool, "connection_id"?: int,
+    "cap_usd"?: float}. La conexión debe pertenecer al usuario; el tope de
+    nocional por orden se limita a [10, 10000] USD. Al activar se limpia el
+    kill-switch anterior.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, account_id: int):
+        from core.infrastructure.persistence.models import ExchangeConnection, PaperTradingAccount
+
+        acc = PaperTradingAccount.objects.filter(id=account_id, owner=request.user).first()
+        if acc is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        enable = bool(request.data.get("enable", False))
+        if not enable:
+            acc.live_enabled = False
+            acc.save(update_fields=["live_enabled", "updated_at"])
+            return Response({"id": acc.id, "live_enabled": False}, status=status.HTTP_200_OK)
+
+        connection = ExchangeConnection.objects.filter(
+            id=request.data.get("connection_id"), owner=request.user, is_active=True,
+        ).first()
+        if connection is None:
+            return Response({"error": "Conexión de exchange no encontrada: conéctala primero en Trading."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            cap = float(request.data.get("cap_usd", 100.0))
+        except (TypeError, ValueError):
+            cap = 100.0
+        cap = min(max(cap, 10.0), 10_000.0)
+
+        acc.live_connection = connection
+        acc.live_enabled = True
+        acc.live_cap_usd = cap
+        acc.live_error = ""
+        acc.save(update_fields=["live_connection", "live_enabled", "live_cap_usd", "live_error", "updated_at"])
+        return Response({
+            "id": acc.id, "live_enabled": True, "live_cap_usd": cap,
+            "live_is_testnet": connection.is_testnet,
+        }, status=status.HTTP_200_OK)
+
+
 class BestStrategiesView(APIView):
     """
     GET /api/strategies/best/ — Mejor estrategia validada de cada activo (la

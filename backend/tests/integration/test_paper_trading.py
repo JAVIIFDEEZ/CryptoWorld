@@ -249,3 +249,129 @@ class TestApi:
         acc = _account(strategy, owner=None)
         data = PaperTradingDetailUseCase().execute(owner=test_user, account_id=acc.id)
         assert data is None
+
+
+class _FakeLiveBroker:
+    """Broker falso que registra órdenes o falla según se configure."""
+
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.orders = []
+
+    def create_order(self, symbol, side, order_type, amount, price=None):
+        from core.infrastructure.external_apis.ccxt_broker import BrokerError
+        if self.fail:
+            raise BrokerError("Fondos insuficientes para esta orden.")
+        self.orders.append({"symbol": symbol, "side": side, "type": order_type, "amount": amount})
+        return {"id": "1", "symbol": symbol, "side": side, "status": "closed"}
+
+
+def _live_account(strategy, owner, cap=100.0):
+    from core.infrastructure.persistence.models import ExchangeConnection, PaperTradingAccount
+    from core.infrastructure.security.crypto import encrypt_secret
+    conn = ExchangeConnection.objects.create(
+        owner=owner, exchange="binance",
+        api_key_enc=encrypt_secret("K"), api_secret_enc=encrypt_secret("S"),
+        is_testnet=True,
+    )
+    acc = PaperTradingAccount.objects.create(
+        strategy=strategy, owner=owner, asset_symbol="BTC", interval="1d",
+        initial_capital=10000.0, cash=10000.0,
+        live_connection=conn, live_enabled=True, live_cap_usd=cap,
+    )
+    return acc, conn
+
+
+class TestLivePromotion:
+
+    @pytest.mark.integration
+    def test_buy_mirrors_with_cap(self, strategy, test_user, monkeypatch):
+        from core.application.use_cases.paper_trading import EvaluatePaperTradingUseCase
+        acc, _ = _live_account(strategy, test_user, cap=100.0)
+        broker = _FakeLiveBroker()
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=200, **kw: OhlcvFetchResult(df=_df_with_signal("buy"), source="binance"),
+        )
+        EvaluatePaperTradingUseCase(broker_factory=lambda c: broker).execute()
+        acc.refresh_from_db()
+        assert len(broker.orders) == 1
+        order = broker.orders[0]
+        assert order["symbol"] == "BTC/USDT" and order["side"] == "buy"
+        # Nocional capado a 100 USD: amount·precio ≤ 100 (+ redondeo)
+        price = acc.last_price
+        assert order["amount"] * price <= 100.0 + 1e-6
+        assert acc.live_base_position == pytest.approx(order["amount"])
+        assert acc.live_enabled is True
+
+    @pytest.mark.integration
+    def test_broker_error_triggers_kill_switch(self, strategy, test_user, monkeypatch):
+        from core.application.use_cases.paper_trading import EvaluatePaperTradingUseCase
+        acc, _ = _live_account(strategy, test_user)
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=200, **kw: OhlcvFetchResult(df=_df_with_signal("buy"), source="binance"),
+        )
+        EvaluatePaperTradingUseCase(broker_factory=lambda c: _FakeLiveBroker(fail=True)).execute()
+        acc.refresh_from_db()
+        assert acc.live_enabled is False                       # kill-switch
+        assert "desactivada" in acc.live_error.lower()
+        # El paper sigue funcionando aunque el espejo falle
+        assert acc.units > 0
+
+    @pytest.mark.integration
+    def test_sell_liquidates_exactly_live_position(self, strategy, test_user, monkeypatch):
+        from core.application.use_cases.paper_trading import _apply_signal, _mirror_live
+        acc, _ = _live_account(strategy, test_user)
+        broker = _FakeLiveBroker()
+        # Compra en paper con espejo
+        trade = _apply_signal(acc, "BUY", price=100.0)
+        _mirror_live(acc, trade, 100.0, broker_factory=lambda c: broker)
+        bought = acc.live_base_position
+        assert bought > 0
+        # Venta: liquida exactamente lo comprado en real
+        trade = _apply_signal(acc, "SELL", price=120.0)
+        _mirror_live(acc, trade, 120.0, broker_factory=lambda c: broker)
+        assert broker.orders[-1]["side"] == "sell"
+        assert broker.orders[-1]["amount"] == pytest.approx(bought)
+        assert acc.live_base_position == 0.0
+
+    @pytest.mark.integration
+    def test_promotion_endpoint(self, authenticated_client, strategy, test_user):
+        from core.infrastructure.persistence.models import ExchangeConnection
+        from core.infrastructure.security.crypto import encrypt_secret
+        acc = _account(strategy, owner=test_user)
+        conn = ExchangeConnection.objects.create(
+            owner=test_user, exchange="binance",
+            api_key_enc=encrypt_secret("K"), api_secret_enc=encrypt_secret("S"),
+        )
+        # Activar con tope fuera de rango → se limita
+        resp = authenticated_client.post(
+            f"/api/strategies/paper/{acc.id}/live/",
+            {"enable": True, "connection_id": conn.id, "cap_usd": 999999},
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert resp.data["live_enabled"] is True and resp.data["live_cap_usd"] == 10000.0
+
+        # Desactivar
+        off = authenticated_client.post(
+            f"/api/strategies/paper/{acc.id}/live/", {"enable": False}, format="json",
+        )
+        assert off.status_code == 200 and off.data["live_enabled"] is False
+
+    @pytest.mark.integration
+    def test_promotion_requires_own_connection(self, authenticated_client, strategy, test_user, db):
+        from core.infrastructure.persistence.models import ExchangeConnection, User
+        from core.infrastructure.security.crypto import encrypt_secret
+        acc = _account(strategy, owner=test_user)
+        other = User.objects.create_user(email="o@e.com", username="other", password="x")
+        foreign = ExchangeConnection.objects.create(
+            owner=other, exchange="binance",
+            api_key_enc=encrypt_secret("K"), api_secret_enc=encrypt_secret("S"),
+        )
+        resp = authenticated_client.post(
+            f"/api/strategies/paper/{acc.id}/live/",
+            {"enable": True, "connection_id": foreign.id}, format="json",
+        )
+        assert resp.status_code == 400

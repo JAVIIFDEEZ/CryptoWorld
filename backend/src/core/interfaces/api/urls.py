@@ -169,6 +169,11 @@ urlpatterns = [
         name="strategies-paper-detail",
     ),
     path(
+        "strategies/paper/<int:account_id>/live/",
+        views.PaperLivePromotionView.as_view(),
+        name="strategies-paper-live",
+    ),
+    path(
         "strategies/best/",
         views.BestStrategiesView.as_view(),
         name="strategies-best",

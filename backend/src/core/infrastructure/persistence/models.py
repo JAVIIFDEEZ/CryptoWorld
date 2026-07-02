@@ -691,6 +691,18 @@ class PaperTradingAccount(models.Model):
     peak_equity = models.FloatField(default=0.0)
     decayed = models.BooleanField(default=False, db_index=True)
     decayed_at = models.DateTimeField(null=True, blank=True)
+    # ── Promoción a ejecución REAL (opcional, con límites) ──
+    # Cuando live_enabled, las señales de esta cartera también se ejecutan en el
+    # exchange del usuario con un TOPE de nocional por operación. Cualquier error
+    # del broker desactiva la ejecución real (kill-switch) y guarda el motivo.
+    live_connection = models.ForeignKey(
+        "ExchangeConnection", on_delete=models.SET_NULL,
+        related_name="live_paper_accounts", null=True, blank=True,
+    )
+    live_enabled = models.BooleanField(default=False, db_index=True)
+    live_cap_usd = models.FloatField(default=100.0)      # nocional máximo por orden
+    live_base_position = models.FloatField(default=0.0)  # unidades compradas en real
+    live_error = models.CharField(max_length=300, blank=True, default="")
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
