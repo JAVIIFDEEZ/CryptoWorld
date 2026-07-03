@@ -618,10 +618,13 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
 
     Target: 1 si el precio sube en `horizon` velas, 0 si no.
     """
+    import time as _time
+
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import TimeSeriesSplit
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, brier_score_loss
-    from sklearn.calibration import CalibratedClassifierCV
+
+    t_start = _time.perf_counter()
 
     if len(df) < 100:
         return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
@@ -647,20 +650,24 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
                 "message": "Una sola clase en el objetivo; no hay nada que predecir."}
 
     def _rf() -> "RandomForestClassifier":
+        # n_jobs=1 a propósito: con cientos de filas el coste de repartir árboles
+        # entre hilos supera al ahorro, y en máquinas pequeñas satura los núcleos.
         return RandomForestClassifier(
             n_estimators=150, max_depth=6, min_samples_leaf=8,
-            class_weight="balanced", random_state=42, n_jobs=-1,
+            class_weight="balanced", random_state=42, n_jobs=1,
         )
 
     def _make_model():
         # Ensemble por votación blanda: combina familias de modelos con sesgos
         # distintos (bosque, boosting, lineal) → predicciones más robustas que
         # un único modelo. La regresión logística va escalada en un pipeline.
-        from sklearn.ensemble import GradientBoostingClassifier, VotingClassifier
+        # HistGradientBoosting = gradient boosting con histogramas (~6× más
+        # rápido que GradientBoostingClassifier a igual capacidad).
+        from sklearn.ensemble import HistGradientBoostingClassifier, VotingClassifier
         from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import make_pipeline
         from sklearn.preprocessing import StandardScaler
-        gb = GradientBoostingClassifier(n_estimators=80, max_depth=3, random_state=42)
+        gb = HistGradientBoostingClassifier(max_iter=80, max_depth=3, random_state=42)
         lr = make_pipeline(StandardScaler(),
                            LogisticRegression(max_iter=1000, class_weight="balanced"))
         return VotingClassifier(
@@ -687,16 +694,39 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
 
     oos_true = np.asarray(oos_true)
     oos_pred = np.asarray(oos_pred)
-    oos_accuracy = float(accuracy_score(oos_true, oos_pred))
+    oos_proba = np.asarray(oos_proba)
+    # Redondeados a 4 decimales ANTES de derivar el edge para que la identidad
+    # edge = oos_accuracy - baseline se cumpla exactamente en el payload.
+    oos_accuracy = round(float(accuracy_score(oos_true, oos_pred)), 4)
     up_rate = float(oos_true.mean())
-    baseline = max(up_rate, 1.0 - up_rate)        # acierto de predecir siempre la clase mayoritaria
-    edge = oos_accuracy - baseline
+    baseline = round(max(up_rate, 1.0 - up_rate), 4)  # predecir siempre la clase mayoritaria
+    edge = round(oos_accuracy - baseline, 4)
     try:
         auc = float(roc_auc_score(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
     except ValueError:
         auc = None
-    # Brier score: calidad de calibración de las probabilidades OOS (0 = perfecto).
-    brier = float(brier_score_loss(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
+
+    # ── Calibración de Platt aprendida SOLO con datos fuera de muestra ──
+    # Reutiliza las probabilidades OOS del walk-forward para aprender el mapa
+    # voto crudo → probabilidad realista (2 parámetros, sin re-entrenar nada).
+    # Sustituye a CalibratedClassifierCV, que re-ajustaba el ensemble completo
+    # 3 veces más y duplicaba el tiempo de respuesta del endpoint.
+    platt = None
+    if len(set(oos_true)) == 2:
+        try:
+            from sklearn.linear_model import LogisticRegression as _PlattLR
+            platt = _PlattLR(max_iter=1000).fit(oos_proba.reshape(-1, 1), oos_true)
+        except Exception:  # noqa: BLE001 — sin calibración se usa el voto crudo
+            platt = None
+
+    # Brier score: calidad de las probabilidades que realmente se muestran
+    # (calibradas si hay calibrador, crudas si no), medida en OOS (0 = perfecto).
+    if len(set(oos_true)) == 2:
+        shown_proba = (platt.predict_proba(oos_proba.reshape(-1, 1))[:, 1]
+                       if platt is not None else oos_proba)
+        brier = float(brier_score_loss(oos_true, shown_proba))
+    else:
+        brier = None
 
     # ── Modelo final con TODO el histórico → predicción de la vela actual ──
     # Importancias desde un RF plano (ni el ensemble ni el calibrador las exponen).
@@ -704,17 +734,14 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     latest = feat_all.replace([np.inf, -np.inf], np.nan).dropna()
     X_latest = latest.iloc[-1:][feature_cols].values
 
-    # Probabilidad CALIBRADA (Platt, validación que respeta el tiempo): así la
-    # "confianza" mostrada es una probabilidad realista, no el voto crudo del bosque.
-    calibrated = False
-    try:
-        model = CalibratedClassifierCV(_make_model(), method="sigmoid", cv=TimeSeriesSplit(n_splits=3))
-        model.fit(X, y)
-        proba = model.predict_proba(X_latest)[0]
-        calibrated = True
-    except Exception:
-        proba = imp_model.predict_proba(X_latest)[0]
-    pred_class = int(proba[1] >= proba[0])
+    # Un único ensemble final; su voto crudo pasa por el calibrador OOS para que
+    # la "confianza" mostrada sea una probabilidad realista, no el voto del bosque.
+    final_model = _make_model().fit(X, y)
+    raw_up = float(final_model.predict_proba(X_latest)[0, 1])
+    calibrated = platt is not None
+    prob_up = float(platt.predict_proba([[raw_up]])[0, 1]) if calibrated else raw_up
+    proba = np.array([1.0 - prob_up, prob_up])
+    pred_class = int(prob_up >= 0.5)
 
     top_features = sorted(zip(feature_cols, imp_model.feature_importances_),
                           key=lambda x: x[1], reverse=True)[:8]
@@ -781,6 +808,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
             {"feature": name, "importance": round(float(imp), 4)} for name, imp in top_features
         ],
         "drivers": drivers,
+        "elapsed_ms": int((_time.perf_counter() - t_start) * 1000),
         "disclaimer": "Predicción estadística evaluada fuera de muestra (walk-forward). "
                       "No constituye consejo financiero.",
     }

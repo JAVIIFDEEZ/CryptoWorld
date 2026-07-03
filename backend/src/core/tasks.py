@@ -448,6 +448,46 @@ def resolve_predictions(self) -> dict:
 
 
 @shared_task(
+    name="core.tasks.warm_ml_predictions",
+    bind=True,
+    max_retries=0,
+)
+def warm_ml_predictions(self) -> dict:
+    """
+    Precalienta la caché de la predicción ML (1h, horizonte 5 — la combinación
+    por defecto de la UI) para los activos de mayor capitalización. El cálculo
+    es el mismo que dispararía el usuario; aquí se paga en segundo plano para
+    que la pestaña de predicción responda al instante. No registra predicciones
+    (log=False): solo las peticiones reales de usuarios alimentan el historial.
+    Programada por celery beat (cada 10 min; la caché dura 15).
+    """
+    from core.application.dto.asset_dto import PredictionRequestDTO
+    from core.application.use_cases.predict_price import PredictPriceUseCase
+    from core.infrastructure.persistence.models import CryptoAsset
+
+    symbols = list(
+        CryptoAsset.objects.exclude(market_cap__isnull=True)
+        .order_by("-market_cap")
+        .values_list("symbol", flat=True)[:8]
+    )
+    warmed, failed = 0, 0
+    use_case = PredictPriceUseCase()
+    for symbol in symbols:
+        try:
+            out = use_case.execute(
+                PredictionRequestDTO(asset_symbol=symbol, interval="1h", horizon=5),
+                owner=None, log=False,
+            )
+            warmed += int("error" not in out)
+            failed += int("error" in out)
+        except Exception as exc:  # noqa: BLE001 — un activo caído no frena al resto
+            failed += 1
+            logger.warning("warm_ml_predictions: %s falló: %s", symbol, exc)
+    logger.info("warm_ml_predictions: %d precalentadas, %d fallidas", warmed, failed)
+    return {"warmed": warmed, "failed": failed, "symbols": symbols}
+
+
+@shared_task(
     name="core.tasks.evaluate_monitored_strategies",
     bind=True,
     max_retries=1,

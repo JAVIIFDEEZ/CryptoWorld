@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class PredictPriceUseCase:
 
-    def execute(self, dto: PredictionRequestDTO, owner=None) -> dict:
+    def execute(self, dto: PredictionRequestDTO, owner=None, log: bool = True) -> dict:
         from django.core.cache import cache
         from core.application.use_cases.track_predictions import log_prediction
 
@@ -27,8 +27,9 @@ class PredictPriceUseCase:
         cache_key = f"ml_predict:{symbol}:{dto.interval}:{dto.horizon}"
         cached = cache.get(cache_key)
         if cached is not None:
-            log_prediction(cached, symbol, dto.interval, dto.horizon,
-                           last_close=cached.get("_last_close", 0.0), owner=owner)
+            if log:
+                log_prediction(cached, symbol, dto.interval, dto.horizon,
+                               last_close=cached.get("_last_close", 0.0), owner=owner)
             return {k: v for k, v in cached.items() if k != "_last_close"}
 
         result = fetch_ohlcv_dataframe(symbol=symbol, interval=dto.interval, limit=dto.limit)
@@ -39,7 +40,11 @@ class PredictPriceUseCase:
                 "message": "Se necesitan al menos 100 velas.",
             }
 
-        prediction = predict_price_direction(result.df, horizon=dto.horizon)
+        try:
+            prediction = predict_price_direction(result.df, horizon=dto.horizon)
+        except Exception as exc:  # noqa: BLE001 — un fallo del modelo no debe ser un 500 opaco
+            logger.exception("predict_price: fallo entrenando %s %s h=%s", symbol, dto.interval, dto.horizon)
+            return {"error": f"La predicción falló al entrenar el modelo: {exc}"}
         prediction["asset_symbol"] = symbol
         prediction["interval"] = dto.interval
         prediction["data_source"] = result.source
@@ -48,5 +53,6 @@ class PredictPriceUseCase:
         cache.set(cache_key, {**prediction, "_last_close": last_close}, 900)  # 15 min
 
         # Registrar la predicción para verificarla cuando transcurra el horizonte.
-        log_prediction(prediction, symbol, dto.interval, dto.horizon, last_close=last_close, owner=owner)
+        if log:
+            log_prediction(prediction, symbol, dto.interval, dto.horizon, last_close=last_close, owner=owner)
         return prediction

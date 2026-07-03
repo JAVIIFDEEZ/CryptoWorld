@@ -184,3 +184,103 @@ class TestMonitoring:
         assert resp.status_code == 200
         assert set(resp.data) >= {"status", "expected_accuracy", "realized_accuracy", "gap",
                                   "n_resolved", "series", "by_asset", "thresholds"}
+
+
+def _ohlcv(n=200):
+    rng = np.random.default_rng(3)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
+    df = pd.DataFrame({
+        "timestamp": [1700000000000 + i * 3600000 for i in range(n)],
+        "open": close, "high": close * 1.01, "low": close * 0.99,
+        "close": close, "volume": np.full(n, 1000.0),
+    })
+    return OhlcvFetchResult(df=df, source="binance")
+
+
+class TestPredictUseCaseHardening:
+    """El endpoint de predicción nunca debe devolver un 500 opaco ni registrar
+    predicciones cuando se le pide que no lo haga (precalentamiento)."""
+
+    @pytest.mark.integration
+    def test_model_failure_returns_readable_error(self, db, monkeypatch):
+        from core.application.dto.asset_dto import PredictionRequestDTO
+        from core.application.use_cases.predict_price import PredictPriceUseCase
+
+        monkeypatch.setattr(
+            "core.application.use_cases.predict_price.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1h", limit=500, **kw: _ohlcv(),
+        )
+        def _boom(df, horizon=5):
+            raise RuntimeError("fallo interno del modelo")
+        monkeypatch.setattr(
+            "core.application.use_cases.predict_price.predict_price_direction", _boom,
+        )
+        out = PredictPriceUseCase().execute(
+            PredictionRequestDTO(asset_symbol="ERRCOIN", interval="1h", horizon=5))
+        assert "error" in out and "falló" in out["error"]
+        assert "fallo interno del modelo" in out["error"]
+
+    @pytest.mark.integration
+    def test_log_false_skips_prediction_record(self, db, monkeypatch):
+        from core.application.dto.asset_dto import PredictionRequestDTO
+        from core.application.use_cases.predict_price import PredictPriceUseCase
+        from core.infrastructure.persistence.models import PredictionRecord
+
+        monkeypatch.setattr(
+            "core.application.use_cases.predict_price.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1h", limit=500, **kw: _ohlcv(),
+        )
+        monkeypatch.setattr(
+            "core.application.use_cases.predict_price.predict_price_direction",
+            lambda df, horizon=5: {"prediction": "ALCISTA", "confidence": 0.6,
+                                   "prob_up": 0.6, "verdict": "WEAK"},
+        )
+        out = PredictPriceUseCase().execute(
+            PredictionRequestDTO(asset_symbol="WARMCOIN", interval="1h", horizon=5), log=False)
+        assert out["prediction"] == "ALCISTA"
+        assert PredictionRecord.objects.count() == 0
+
+
+class TestWarmPredictionsTask:
+    """La tarea de precalentamiento calienta la caché de los activos top sin
+    contaminar el historial de predicciones."""
+
+    @pytest.mark.integration
+    def test_warms_top_assets_by_market_cap_without_logging(self, db, monkeypatch):
+        from core.application.use_cases.predict_price import PredictPriceUseCase
+        from core.infrastructure.persistence.models import CryptoAsset
+        from core.tasks import warm_ml_predictions
+
+        CryptoAsset.objects.create(symbol="BTC", name="Bitcoin", market_cap=1000)
+        CryptoAsset.objects.create(symbol="ETH", name="Ethereum", market_cap=500)
+        CryptoAsset.objects.create(symbol="NOCAP", name="Sin cap")  # market_cap NULL: fuera
+
+        calls = []
+        def fake_execute(self, dto, owner=None, log=True):
+            calls.append((dto.asset_symbol, dto.interval, dto.horizon, owner, log))
+            return {"prediction": "ALCISTA"}
+        monkeypatch.setattr(PredictPriceUseCase, "execute", fake_execute)
+
+        result = warm_ml_predictions.apply().result
+        assert result["warmed"] == 2 and result["failed"] == 0
+        assert result["symbols"] == ["BTC", "ETH"]     # orden por capitalización
+        # La combinación calentada es la de la UI por defecto y NUNCA registra
+        assert all(c[1] == "1h" and c[2] == 5 and c[3] is None and c[4] is False for c in calls)
+
+    @pytest.mark.integration
+    def test_one_failing_asset_does_not_stop_the_rest(self, db, monkeypatch):
+        from core.application.use_cases.predict_price import PredictPriceUseCase
+        from core.infrastructure.persistence.models import CryptoAsset
+        from core.tasks import warm_ml_predictions
+
+        CryptoAsset.objects.create(symbol="BTC", name="Bitcoin", market_cap=1000)
+        CryptoAsset.objects.create(symbol="ETH", name="Ethereum", market_cap=500)
+
+        def fake_execute(self, dto, owner=None, log=True):
+            if dto.asset_symbol == "BTC":
+                raise RuntimeError("api caída")
+            return {"prediction": "BAJISTA"}
+        monkeypatch.setattr(PredictPriceUseCase, "execute", fake_execute)
+
+        result = warm_ml_predictions.apply().result
+        assert result == {"warmed": 1, "failed": 1, "symbols": ["BTC", "ETH"]}

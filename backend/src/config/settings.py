@@ -358,6 +358,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.resolve_predictions",
         "schedule": 1800.0,  # segundos — cada 30 min
     },
+    # Precalentar la caché de predicción ML de los activos top (cada 10 min)
+    "warm-ml-predictions": {
+        "task": "core.tasks.warm_ml_predictions",
+        "schedule": 600.0,   # segundos — la caché de predicción dura 15 min
+    },
     # Ejecutar señales de las carteras de paper trading activas (cada 15 min)
     "evaluate-paper-trading": {
         "task": "core.tasks.evaluate_paper_trading",
