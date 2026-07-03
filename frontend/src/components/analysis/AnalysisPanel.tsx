@@ -11,6 +11,7 @@
  */
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   analysisService,
   type IntervalType,
@@ -37,14 +38,14 @@ import LevelsTab from '@/components/analysis/tabs/LevelsTab'
 
 type Tab = 'signals' | 'mtf' | 'levels' | 'indicator' | 'predict' | 'patterns' | 'backtest'
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'signals',   label: 'Señales' },
-  { key: 'mtf',       label: 'Multi-marco' },
-  { key: 'levels',    label: 'Niveles' },
-  { key: 'indicator', label: 'Indicadores' },
-  { key: 'predict',   label: 'Predicción ML' },
-  { key: 'patterns',  label: 'Patrones' },
-  { key: 'backtest',  label: 'Backtesting' },
+const TABS: { key: Tab; labelKey: string }[] = [
+  { key: 'signals',   labelKey: 'analysis.tabSignals' },
+  { key: 'mtf',       labelKey: 'analysis.tabMtf' },
+  { key: 'levels',    labelKey: 'analysis.tabLevels' },
+  { key: 'indicator', labelKey: 'analysis.tabIndicators' },
+  { key: 'predict',   labelKey: 'analysis.tabPredict' },
+  { key: 'patterns',  labelKey: 'analysis.tabPatterns' },
+  { key: 'backtest',  labelKey: 'analysis.tabBacktest' },
 ]
 
 const INTERVALS: { label: string; value: IntervalType }[] = [
@@ -129,6 +130,7 @@ interface Props {
 }
 
 export default function AnalysisPanel({ symbol }: Props) {
+  const { t } = useTranslation()
   const [tab, setTab]               = useState<Tab>('signals')
   const [interval, setInterval]     = useState<IntervalType>('1h')
   const [loading, setLoading]       = useState(false)
@@ -276,26 +278,26 @@ export default function AnalysisPanel({ symbol }: Props) {
       {/* ── Cabecera: diferencia este panel (interactivo, multi-marco)
              de la ficha de confluencia de arriba (resumen diario fijo) ── */}
       <div className="px-4 pt-4 pb-1">
-        <h2 className="text-lg font-semibold text-white">Análisis técnico interactivo</h2>
+        <h2 className="text-lg font-semibold text-white">{t('analysis.panelTitle')}</h2>
         <p className="text-xs text-slate-500">
-          Indicadores, predicción ML, patrones y backtesting en el marco temporal que elijas.
+          {t('analysis.panelSubtitle')}
         </p>
       </div>
 
       {/* ── Pestañas ─────────────────────────────────────────── */}
       <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b border-slate-700 overflow-x-auto">
-        {TABS.map((t) => (
+        {TABS.map((tabDef) => (
           <button
-            key={t.key}
-            onClick={() => { setTab(t.key); setError(null) }}
+            key={tabDef.key}
+            onClick={() => { setTab(tabDef.key); setError(null) }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
-              tab === t.key
+              tab === tabDef.key
                 ? 'bg-blue-600 text-white'
                 : 'text-slate-400 hover:text-white hover:bg-slate-700'
             }`}
           >
-            {TAB_ICONS[t.key]}
-            {t.label}
+            {TAB_ICONS[tabDef.key]}
+            {t(tabDef.labelKey)}
           </button>
         ))}
       </div>
@@ -304,7 +306,7 @@ export default function AnalysisPanel({ symbol }: Props) {
       <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-700/50">
         {/* Intervalo */}
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-500 uppercase">Intervalo</span>
+          <span className="text-[10px] text-slate-500 uppercase">{t('analysis.interval')}</span>
           <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
             {INTERVALS.map((o) => (
               <button

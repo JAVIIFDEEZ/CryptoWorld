@@ -1,5 +1,6 @@
 import { lazy, useEffect, useMemo, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService } from '@/services/marketService'
 import { getWatchlist, addToWatchlist, removeFromWatchlist } from '@/services/watchlistService'
@@ -24,11 +25,12 @@ function parseNumeric(value: string | null | undefined): number {
 }
 
 function MarketPage() {
+  const { t } = useTranslation()
   const { formatPrice, formatCompact } = useCurrency()
   const navigate = useNavigate()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
   const [search, setSearch] = useState('')
   const [sortField, setSortField] = useState<SortField>('marketCap')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
@@ -46,7 +48,7 @@ function MarketPage() {
         const data = await analysisService.getAssets()
         setAssets(data)
       } catch {
-        setError('No se pudo cargar el mercado. Verifica la conexion con la API.')
+        setError(true)
       } finally {
         setIsLoading(false)
       }
@@ -136,23 +138,23 @@ function MarketPage() {
   return (
     <section className="space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-white">Mercado</h1>
+        <h1 className="text-2xl font-bold text-white">{t('market.title')}</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Catálogo completo de activos. Busca, ordena y accede al detalle de cada criptomoneda.
+          {t('market.subtitle')}
         </p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard label="Activos listados" value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
-        <StatCard label="Alcistas (24h)" value={String(bullishCount)} animateValue={bullishCount} format={(n) => String(Math.round(n))} tone="positive" />
-        <StatCard label="Bajistas (24h)" value={String(bearishCount)} animateValue={bearishCount} format={(n) => String(Math.round(n))} tone="negative" />
+        <StatCard label={t('market.listedAssets')} value={String(assets.length)} animateValue={assets.length} format={(n) => String(Math.round(n))} />
+        <StatCard label={t('market.bullish24h')} value={String(bullishCount)} animateValue={bullishCount} format={(n) => String(Math.round(n))} tone="positive" />
+        <StatCard label={t('market.bearish24h')} value={String(bearishCount)} animateValue={bearishCount} format={(n) => String(Math.round(n))} tone="negative" />
       </div>
 
       {/* Universo de mercado: galaxia 3D (tamaño=cap, color=cambio) con treemap 2D */}
       {!isLoading && !error && marketBodies.length > 0 && (
         <Viz3DSwitch
-          title="Universo de mercado"
-          hint="Top 30 por capitalización · tamaño = market cap · color = variación 24h"
+          title={t('market.universeTitle')}
+          hint={t('market.universeHint')}
           threeD={<MarketUniverse3D bodies={marketBodies} onSelect={goToAsset} />}
           twoD={<MarketTreemap2D bodies={marketBodies} onSelect={goToAsset} />}
         />
@@ -175,13 +177,13 @@ function MarketPage() {
         {/* Cabecera de la tabla */}
         <div className="px-4 py-3 border-b border-slate-700 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-slate-300">
-            {filteredAndSorted.length} activos
+            {t('market.assetsCount', { count: filteredAndSorted.length })}
           </p>
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por símbolo o nombre..."
+            placeholder={t('market.searchPlaceholder')}
             className="w-full sm:w-72 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
           />
         </div>
@@ -193,7 +195,7 @@ function MarketPage() {
             ))}
           </div>
         )}
-        {error && <p className="p-6 text-sm text-red-400">{error}</p>}
+        {error && <p className="p-6 text-sm text-red-400">{t('market.loadError')}</p>}
 
         {!isLoading && !error && (
           <>
@@ -203,11 +205,11 @@ function MarketPage() {
                   <tr className="text-left text-slate-500 border-b border-slate-700/80 bg-slate-900/40 uppercase text-[11px] tracking-wider">
                     <th className="w-10 pl-4 pr-2 py-3 text-center">#</th>
                     <th className="w-8 px-2 py-3" />
-                    <HeaderCell label="Activo" field="symbol" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('symbol')} />
-                    <HeaderCell label="Precio" field="price" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('price')} />
-                    <HeaderCell label="24h" field="change" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('change')} />
-                    <HeaderCell label="Volumen 24h" field="volume" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('volume')} />
-                    <HeaderCell label="Cap. mercado" field="marketCap" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('marketCap')} />
+                    <HeaderCell label={t('market.colAsset')} field="symbol" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('symbol')} />
+                    <HeaderCell label={t('market.colPrice')} field="price" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('price')} />
+                    <HeaderCell label={t('market.col24h')} field="change" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('change')} />
+                    <HeaderCell label={t('market.colVolume')} field="volume" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('volume')} />
+                    <HeaderCell label={t('market.colMarketCap')} field="marketCap" align="right" sortField={sortField} sortDirection={sortDirection} onClick={() => handleSort('marketCap')} />
                     <th className="px-4 py-3 text-center hidden lg:table-cell">7d</th>
                   </tr>
                 </thead>
@@ -240,8 +242,8 @@ function MarketPage() {
                                 ? 'text-yellow-400 hover:text-yellow-300'
                                 : 'text-slate-600 hover:text-slate-400 opacity-0 group-hover:opacity-100'
                             }`}
-                            title={inWatchlist ? 'Quitar de watchlist' : 'Añadir a watchlist'}
-                            aria-label={inWatchlist ? 'Quitar de watchlist' : 'Añadir a watchlist'}
+                            title={inWatchlist ? t('market.removeWatchlist') : t('market.addWatchlist')}
+                            aria-label={inWatchlist ? t('market.removeWatchlist') : t('market.addWatchlist')}
                           >
                             {inWatchlist ? '★' : '☆'}
                           </button>
@@ -307,7 +309,7 @@ function MarketPage() {
                   onClick={() => setShowAll(true)}
                   className="text-sm text-blue-400 hover:text-blue-300 transition-colors font-medium"
                 >
-                  Mostrar todos ({filteredAndSorted.length - INITIAL_LIMIT} activos más)
+                  {t('market.showAll', { count: filteredAndSorted.length - INITIAL_LIMIT })}
                 </button>
               </div>
             )}
@@ -335,12 +337,13 @@ function WatchlistSection({
   onToggle: (symbol: string, e: React.MouseEvent) => void
   onNavigate: (symbol: string) => void
 }>) {
+  const { t } = useTranslation()
   const { formatPrice, formatCompact } = useCurrency()
   return (
     <div className="bg-slate-800 border border-yellow-500/20 rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">
         <span className="text-yellow-400 text-sm">★</span>
-        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Mi seguimiento</h3>
+        <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">{t('market.myWatchlist')}</h3>
         <span className="text-slate-600 text-xs ml-1">({assets.length})</span>
       </div>
       <div className="overflow-x-auto">
@@ -371,8 +374,8 @@ function WatchlistSection({
                           ? 'text-yellow-400 hover:text-yellow-300'
                           : 'text-slate-600 hover:text-slate-400 opacity-0 group-hover:opacity-100'
                       }`}
-                      title={inWatchlist ? 'Quitar de watchlist' : 'Añadir a watchlist'}
-                      aria-label={inWatchlist ? 'Quitar de watchlist' : 'Añadir a watchlist'}
+                      title={inWatchlist ? t('market.removeWatchlist') : t('market.addWatchlist')}
+                      aria-label={inWatchlist ? t('market.removeWatchlist') : t('market.addWatchlist')}
                     >
                       {inWatchlist ? '★' : '☆'}
                     </button>

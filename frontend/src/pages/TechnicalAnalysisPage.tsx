@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import AnalysisPanel from '@/components/analysis/AnalysisPanel'
 import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function TechnicalAnalysisPage() {
+  const { t } = useTranslation()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
   const [isLoadingAssets, setIsLoadingAssets] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
     async function loadAssets() {
@@ -18,7 +20,7 @@ function TechnicalAnalysisPage() {
         setAssets(data)
         if (data.length > 0) setSelectedSymbol(data[0].symbol)
       } catch {
-        setError('No se pudieron cargar los activos.')
+        setError(true)
       } finally {
         setIsLoadingAssets(false)
       }
@@ -30,9 +32,9 @@ function TechnicalAnalysisPage() {
     <section className="space-y-6">
       <header className="flex flex-col sm:flex-row sm:items-end gap-4">
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-white">Análisis Técnico</h1>
+          <h1 className="text-2xl font-bold text-white">{t('analysis.title')}</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Indicadores, señales, predicción ML, patrones de velas y backtesting sobre datos reales de mercado.
+            {t('analysis.subtitle')}
           </p>
         </div>
 
@@ -65,7 +67,7 @@ function TechnicalAnalysisPage() {
           {/* Selector de activo */}
           {!isLoadingAssets && assets.length > 0 && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 uppercase">Activo</span>
+              <span className="text-xs text-slate-500 uppercase">{t('analysis.asset')}</span>
               <select
                 value={selectedSymbol}
                 onChange={(e) => setSelectedSymbol(e.target.value)}
@@ -95,7 +97,7 @@ function TechnicalAnalysisPage() {
 
       {error && (
         <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
-          {error}
+          {t('analysis.loadError')}
         </div>
       )}
 
@@ -111,12 +113,12 @@ function TechnicalAnalysisPage() {
           >
             <span className="text-2xl">🧬</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-white">¿No sabes qué estrategia usar?</p>
+              <p className="text-sm font-semibold text-white">{t('analysis.ctaTitle')}</p>
               <p className="text-xs text-slate-400">
-                Deja que el algoritmo genético evolucione y valide estrategias robustas sobre {selectedSymbol}.
+                {t('analysis.ctaBody', { symbol: selectedSymbol })}
               </p>
             </div>
-            <span className="text-blue-300 group-hover:translate-x-0.5 transition-transform shrink-0">Generar →</span>
+            <span className="text-blue-300 group-hover:translate-x-0.5 transition-transform shrink-0">{t('analysis.ctaAction')}</span>
           </Link>
         </>
       )}
