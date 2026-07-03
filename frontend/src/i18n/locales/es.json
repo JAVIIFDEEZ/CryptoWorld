@@ -118,6 +118,34 @@
     "ctaBody": "Deja que el algoritmo genético evolucione y valide estrategias robustas sobre {{symbol}}.",
     "ctaAction": "Generar →"
   },
+  "generator": {
+    "title": "Generador de estrategias",
+    "badge": "Algoritmo genético",
+    "subtitle": "Evoluciona estrategias nuevas combinando indicadores y las filtra por robustez (walk-forward, PBO, Monte Carlo). El fitness es fuera de muestra, no el retorno in-sample, y un tramo final de datos queda reservado como validación intacta.",
+    "tabGenerate": "⚡ Generador",
+    "tabLive": "📡 Seguimiento en vivo",
+    "asset": "Activo",
+    "timeframe": "Marco",
+    "depth": "Profundidad",
+    "optimizer": "Optimizador",
+    "presetFast": "Rápido",
+    "presetBalanced": "Equilibrado",
+    "presetThorough": "Exhaustivo",
+    "generate": "⚡ Generar estrategias",
+    "generating": "Generando…"
+  },
+  "portfolio": {
+    "title": "Portfolio",
+    "subtitle": "Posiciones LONG/SHORT independientes con PnL en tiempo real",
+    "newPosition": "+ Nueva posición",
+    "openPositions": "Posiciones abiertas",
+    "closedPositions": "Posiciones cerradas",
+    "unrealizedPnl": "PnL no realizado",
+    "realizedPnl": "PnL realizado total",
+    "tabOpen": "Posiciones Abiertas ({{count}})",
+    "tabClosed": "Posiciones Cerradas ({{count}})",
+    "tabHistory": "Historial ({{count}})"
+  },
   "trading": {
     "title": "Trading",
     "badge": "Multi-exchange · ccxt",

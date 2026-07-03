@@ -8,6 +8,7 @@
  */
 
 import { lazy, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import {
   strategyGeneratorService,
@@ -31,10 +32,10 @@ const ParetoFrontier3D = lazy(() => import('@/components/generator/ParetoFrontie
 import Skeleton from '@/components/ui/Skeleton'
 
 const INTERVALS = ['1d', '4h', '1h', '1w']
-const PRESETS: { value: GenPreset; label: string; hint: string }[] = [
-  { value: 'fast', label: 'Rápido', hint: 'Población 24 · 8 generaciones' },
-  { value: 'balanced', label: 'Equilibrado', hint: 'Población 40 · 15 generaciones' },
-  { value: 'thorough', label: 'Exhaustivo', hint: 'Población 60 · 25 generaciones' },
+const PRESETS: { value: GenPreset; labelKey: string; hint: string }[] = [
+  { value: 'fast', labelKey: 'generator.presetFast', hint: 'Población 24 · 8 generaciones' },
+  { value: 'balanced', labelKey: 'generator.presetBalanced', hint: 'Población 40 · 15 generaciones' },
+  { value: 'thorough', labelKey: 'generator.presetThorough', hint: 'Población 60 · 25 generaciones' },
 ]
 
 const POLL_MS = 3000
@@ -51,6 +52,7 @@ const RUN_MESSAGES = [
 ]
 
 export default function StrategyGeneratorPage() {
+  const { t } = useTranslation()
   const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [symbol, setSymbol] = useState('BTC')
   const [interval, setIntervalTf] = useState('1d')
@@ -143,15 +145,13 @@ export default function StrategyGeneratorPage() {
       <header className="flex flex-col lg:flex-row lg:items-end gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-white">Generador de estrategias</h1>
+            <h1 className="text-2xl font-bold text-white">{t('generator.title')}</h1>
             <span className="text-[10px] font-semibold uppercase tracking-wider bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-blue-300 border border-blue-500/30 rounded-full px-2 py-0.5">
-              Algoritmo genético
+              {t('generator.badge')}
             </span>
           </div>
           <p className="text-slate-400 text-sm mt-1 max-w-2xl">
-            Evoluciona estrategias nuevas combinando indicadores y las filtra por robustez
-            (walk-forward, PBO, Monte Carlo). El fitness es fuera de muestra, no el retorno
-            in-sample, y un tramo final de datos queda reservado como validación intacta.
+            {t('generator.subtitle')}
           </p>
         </div>
         {selectedAsset && (
@@ -170,8 +170,8 @@ export default function StrategyGeneratorPage() {
       {/* Sub-navegación por submódulos: generar vs. seguimiento en vivo */}
       <div className="flex flex-wrap gap-1 border-b border-slate-700">
         {([
-          { key: 'generate', label: '⚡ Generador' },
-          { key: 'live', label: '📡 Seguimiento en vivo' },
+          { key: 'generate', labelKey: 'generator.tabGenerate' },
+          { key: 'live', labelKey: 'generator.tabLive' },
         ] as const).map((tabDef) => (
           <button
             key={tabDef.key}
@@ -180,7 +180,7 @@ export default function StrategyGeneratorPage() {
               genView === tabDef.key ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            {tabDef.label}
+            {t(tabDef.labelKey)}
           </button>
         ))}
       </div>
@@ -191,7 +191,7 @@ export default function StrategyGeneratorPage() {
       <div className="bg-slate-800 rounded-xl border border-slate-700">
         <div className="flex flex-wrap items-end gap-3 px-4 py-4">
           <label className="text-[11px] text-slate-400">
-            <span className="block mb-1 uppercase">Activo</span>
+            <span className="block mb-1 uppercase">{t('generator.asset')}</span>
             {loadingAssets ? (
               <Skeleton className="h-9 w-44 rounded-lg" />
             ) : (
@@ -209,7 +209,7 @@ export default function StrategyGeneratorPage() {
           </label>
 
           <label className="text-[11px] text-slate-400">
-            <span className="block mb-1 uppercase">Marco</span>
+            <span className="block mb-1 uppercase">{t('generator.timeframe')}</span>
             <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
               {INTERVALS.map((iv) => (
                 <button
@@ -227,7 +227,7 @@ export default function StrategyGeneratorPage() {
           </label>
 
           <label className="text-[11px] text-slate-400" title="Tamaño de población y nº de generaciones">
-            <span className="block mb-1 uppercase">Profundidad</span>
+            <span className="block mb-1 uppercase">{t('generator.depth')}</span>
             <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
               {PRESETS.map((p) => (
                 <button
@@ -239,14 +239,14 @@ export default function StrategyGeneratorPage() {
                     preset === p.value ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {p.label}
+                  {t(p.labelKey)}
                 </button>
               ))}
             </div>
           </label>
 
           <label className="text-[11px] text-slate-400" title="Único: un fitness escalar. Pareto: multi-objetivo (NSGA-II), compromiso retorno/riesgo">
-            <span className="block mb-1 uppercase">Optimizador</span>
+            <span className="block mb-1 uppercase">{t('generator.optimizer')}</span>
             <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
               {([['single', 'Único'], ['nsga', 'Pareto']] as const).map(([value, label]) => (
                 <button
@@ -277,7 +277,7 @@ export default function StrategyGeneratorPage() {
             disabled={phase === 'running'}
             className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-all shadow-lg shadow-blue-900/30"
           >
-            {phase === 'running' ? 'Generando…' : '⚡ Generar estrategias'}
+            {phase === 'running' ? t('generator.generating') : t('generator.generate')}
           </button>
         </div>
 

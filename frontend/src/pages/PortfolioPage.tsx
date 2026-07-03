@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   portfolioService,
   type Position,
@@ -744,6 +745,7 @@ function TradeHistoryTable({
 type Tab = 'open' | 'closed' | 'history'
 
 export default function PortfolioPage() {
+  const { t } = useTranslation()
   const [positionSummary, setPositionSummary] = useState<PositionSummary | null>(null)
   const [trades, setTrades] = useState<Trade[]>([])
   const [tab, setTab] = useState<Tab>('open')
@@ -795,16 +797,16 @@ export default function PortfolioPage() {
         {/* Cabecera */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Portfolio</h1>
+            <h1 className="text-2xl font-bold">{t('portfolio.title')}</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Posiciones LONG/SHORT independientes con PnL en tiempo real
+              {t('portfolio.subtitle')}
             </p>
           </div>
           <button
             onClick={() => setShowOpenModal(true)}
             className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
           >
-            + Nueva posición
+            {t('portfolio.newPosition')}
           </button>
         </div>
 
@@ -833,18 +835,18 @@ export default function PortfolioPage() {
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-slate-800 rounded-xl p-4">
-                <p className="text-xs text-slate-400 mb-1">Posiciones abiertas</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.openPositions')}</p>
                 <AnimatedNumber value={openPositions.length} className="text-xl font-bold block" />
                 <p className="text-xs text-slate-500 mt-0.5">
                   {positionSummary.open_long_count} LONG · {positionSummary.open_short_count} SHORT
                 </p>
               </div>
               <div className="bg-slate-800 rounded-xl p-4">
-                <p className="text-xs text-slate-400 mb-1">Posiciones cerradas</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.closedPositions')}</p>
                 <AnimatedNumber value={closedPositions.length} className="text-xl font-bold block" />
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalUnrealized >= 0)}`}>
-                <p className="text-xs text-slate-400 mb-1">PnL no realizado</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.unrealizedPnl')}</p>
                 <AnimatedNumber
                   value={totalUnrealized}
                   format={(n) => `${n >= 0 ? '+' : ''}${fmtUSD(n)}`}
@@ -852,7 +854,7 @@ export default function PortfolioPage() {
                 />
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalRealized >= 0)}`}>
-                <p className="text-xs text-slate-400 mb-1">PnL realizado total</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.realizedPnl')}</p>
                 <AnimatedNumber
                   value={totalRealized}
                   format={(n) => `${n >= 0 ? '+' : ''}${fmtUSD(n)}`}
@@ -870,9 +872,9 @@ export default function PortfolioPage() {
             <div className="flex gap-2 mb-4">
               {(
                 [
-                  ['open', `Posiciones Abiertas (${openPositions.length})`],
-                  ['closed', `Posiciones Cerradas (${closedPositions.length})`],
-                  ['history', `Historial (${trades.length})`],
+                  ['open', t('portfolio.tabOpen', { count: openPositions.length })],
+                  ['closed', t('portfolio.tabClosed', { count: closedPositions.length })],
+                  ['history', t('portfolio.tabHistory', { count: trades.length })],
                 ] as [Tab, string][]
               ).map(([t, label]) => (
                 <button

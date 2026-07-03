@@ -118,6 +118,34 @@
     "ctaBody": "Let the genetic algorithm evolve and validate robust strategies on {{symbol}}.",
     "ctaAction": "Generate →"
   },
+  "generator": {
+    "title": "Strategy generator",
+    "badge": "Genetic algorithm",
+    "subtitle": "Evolves new strategies by combining indicators and filters them for robustness (walk-forward, PBO, Monte Carlo). Fitness is out-of-sample, not in-sample return, and a final slice of data is held out as untouched validation.",
+    "tabGenerate": "⚡ Generator",
+    "tabLive": "📡 Live tracking",
+    "asset": "Asset",
+    "timeframe": "Timeframe",
+    "depth": "Depth",
+    "optimizer": "Optimizer",
+    "presetFast": "Fast",
+    "presetBalanced": "Balanced",
+    "presetThorough": "Thorough",
+    "generate": "⚡ Generate strategies",
+    "generating": "Generating…"
+  },
+  "portfolio": {
+    "title": "Portfolio",
+    "subtitle": "Independent LONG/SHORT positions with real-time PnL",
+    "newPosition": "+ New position",
+    "openPositions": "Open positions",
+    "closedPositions": "Closed positions",
+    "unrealizedPnl": "Unrealized PnL",
+    "realizedPnl": "Total realized PnL",
+    "tabOpen": "Open Positions ({{count}})",
+    "tabClosed": "Closed Positions ({{count}})",
+    "tabHistory": "History ({{count}})"
+  },
   "trading": {
     "title": "Trading",
     "badge": "Multi-exchange · ccxt",
