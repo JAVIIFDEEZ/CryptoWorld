@@ -316,8 +316,28 @@ class TestLivePromotion:
         acc.refresh_from_db()
         assert acc.live_enabled is False                       # kill-switch
         assert "desactivada" in acc.live_error.lower()
+        assert acc.live_disabled_at is not None                # sello para notificaciones
         # El paper sigue funcionando aunque el espejo falle
         assert acc.units > 0
+
+    @pytest.mark.integration
+    def test_reenable_clears_kill_switch_stamp(self, authenticated_client, strategy, test_user):
+        from django.utils import timezone
+        acc, conn = _live_account(strategy, test_user)
+        acc.live_enabled = False
+        acc.live_error = "Ejecución real desactivada: fondos insuficientes."
+        acc.live_disabled_at = timezone.now()
+        acc.save(update_fields=["live_enabled", "live_error", "live_disabled_at"])
+
+        resp = authenticated_client.post(
+            f"/api/strategies/paper/{acc.id}/live/",
+            {"enable": True, "connection_id": conn.id, "cap_usd": 50},
+            format="json",
+        )
+        assert resp.status_code == 200
+        acc.refresh_from_db()
+        assert acc.live_enabled is True
+        assert acc.live_error == "" and acc.live_disabled_at is None
 
     @pytest.mark.integration
     def test_sell_liquidates_exactly_live_position(self, strategy, test_user, monkeypatch):

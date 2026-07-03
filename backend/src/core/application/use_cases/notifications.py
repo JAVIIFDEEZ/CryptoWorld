@@ -7,6 +7,7 @@ que ya existen en el sistema y los presenta como un único feed cronológico:
   · Alertas de movimiento de direcciones vigiladas (AddressAlert)
   · Predicciones ML resueltas (PredictionRecord acierto/fallo)
   · Alertas de precio disparadas (PriceAlert)
+  · Kill-switch de la ejecución real (PaperTradingAccount.live_disabled_at)
 
 El estado "no leído" se resuelve con un único timestamp por usuario
 (`notifications_seen_at`): cuenta como no leído todo evento posterior. Abrir el
@@ -36,12 +37,27 @@ class NotificationsFeedUseCase:
 
     def execute(self, owner, limit: int = 30) -> dict:
         from core.infrastructure.persistence.models import (
-            AddressAlert, OnChainSignalEvent, PredictionRecord, PriceAlert,
-            StrategySignalEvent,
+            AddressAlert, OnChainSignalEvent, PaperTradingAccount, PredictionRecord,
+            PriceAlert, StrategySignalEvent,
         )
 
         seen = getattr(owner, "notifications_seen_at", None)
         items: list[dict] = []
+
+        # ── Kill-switch de ejecución real (paper→real desactivado) ──
+        # Es la notificación más crítica del sistema: hay dinero (o testnet)
+        # detrás y la promoción dejó de espejar órdenes por un error.
+        for acc in (PaperTradingAccount.objects.select_related("strategy")
+                    .filter(owner=owner, live_disabled_at__isnull=False)
+                    .order_by("-live_disabled_at")[:limit]):
+            items.append({
+                "id": f"live-{acc.id}-{int(acc.live_disabled_at.timestamp())}",
+                "kind": "live",
+                "title": f"Ejecución real desactivada · {acc.asset_symbol}",
+                "body": acc.live_error or "Kill-switch activado.",
+                "link": "/strategies",
+                "ts": acc.live_disabled_at,
+            })
 
         # ── Señales de presión on-chain (globales: cambios de régimen) ──
         for ev in OnChainSignalEvent.objects.order_by("-created_at")[:limit]:
@@ -125,8 +141,8 @@ class NotificationsFeedUseCase:
     @staticmethod
     def _count_unread(owner, since) -> int:
         from core.infrastructure.persistence.models import (
-            AddressAlert, OnChainSignalEvent, PredictionRecord, PriceAlert,
-            StrategySignalEvent,
+            AddressAlert, OnChainSignalEvent, PaperTradingAccount, PredictionRecord,
+            PriceAlert, StrategySignalEvent,
         )
         pressure = OnChainSignalEvent.objects.all()
         sig = StrategySignalEvent.objects.filter(owner=owner)
@@ -134,15 +150,17 @@ class NotificationsFeedUseCase:
         pred = PredictionRecord.objects.filter(
             owner=owner, status__in=["correct", "incorrect"], resolved_at__isnull=False)
         price = PriceAlert.objects.filter(user=owner, is_triggered=True, triggered_at__isnull=False)
+        live = PaperTradingAccount.objects.filter(owner=owner, live_disabled_at__isnull=False)
         if since is not None:
             total = (sig.filter(created_at__gt=since).count()
                      + whale.filter(created_at__gt=since).count()
                      + pred.filter(resolved_at__gt=since).count()
                      + price.filter(triggered_at__gt=since).count()
-                     + pressure.filter(created_at__gt=since).count())
+                     + pressure.filter(created_at__gt=since).count()
+                     + live.filter(live_disabled_at__gt=since).count())
         else:
             total = (sig.count() + whale.count() + pred.count() + price.count()
-                     + pressure.count())
+                     + pressure.count() + live.count())
         return min(total, _UNREAD_CAP)
 
 

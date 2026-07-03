@@ -2,13 +2,13 @@
  * services/notificationsService.ts — Centro de notificaciones in-app.
  *
  * Feed unificado (señales de estrategia, alertas de ballenas, predicciones
- * resueltas, alertas de precio) agregado en el backend, con contador de no
- * leídas resuelto por un sello de "visto" por usuario.
+ * resueltas, alertas de precio, kill-switch de ejecución real) agregado en el
+ * backend, con contador de no leídas resuelto por un sello de "visto" por usuario.
  */
 
 import apiClient from './api'
 
-export type NotificationKind = 'signal' | 'whale' | 'prediction' | 'price' | 'pressure'
+export type NotificationKind = 'signal' | 'whale' | 'prediction' | 'price' | 'pressure' | 'live'
 
 export interface NotificationItem {
   id: string

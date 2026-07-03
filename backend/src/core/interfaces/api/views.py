@@ -2202,7 +2202,11 @@ class PaperLivePromotionView(APIView):
         acc.live_enabled = True
         acc.live_cap_usd = cap
         acc.live_error = ""
-        acc.save(update_fields=["live_connection", "live_enabled", "live_cap_usd", "live_error", "updated_at"])
+        acc.live_disabled_at = None
+        acc.save(update_fields=[
+            "live_connection", "live_enabled", "live_cap_usd", "live_error",
+            "live_disabled_at", "updated_at",
+        ])
         return Response({
             "id": acc.id, "live_enabled": True, "live_cap_usd": cap,
             "live_is_testnet": connection.is_testnet,

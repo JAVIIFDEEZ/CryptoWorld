@@ -113,12 +113,15 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
       · Cualquier error del broker DESACTIVA la ejecución real (kill-switch) y
         guarda el motivo: un fallo no puede repetirse en bucle cada 15 min.
     """
+    from django.utils import timezone
+
     if trade is None or not account.live_enabled:
         return
     connection = account.live_connection
     if connection is None or not connection.is_active or connection.owner_id != account.owner_id:
         account.live_enabled = False
         account.live_error = "Conexión de exchange no disponible: promoción desactivada."
+        account.live_disabled_at = timezone.now()
         return
 
     from core.application.use_cases.broker_trading import _broker_for
@@ -162,6 +165,7 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
     except BrokerError as exc:
         account.live_enabled = False
         account.live_error = f"Ejecución real desactivada: {exc}"
+        account.live_disabled_at = timezone.now()
         record.status = "failed"
         record.error = str(exc)[:300]
         logger.error("paper→real kill-switch #%s: %s", account.id, exc)
@@ -220,7 +224,7 @@ class EvaluatePaperTradingUseCase:
                     "cash", "units", "entry_price", "last_price", "realized_pnl",
                     "trades_count", "wins", "last_signal", "last_eval_at",
                     "peak_equity", "decayed", "decayed_at", "updated_at",
-                    "live_enabled", "live_base_position", "live_error",
+                    "live_enabled", "live_base_position", "live_error", "live_disabled_at",
                 ]
                 acc.save(update_fields=fields)
                 PaperEquitySnapshot.objects.create(
@@ -390,6 +394,7 @@ def _serialize_account(a) -> dict:
         "live_cap_usd": a.live_cap_usd,
         "live_base_position": round(a.live_base_position, 8),
         "live_error": a.live_error or None,
+        "live_disabled_at": a.live_disabled_at.isoformat() if a.live_disabled_at else None,
         "trades_count": a.trades_count,
         "wins": a.wins,
         "win_rate": win_rate,

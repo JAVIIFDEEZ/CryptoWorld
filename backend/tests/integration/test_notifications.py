@@ -2,8 +2,9 @@
 tests/integration/test_notifications.py — Centro de notificaciones in-app.
 
 Verifica que el feed agrega los distintos eventos del usuario (señales,
-ballenas, predicciones resueltas, alertas de precio), el contador de no leídas
-según el sello de visto, el aislamiento por usuario y los endpoints.
+ballenas, predicciones resueltas, alertas de precio, kill-switch de ejecución
+real), el contador de no leídas según el sello de visto, el aislamiento por
+usuario y los endpoints.
 """
 
 from datetime import timedelta
@@ -20,8 +21,8 @@ from core.application.use_cases.notifications import (
 def events(db, test_user):
     """Crea un evento de cada tipo para el usuario de prueba."""
     from core.infrastructure.persistence.models import (
-        AddressAlert, CryptoAsset, PredictionRecord, PriceAlert,
-        StrategyDefinition, StrategySignalEvent, WatchedAddress,
+        AddressAlert, CryptoAsset, PaperTradingAccount, PredictionRecord,
+        PriceAlert, StrategyDefinition, StrategySignalEvent, WatchedAddress,
     )
     asset = CryptoAsset.objects.create(symbol="BTC", name="Bitcoin")
     strat = StrategyDefinition.objects.create(
@@ -48,6 +49,12 @@ def events(db, test_user):
         user=test_user, asset=asset, condition="ABOVE", threshold_price="50000",
         is_triggered=True, triggered_at=timezone.now(),
     )
+
+    PaperTradingAccount.objects.create(
+        strategy=strat, owner=test_user, asset_symbol="BTC", interval="1d",
+        live_error="Ejecución real desactivada: fondos insuficientes.",
+        live_disabled_at=timezone.now(),
+    )
     return test_user
 
 
@@ -57,14 +64,32 @@ class TestFeed:
     def test_aggregates_all_event_kinds(self, events):
         out = NotificationsFeedUseCase().execute(owner=events)
         kinds = {it["kind"] for it in out["items"]}
-        assert kinds == {"signal", "whale", "prediction", "price"}
-        assert out["count"] == 4
+        assert kinds == {"signal", "whale", "prediction", "price", "live"}
+        assert out["count"] == 5
 
     @pytest.mark.integration
     def test_unread_all_when_never_seen(self, events):
         out = NotificationsFeedUseCase().execute(owner=events)
-        assert out["unread"] == 4
+        assert out["unread"] == 5
         assert all(it["unread"] for it in out["items"])
+
+    @pytest.mark.integration
+    def test_kill_switch_item_carries_reason_and_link(self, events):
+        out = NotificationsFeedUseCase().execute(owner=events)
+        item = next(it for it in out["items"] if it["kind"] == "live")
+        assert "BTC" in item["title"]
+        assert "fondos insuficientes" in item["body"].lower()
+        assert item["link"] == "/strategies"
+
+    @pytest.mark.integration
+    def test_kill_switch_item_disappears_on_reenable(self, events):
+        from core.infrastructure.persistence.models import PaperTradingAccount
+        PaperTradingAccount.objects.filter(owner=events).update(
+            live_error="", live_disabled_at=None,
+        )
+        out = NotificationsFeedUseCase().execute(owner=events)
+        assert not any(it["kind"] == "live" for it in out["items"])
+        assert out["unread"] == 4
 
     @pytest.mark.integration
     def test_unread_zero_when_seen_in_future(self, events):
@@ -93,7 +118,7 @@ class TestMarkSeen:
     @pytest.mark.integration
     def test_mark_seen_sets_timestamp_and_clears_unread(self, events):
         before = NotificationsFeedUseCase().execute(owner=events)
-        assert before["unread"] == 4
+        assert before["unread"] == 5
         MarkNotificationsSeenUseCase().execute(owner=events)
         events.refresh_from_db()
         assert events.notifications_seen_at is not None

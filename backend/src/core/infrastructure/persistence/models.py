@@ -703,6 +703,9 @@ class PaperTradingAccount(models.Model):
     live_cap_usd = models.FloatField(default=100.0)      # nocional máximo por orden
     live_base_position = models.FloatField(default=0.0)  # unidades compradas en real
     live_error = models.CharField(max_length=300, blank=True, default="")
+    # Sello del último kill-switch: alimenta el centro de notificaciones y se
+    # limpia al reactivar la promoción.
+    live_disabled_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
