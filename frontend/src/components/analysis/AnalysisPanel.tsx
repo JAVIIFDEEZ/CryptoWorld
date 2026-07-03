@@ -217,7 +217,15 @@ export default function AnalysisPanel({ symbol }: Props) {
       const res = await analysisService.predict(symbol, interval, horizon)
       if (res.error) { setError(res.error); setPrediction(null) }
       else setPrediction(res)
-    } catch { setError('Error al obtener predicción.') }
+    } catch (e) {
+      // El servidor sigue entrenando y cachea el resultado aunque el cliente
+      // aborte: reintentar tras un timeout suele responder al instante.
+      const isTimeout = (e as { code?: string })?.code === 'ECONNABORTED'
+      setError(isTimeout
+        ? 'El entrenamiento tardó demasiado esta vez. Vuelve a ejecutar el análisis: el resultado queda cacheado en el servidor y el reintento es inmediato.'
+        : 'Error al obtener predicción.')
+      setPrediction(null)
+    }
     finally { setLoading(false) }
   }
 
@@ -414,7 +422,14 @@ export default function AnalysisPanel({ symbol }: Props) {
         {loading && (
           <div className="flex flex-col items-center justify-center py-12 gap-3">
             <div className="w-8 h-8 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
-            <p className="text-slate-400 text-sm">Procesando análisis...</p>
+            <p className="text-slate-400 text-sm">
+              {tab === 'predict' ? 'Entrenando y validando el modelo (walk-forward)…' : 'Procesando análisis...'}
+            </p>
+            {tab === 'predict' && (
+              <p className="text-slate-600 text-xs">
+                El primer cálculo puede tardar hasta ~1 min; luego queda cacheado 15 minutos.
+              </p>
+            )}
           </div>
         )}
 

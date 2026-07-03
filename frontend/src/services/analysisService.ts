@@ -108,6 +108,7 @@ export interface PredictionResult {
   verdict_text?: string
   features_importance?: FeatureImportance[]
   drivers?: PredictionDriver[]
+  elapsed_ms?: number
   disclaimer?: string
   asset_symbol?: string
   interval?: string
@@ -341,13 +342,17 @@ export const analysisService = {
     return data
   },
 
-  /** Predicción ML de dirección de precio. */
+  /** Predicción ML de dirección de precio. El primer cálculo entrena y valida
+   * el ensemble (walk-forward) y puede tardar bastante más que el timeout
+   * global de 10 s, sobre todo en máquinas modestas; luego queda cacheado
+   * 15 min en el backend. Timeout propio holgado para no abortar ese primer
+   * entrenamiento. */
   async predict(assetSymbol: string, interval: IntervalType = '1h', horizon = 5): Promise<PredictionResult> {
-    const { data } = await apiClient.post<PredictionResult>('/analysis/predict/', {
-      asset_symbol: assetSymbol,
-      interval,
-      horizon,
-    })
+    const { data } = await apiClient.post<PredictionResult>(
+      '/analysis/predict/',
+      { asset_symbol: assetSymbol, interval, horizon },
+      { timeout: 90_000 },
+    )
     return data
   },
 

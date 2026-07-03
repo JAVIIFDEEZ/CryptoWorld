@@ -201,7 +201,14 @@ export default function PredictTab({ data }: { data: PredictionResult | null }) 
               {data.model && (
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase">Modelo</p>
-                  <p className="text-sm font-mono text-slate-300">{data.model}</p>
+                  <p className="text-sm font-mono text-slate-300">
+                    {data.model}
+                    {data.elapsed_ms != null && (
+                      <span className="text-slate-500 ml-1" title="Tiempo de entrenamiento + validación">
+                        · {(data.elapsed_ms / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                  </p>
                 </div>
               )}
             </div>
