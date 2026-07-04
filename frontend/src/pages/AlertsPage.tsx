@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   alertsService,
   type PriceAlert,
@@ -206,6 +207,7 @@ function AlertCard({
 // ────────────────────────── Página principal ─────────────────────
 
 export default function AlertsPage() {
+  const { t } = useTranslation()
   const [alerts, setAlerts] = useState<PriceAlert[]>([])
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -262,16 +264,16 @@ export default function AlertsPage() {
         {/* Cabecera */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Alertas de precio</h1>
+            <h1 className="text-2xl font-bold">{t('alerts.title')}</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Evaluadas automáticamente cada 2 minutos
+              {t('alerts.subtitle')}
             </p>
           </div>
           <button
             onClick={() => setShowModal(true)}
             className="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-xl text-sm font-medium"
           >
-            + Nueva alerta
+            {t('alerts.newAlert')}
           </button>
         </div>
 
@@ -279,15 +281,15 @@ export default function AlertsPage() {
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-slate-800 rounded-xl p-4 text-center">
             <p className="text-2xl font-bold">{alerts.length}</p>
-            <p className="text-xs text-slate-400 mt-1">Total</p>
+            <p className="text-xs text-slate-400 mt-1">{t('alerts.total')}</p>
           </div>
           <div className="bg-slate-800 rounded-xl p-4 text-center">
             <p className="text-2xl font-bold text-blue-400">{activeCount}</p>
-            <p className="text-xs text-slate-400 mt-1">Activas</p>
+            <p className="text-xs text-slate-400 mt-1">{t('alerts.active')}</p>
           </div>
           <div className="bg-slate-800 rounded-xl p-4 text-center">
             <p className="text-2xl font-bold text-yellow-400">{triggeredCount}</p>
-            <p className="text-xs text-slate-400 mt-1">Disparadas</p>
+            <p className="text-xs text-slate-400 mt-1">{t('alerts.triggered')}</p>
           </div>
         </div>
 
@@ -299,7 +301,7 @@ export default function AlertsPage() {
               onClick={() => setFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium ${filter === f ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
             >
-              {f === 'all' ? 'Todas' : f === 'active' ? 'Activas' : 'Disparadas'}
+              {f === 'all' ? t('alerts.filterAll') : f === 'active' ? t('alerts.active') : t('alerts.triggered')}
             </button>
           ))}
         </div>
@@ -319,8 +321,8 @@ export default function AlertsPage() {
         {!loading && !error && filtered.length === 0 && (
           <EmptyState
             icon={<IconBell />}
-            title={filter === 'all' ? 'No hay alertas configuradas' : 'No hay alertas en esta categoría'}
-            description={filter === 'all' ? 'Crea tu primera alerta para recibir notificaciones automáticas.' : undefined}
+            title={filter === 'all' ? t('alerts.emptyTitle') : t('alerts.emptyCategory')}
+            description={filter === 'all' ? t('alerts.emptyDescription') : undefined}
           />
         )}
 

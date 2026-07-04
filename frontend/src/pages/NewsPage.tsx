@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { newsService, type NewsItem } from '../services/newsService'
 import EmptyState from '../components/ui/EmptyState'
 
@@ -19,7 +20,7 @@ type Sentiment = 'positive' | 'negative' | 'neutral' | ''
 
 const SENTIMENT_CONFIG = {
   positive: {
-    label: 'Positivo',
+    labelKey: 'news.positive',
     icon: '↑',
     badge: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
     stat: 'text-emerald-400',
@@ -28,7 +29,7 @@ const SENTIMENT_CONFIG = {
     filter: 'bg-emerald-600 text-white border-emerald-600',
   },
   negative: {
-    label: 'Negativo',
+    labelKey: 'news.negative',
     icon: '↓',
     badge: 'bg-red-500/20 text-red-400 border-red-500/40',
     stat: 'text-red-400',
@@ -37,7 +38,7 @@ const SENTIMENT_CONFIG = {
     filter: 'bg-red-600 text-white border-red-600',
   },
   neutral: {
-    label: 'Neutral',
+    labelKey: 'news.neutral',
     icon: '→',
     badge: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
     stat: 'text-slate-300',
@@ -60,6 +61,7 @@ function formatDate(iso: string): string {
 }
 
 function SentimentBadge({ sentiment, size = 'sm' }: { sentiment: string; size?: 'sm' | 'md' }) {
+  const { t } = useTranslation()
   const cfg = SENTIMENT_CONFIG[sentiment as keyof typeof SENTIMENT_CONFIG] ?? SENTIMENT_CONFIG.neutral
   return (
     <span
@@ -67,7 +69,7 @@ function SentimentBadge({ sentiment, size = 'sm' }: { sentiment: string; size?: 
         size === 'md' ? 'text-xs px-3 py-1' : 'text-xs px-2 py-0.5'
       } ${cfg.badge}`}
     >
-      {cfg.icon} {cfg.label}
+      {cfg.icon} {t(cfg.labelKey)}
     </span>
   )
 }
@@ -209,6 +211,7 @@ const INITIAL_DISPLAY = 13
 const LOAD_MORE_STEP = 12
 
 export default function NewsPage() {
+  const { t } = useTranslation()
   const [allItems, setAllItems] = useState<NewsItem[]>([])
   const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY)
   const [source, setSource] = useState('')
@@ -255,11 +258,11 @@ export default function NewsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-white">Noticias cripto</h1>
+        <h1 className="text-2xl font-bold text-white">{t('news.title')}</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Fuente: CryptoCompare
+          {t('news.source')}
           {!loading && allItems.length > 0 && (
-            <span className="ml-2 text-slate-500">· {allItems.length} artículos</span>
+            <span className="ml-2 text-slate-500">{t('news.articles', { count: allItems.length })}</span>
           )}
           {source && <span className="ml-1 text-slate-600">({source})</span>}
         </p>
@@ -272,7 +275,7 @@ export default function NewsPage() {
           </span>
           <input
             type="text"
-            placeholder="Buscar: Bitcoin, DeFi, Ethereum…"
+            placeholder={t('news.searchPlaceholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-9 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
@@ -302,7 +305,7 @@ export default function NewsPage() {
                     : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700 hover:border-slate-500'
                 }`}
               >
-                {s === '' ? 'Todos' : `${cfg!.icon} ${cfg!.label}`}
+                {s === '' ? t('news.filterAll') : `${cfg!.icon} ${t(cfg!.labelKey)}`}
               </button>
             )
           })}
@@ -324,7 +327,7 @@ export default function NewsPage() {
                 }`}
               >
                 <p className={`text-xl font-bold ${cfg.stat}`}>{count}</p>
-                <p className="text-xs text-slate-400 mb-2">{cfg.label}s</p>
+                <p className="text-xs text-slate-400 mb-2">{t(cfg.labelKey)}s</p>
                 <div className="h-1 rounded-full bg-slate-700/80 overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-700 ${cfg.bar}`}
@@ -357,7 +360,7 @@ export default function NewsPage() {
         <EmptyState
           icon={<IconNews />}
           title="Sin resultados"
-          description="No hay noticias para los filtros seleccionados."
+          description={t('news.emptyDescription')}
         />
       )}
 
@@ -377,7 +380,7 @@ export default function NewsPage() {
                 onClick={() => setDisplayCount(c => c + LOAD_MORE_STEP)}
                 className="px-8 py-3 rounded-xl bg-slate-800 border border-slate-700 hover:border-slate-500 hover:bg-slate-700/80 text-slate-300 hover:text-white text-sm font-medium transition-all"
               >
-                Cargar más · {allItems.length - displayCount} restantes
+                {t('news.loadMore', { count: allItems.length - displayCount })}
               </button>
             </div>
           )}

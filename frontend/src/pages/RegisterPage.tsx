@@ -11,6 +11,7 @@
  */
 
 import { useState, type FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { authService, type RegisterPayload } from '@/services/authService'
 import PasswordInput from '@/components/ui/PasswordInput'
@@ -19,6 +20,7 @@ const AUTH_INPUT_CLASSES =
   'w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 pr-10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition'
 
 function RegisterPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   const [form, setForm] = useState<RegisterPayload & { password_confirm: string }>({
@@ -92,14 +94,14 @@ function RegisterPage() {
             <span className="text-blue-400">Crypto</span>World
           </h1>
           <p className="text-slate-400 mt-2 text-sm">
-            Sistema de análisis de criptomonedas
+            {t('auth.tagline')}
           </p>
         </div>
 
         {/* Card del formulario */}
         <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700/60 p-8 shadow-2xl">
-          <h2 className="text-xl font-semibold text-white mb-1">Crear cuenta</h2>
-          <p className="text-slate-400 text-sm mb-6">Rellena los campos para registrarte.</p>
+          <h2 className="text-xl font-semibold text-white mb-1">{t('auth.registerTitle')}</h2>
+          <p className="text-slate-400 text-sm mb-6">{t('auth.registerSubtitle')}</p>
 
           {error && (
             <div className="bg-red-900/30 border border-red-700/60 rounded-lg px-4 py-3 mb-5">
@@ -111,7 +113,7 @@ function RegisterPage() {
             {/* Email */}
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-1.5">
-                Email
+                {t('auth.email')}
               </label>
               <input
                 id="email"
@@ -128,7 +130,7 @@ function RegisterPage() {
             {/* Username */}
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-slate-300 mb-1.5">
-                Nombre de usuario
+                {t('auth.username')}
               </label>
               <input
                 id="username"
@@ -145,7 +147,7 @@ function RegisterPage() {
             {/* Password */}
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-1.5">
-                Contraseña
+                {t('auth.password')}
               </label>
               <PasswordInput
                 id="password"
@@ -154,7 +156,7 @@ function RegisterPage() {
                 required
                 minLength={8}
                 autoComplete="new-password"
-                placeholder="Mínimo 8 caracteres"
+                placeholder={t('auth.passwordMin')}
                 inputClassName={AUTH_INPUT_CLASSES}
               />
             </div>
@@ -162,7 +164,7 @@ function RegisterPage() {
             {/* Confirm password */}
             <div>
               <label htmlFor="password_confirm" className="block text-sm font-medium text-slate-300 mb-1.5">
-                Confirmar contraseña
+                {t('auth.confirmPassword')}
               </label>
               <PasswordInput
                 id="password_confirm"
@@ -170,7 +172,7 @@ function RegisterPage() {
                 onChange={(value: string) => setForm(prev => ({ ...prev, password_confirm: value }))}
                 required
                 autoComplete="new-password"
-                placeholder="Repite la contraseña"
+                placeholder={t('auth.repeatPassword')}
                 inputClassName={AUTH_INPUT_CLASSES}
               />
             </div>
@@ -180,21 +182,21 @@ function RegisterPage() {
               disabled={isLoading}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 disabled:from-blue-800 disabled:to-blue-800 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl transition-all text-sm mt-2 shadow-lg shadow-blue-500/20"
             >
-              {isLoading ? 'Creando cuenta...' : 'Crear cuenta'}
+              {isLoading ? t('auth.creating') : t('auth.createAccount')}
             </button>
           </form>
 
           <p className="text-center text-slate-500 text-sm mt-6">
-            ¿Ya tienes cuenta?{' '}
+            {t('auth.haveAccount')}{' '}
             <Link to="/login" className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
-              Inicia sesión
+              {t('auth.signIn')}
             </Link>
           </p>
         </div>
 
         {/* Footer */}
         <p className="text-center text-slate-600 text-xs mt-6">
-          © 2026 CryptoWorld · Análisis cuantitativo de criptomonedas
+          {t('auth.footer')}
         </p>
       </div>
     </div>

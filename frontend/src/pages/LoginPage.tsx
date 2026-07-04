@@ -10,6 +10,7 @@
  */
 
 import { useState, type FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { authService } from '@/services/authService'
@@ -19,6 +20,7 @@ const AUTH_INPUT_CLASSES =
   'w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 pr-10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition'
 
 function LoginPage() {
+  const { t } = useTranslation()
   const { login, verify2FALogin, isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -116,14 +118,14 @@ function LoginPage() {
             <span className="text-blue-400">Crypto</span>World
           </h1>
           <p className="text-slate-400 mt-2 text-sm">
-            Sistema de análisis de criptomonedas
+            {t('auth.tagline')}
           </p>
         </div>
 
         {/* Card del formulario */}
         <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700/60 p-8 shadow-2xl">
-          <h2 className="text-xl font-semibold text-white mb-1">Iniciar sesión</h2>
-          <p className="text-slate-400 text-sm mb-6">Accede a tu panel de análisis.</p>
+          <h2 className="text-xl font-semibold text-white mb-1">{t('auth.loginTitle')}</h2>
+          <p className="text-slate-400 text-sm mb-6">{t('auth.loginSubtitle')}</p>
 
           {successMessage && (
             <div className="bg-emerald-900/30 border border-emerald-700/60 rounded-lg px-4 py-3 mb-5">
@@ -140,7 +142,7 @@ function LoginPage() {
                   onClick={handleResendVerification}
                   className="mt-2 text-xs text-blue-300 hover:text-blue-200 underline"
                 >
-                  Reenviar email de verificación
+                  {t('auth.resendVerification')}
                 </button>
               )}
             </div>
@@ -155,7 +157,7 @@ function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-1.5">
-                Email
+                {t('auth.email')}
               </label>
               <input
                 id="email"
@@ -170,7 +172,7 @@ function LoginPage() {
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-1.5">
-                Contraseña
+                {t('auth.password')}
               </label>
               <PasswordInput
                 id="password"
@@ -189,7 +191,7 @@ function LoginPage() {
                   to="/forgot-password"
                   className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
                 >
-                  ¿Olvidaste tu contraseña?
+                  {t('auth.forgotPassword')}
                 </Link>
               </div>
             )}
@@ -197,7 +199,7 @@ function LoginPage() {
             {preAuthToken && (
               <div>
                 <label htmlFor="totp" className="block text-sm font-medium text-slate-300 mb-1.5">
-                  {useRecoveryCode ? 'Código de recuperación' : 'Código de autenticación (2FA)'}
+                  {useRecoveryCode ? t('auth.recoveryLabel') : t('auth.totpLabel')}
                 </label>
                 <input
                   id="totp"
@@ -218,9 +220,7 @@ function LoginPage() {
                   }}
                   className="mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
                 >
-                  {useRecoveryCode
-                    ? 'Usar código de la app autenticadora'
-                    : '¿Perdiste el dispositivo? Usa un código de recuperación'}
+                  {useRecoveryCode ? t('auth.useAppCode') : t('auth.useRecovery')}
                 </button>
               </div>
             )}
@@ -230,21 +230,21 @@ function LoginPage() {
               disabled={isLoading}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 disabled:from-blue-800 disabled:to-blue-800 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl transition-all text-sm mt-2 shadow-lg shadow-blue-500/20"
             >
-              {isLoading ? 'Entrando...' : preAuthToken ? 'Validar 2FA' : 'Entrar'}
+              {isLoading ? t('auth.loggingIn') : preAuthToken ? t('auth.validate2fa') : t('auth.login')}
             </button>
           </form>
 
           <p className="text-center text-slate-500 text-sm mt-6">
-            ¿No tienes cuenta?{' '}
+            {t('auth.noAccount')}{' '}
             <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
-              Regístrate
+              {t('auth.signUp')}
             </Link>
           </p>
         </div>
 
         {/* Footer */}
         <p className="text-center text-slate-600 text-xs mt-6">
-          © 2026 CryptoWorld · Análisis cuantitativo de criptomonedas
+          {t('auth.footer')}
         </p>
       </div>
     </div>
