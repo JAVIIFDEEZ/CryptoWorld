@@ -114,6 +114,7 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
         guarda el motivo: un fallo no puede repetirse en bucle cada 15 min.
     """
     from django.utils import timezone
+    from core.interfaces.ws.broadcast import broadcast_notification
 
     if trade is None or not account.live_enabled:
         return
@@ -122,6 +123,7 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
         account.live_enabled = False
         account.live_error = "Conexión de exchange no disponible: promoción desactivada."
         account.live_disabled_at = timezone.now()
+        broadcast_notification(account.owner_id, {"kind": "live"})
         return
 
     from core.application.use_cases.broker_trading import _broker_for
@@ -168,6 +170,7 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
         account.live_disabled_at = timezone.now()
         record.status = "failed"
         record.error = str(exc)[:300]
+        broadcast_notification(account.owner_id, {"kind": "live"})
         logger.error("paper→real kill-switch #%s: %s", account.id, exc)
     finally:
         record.save()

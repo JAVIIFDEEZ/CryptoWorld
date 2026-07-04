@@ -180,6 +180,8 @@ class MonitorWatchedAddressesUseCase:
                         value_usd=round(abs(delta) * price, 2) if price else None,
                         notified=self._notify(watch, delta, delta_pct, price),
                     )
+                    from core.interfaces.ws.broadcast import broadcast_notification
+                    broadcast_notification(watch.owner_id, {"kind": "whale"})
                     alerts_created += 1
 
             watch.last_balance = balance

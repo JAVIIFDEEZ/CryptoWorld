@@ -14,21 +14,26 @@ export interface LivePrice {
   change: number | null
 }
 
-/** Deriva la URL del WebSocket a partir de la base de la API. */
-export function priceStreamUrl(): string {
+/** Deriva la URL de un stream WebSocket a partir de la base de la API. */
+export function wsStreamUrl(path: string): string {
   const api = import.meta.env.VITE_API_URL as string | undefined
   if (api && /^https?:\/\//i.test(api)) {
-    // Base absoluta (p. ej. https://api.host/api) → wss://api.host/ws/prices/
+    // Base absoluta (p. ej. https://api.host/api) → wss://api.host<path>
     const u = new URL(api)
     const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}/ws/prices/`
+    return `${proto}//${u.host}${path}`
   }
   // Base relativa (/api): mismo host que la página (Vite proxya /ws en dev).
   if (typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${window.location.host}/ws/prices/`
+    return `${proto}//${window.location.host}${path}`
   }
   return ''
+}
+
+/** URL del stream de precios. */
+export function priceStreamUrl(): string {
+  return wsStreamUrl('/ws/prices/')
 }
 
 export function usePriceStream(): { prices: Record<string, LivePrice>; connected: boolean } {

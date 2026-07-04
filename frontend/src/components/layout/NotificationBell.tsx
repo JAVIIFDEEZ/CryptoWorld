@@ -2,13 +2,16 @@
  * components/layout/NotificationBell.tsx — Campana del centro de notificaciones.
  *
  * Muestra el nº de no leídas y, al abrir, un panel con el feed unificado
- * (señales, ballenas, predicciones resueltas, alertas de precio). Abrir marca
- * todas como leídas (limpia el contador) conservando el resaltado de esta vista.
- * Sondea el contador en segundo plano cada 60 s.
+ * (señales, ballenas, predicciones resueltas, alertas de precio, kill-switch).
+ * Abrir marca todas como leídas (limpia el contador) conservando el resaltado.
+ * Tiempo real: se suscribe al WebSocket personal de notificaciones y refresca
+ * el feed al recibir un aviso; el sondeo de 60 s queda como respaldo si no hay WS.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { getAccessToken } from '@/services/api'
+import { wsStreamUrl } from '@/hooks/usePriceStream'
 import {
   notificationsService,
   type NotificationItem,
@@ -47,6 +50,37 @@ export default function NotificationBell({ className = '' }: Readonly<{ classNam
     refresh()
     pollRef.current = window.setInterval(refresh, 60_000)
     return () => window.clearInterval(pollRef.current)
+  }, [refresh])
+
+  // Tiempo real: aviso por WS → re-consultar el feed (única fuente de verdad).
+  useEffect(() => {
+    const token = getAccessToken()
+    const base = wsStreamUrl('/ws/notifications/')
+    if (!token || !base || typeof WebSocket === 'undefined') return
+
+    let ws: WebSocket | null = null
+    let retry = 0
+    let timer: number | undefined
+    let closed = false
+
+    function connect() {
+      try { ws = new WebSocket(`${base}?token=${encodeURIComponent(token as string)}`) } catch { return }
+      ws.onopen = () => { retry = 0 }
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg?.type === 'notification') refresh()
+        } catch { /* frame no-JSON: ignorar */ }
+      }
+      ws.onclose = () => {
+        // Reconexión con backoff acotado; si el token caducó, el sondeo sigue.
+        if (!closed && retry < 6) {
+          timer = window.setTimeout(connect, Math.min(30_000, 1_000 * 2 ** retry++))
+        }
+      }
+    }
+    connect()
+    return () => { closed = true; window.clearTimeout(timer); ws?.close() }
   }, [refresh])
 
   async function togglePanel() {

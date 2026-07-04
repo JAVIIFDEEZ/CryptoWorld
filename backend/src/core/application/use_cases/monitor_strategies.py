@@ -83,6 +83,8 @@ class EvaluateMonitoredStrategiesUseCase:
                 StrategySignalEvent.objects.create(
                     strategy=obj, owner=obj.owner, signal=new_signal, price=price, notified=sent,
                 )
+                from core.interfaces.ws.broadcast import broadcast_notification
+                broadcast_notification(obj.owner_id, {"kind": "signal"})
                 if sent:
                     notified += 1
 

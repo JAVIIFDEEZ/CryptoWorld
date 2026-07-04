@@ -31,3 +31,25 @@ def broadcast_price_update(items: list[dict]) -> bool:
     except Exception as exc:  # noqa: BLE001 — el broadcast nunca debe romper el sync
         logger.warning("broadcast_price_update fallo: %s", exc)
         return False
+
+
+def broadcast_notification(user_id: "int | None", data: dict) -> bool:
+    """Empuja un aviso ligero al canal personal del usuario (la campana
+    re-consulta el feed HTTP al recibirlo). Devuelve True si se emitió."""
+    if not user_id:
+        return False
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+    from core.interfaces.ws.consumers import notif_group
+
+    layer = get_channel_layer()
+    if layer is None:
+        return False
+    try:
+        async_to_sync(layer.group_send)(
+            notif_group(user_id), {"type": "notify", "data": data},
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — el broadcast nunca debe romper al emisor
+        logger.warning("broadcast_notification fallo: %s", exc)
+        return False

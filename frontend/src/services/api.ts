@@ -119,4 +119,9 @@ apiClient.interceptors.response.use(
   },
 )
 
+/** Access token actual (o null): para clientes no-axios como los WebSockets. */
+export function getAccessToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
+
 export default apiClient
