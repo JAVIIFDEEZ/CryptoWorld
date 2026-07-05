@@ -1,32 +1,24 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { analysisService, type CryptoAsset } from '@/services/analysisService'
+import { useAssets } from '@/hooks/queries/useMarketData'
 import AnalysisPanel from '@/components/analysis/AnalysisPanel'
 import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function TechnicalAnalysisPage() {
   const { t } = useTranslation()
-  const [assets, setAssets] = useState<CryptoAsset[]>([])
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
-  const [isLoadingAssets, setIsLoadingAssets] = useState(true)
-  const [error, setError] = useState(false)
+  // Catálogo desde la caché compartida (TanStack Query): si vienes de Mercado,
+  // no se re-pide la lista.
+  const { data: assetsData, isLoading: isLoadingAssets, isError: error } = useAssets()
+  const assets = assetsData ?? []
 
   useEffect(() => {
-    async function loadAssets() {
-      try {
-        const data = await analysisService.getAssets()
-        setAssets(data)
-        if (data.length > 0) setSelectedSymbol(data[0].symbol)
-      } catch {
-        setError(true)
-      } finally {
-        setIsLoadingAssets(false)
-      }
+    if (assets.length > 0) {
+      setSelectedSymbol((cur) => (assets.some((a) => a.symbol === cur) ? cur : assets[0].symbol))
     }
-    loadAssets()
-  }, [])
+  }, [assets])
 
   return (
     <section className="space-y-6">

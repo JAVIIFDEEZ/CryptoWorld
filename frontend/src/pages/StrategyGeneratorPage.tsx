@@ -9,7 +9,8 @@
 
 import { lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { analysisService, type CryptoAsset } from '@/services/analysisService'
+import { useAssets } from '@/hooks/queries/useMarketData'
+import { type CryptoAsset } from '@/services/analysisService'
 import {
   strategyGeneratorService,
   isGenerationReport,
@@ -53,12 +54,13 @@ const RUN_MESSAGES = [
 
 export default function StrategyGeneratorPage() {
   const { t } = useTranslation()
-  const [assets, setAssets] = useState<CryptoAsset[]>([])
+  // Catálogo desde la caché compartida (TanStack Query).
+  const { data: assetsData, isLoading: loadingAssets } = useAssets()
+  const assets = assetsData ?? []
   const [symbol, setSymbol] = useState('BTC')
   const [interval, setIntervalTf] = useState('1d')
   const [preset, setPreset] = useState<GenPreset>('balanced')
   const [optimizer, setOptimizer] = useState<'single' | 'nsga'>('single')
-  const [loadingAssets, setLoadingAssets] = useState(true)
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [report, setReport] = useState<GenerationReport | null>(null)
@@ -75,10 +77,12 @@ export default function StrategyGeneratorPage() {
   const tickRef = useRef<number>(0)
 
   useEffect(() => {
-    analysisService.getAssets()
-      .then((data) => { setAssets(data); if (data.length) setSymbol(data[0].symbol) })
-      .catch(() => { /* lista vacía */ })
-      .finally(() => setLoadingAssets(false))
+    if (assets.length > 0) {
+      setSymbol((cur) => (assets.some((a) => a.symbol === cur) ? cur : assets[0].symbol))
+    }
+  }, [assets])
+
+  useEffect(() => {
     strategyGeneratorService.listSignalEvents(15).then(setSignalEvents).catch(() => { /* sin eventos */ })
   }, [])
 

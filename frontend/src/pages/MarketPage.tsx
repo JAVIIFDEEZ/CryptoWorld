@@ -1,9 +1,8 @@
-import { lazy, useEffect, useMemo, useState, useCallback } from 'react'
+import { lazy, useMemo, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { analysisService, type CryptoAsset } from '@/services/analysisService'
-import { marketService } from '@/services/marketService'
-import { getWatchlist, addToWatchlist, removeFromWatchlist } from '@/services/watchlistService'
+import { type CryptoAsset } from '@/services/analysisService'
+import { useAssets, useSparklines, useToggleWatchlist, useWatchlist } from '@/hooks/queries/useMarketData'
 import { useCurrency } from '@/hooks/useCurrency'
 import DeltaChip from '@/components/ui/DeltaChip'
 import StatCard from '@/components/ui/StatCard'
@@ -28,59 +27,36 @@ function MarketPage() {
   const { t } = useTranslation()
   const { formatPrice, formatCompact } = useCurrency()
   const navigate = useNavigate()
-  const [assets, setAssets] = useState<CryptoAsset[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState(false)
   const [search, setSearch] = useState('')
   const [sortField, setSortField] = useState<SortField>('marketCap')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [showAll, setShowAll] = useState(false)
-  const [sparks, setSparks] = useState<Record<string, number[]>>({})
-  const [sparksLoaded, setSparksLoaded] = useState(false)
-  const [watchlist, setWatchlist] = useState<Set<string>>(new Set())
-  const [watchlistLoading, setWatchlistLoading] = useState<Set<string>>(new Set())
 
   const INITIAL_LIMIT = 20
 
-  useEffect(() => {
-    async function loadAssets() {
-      try {
-        const data = await analysisService.getAssets()
-        setAssets(data)
-      } catch {
-        setError(true)
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    loadAssets()
-  }, [])
+  // Capa de datos declarativa (TanStack Query): caché compartida entre vistas,
+  // deduplicación y revalidación al volver a la pestaña — sin useEffect manual.
+  const { data: assetsData, isLoading, isError: error } = useAssets()
+  const assets: CryptoAsset[] = useMemo(() => assetsData ?? [], [assetsData])
 
-  // Cargar watchlist del usuario autenticado
-  useEffect(() => {
-    getWatchlist()
-      .then((items) => setWatchlist(new Set(items.map((i) => i.symbol))))
-      .catch(() => { /* silencioso si no está autenticado */ })
-  }, [])
+  // Sparklines 7d de los 25 activos de mayor capitalización (batch dedicado).
+  // Se ordena por market_cap aquí para garantizar que los activos visibles por
+  // defecto (top-20 por cap.) siempre tengan sparkline.
+  const top25 = useMemo(() => [...assets]
+    .sort((a, b) => parseNumeric(b.market_cap) - parseNumeric(a.market_cap))
+    .slice(0, 25)
+    .map((a) => a.symbol), [assets])
+  const sparklinesQuery = useSparklines(top25)
+  const sparks = sparklinesQuery.data ?? {}
+  const sparksLoaded = sparklinesQuery.isFetched
 
-  // Cargar sparklines 7d para los 25 activos de mayor capitalización (batch vía endpoint dedicado).
-  // Se ordena por market_cap aquí para garantizar que los activos visibles por defecto
-  // (top-20 por cap.) siempre tengan sparkline, independientemente del orden que devuelva la API.
-  useEffect(() => {
-    if (assets.length === 0) return
-    const top25 = [...assets]
-      .sort((a, b) => parseNumeric(b.market_cap) - parseNumeric(a.market_cap))
-      .slice(0, 25)
-      .map((a) => a.symbol)
-    let cancelled = false
-    ;(async () => {
-      const map = await marketService.getSparklines(top25)
-      if (cancelled) return
-      setSparks(map)
-      setSparksLoaded(true)
-    })()
-    return () => { cancelled = true }
-  }, [assets])
+  // Watchlist con actualización optimista: la estrella responde al instante.
+  const { data: watchlistSymbols } = useWatchlist()
+  const watchlist = useMemo(() => new Set(watchlistSymbols ?? []), [watchlistSymbols])
+  const toggleMutation = useToggleWatchlist()
+  const watchlistLoading = useMemo(() => new Set<string>(
+    toggleMutation.isPending && toggleMutation.variables ? [toggleMutation.variables.symbol] : [],
+  ), [toggleMutation.isPending, toggleMutation.variables])
 
   const filteredAndSorted = useMemo(() => {
     const filtered = assets.filter((asset) => {
@@ -110,23 +86,10 @@ function MarketPage() {
     setSortDirection('desc')
   }
 
-  const toggleWatchlist = useCallback(async (symbol: string, e: React.MouseEvent) => {
+  const toggleWatchlist = useCallback((symbol: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    setWatchlistLoading((prev) => new Set(prev).add(symbol))
-    try {
-      if (watchlist.has(symbol)) {
-        await removeFromWatchlist(symbol)
-        setWatchlist((prev) => { const s = new Set(prev); s.delete(symbol); return s })
-      } else {
-        await addToWatchlist(symbol)
-        setWatchlist((prev) => new Set(prev).add(symbol))
-      }
-    } catch {
-      // silencioso
-    } finally {
-      setWatchlistLoading((prev) => { const s = new Set(prev); s.delete(symbol); return s })
-    }
-  }, [watchlist])
+    toggleMutation.mutate({ symbol, inWatchlist: watchlist.has(symbol) })
+  }, [watchlist, toggleMutation])
 
   const bullishCount = assets.filter((a) => a.is_bullish_24h).length
   const bearishCount = assets.length - bullishCount
