@@ -25,6 +25,88 @@
     --c-slate-900: 15 23 42;
     --c-slate-950: 2 6 23;
     --c-white: 255 255 255;
+
+    /* Acentos (canales RGB) — OSCURO por defecto: valores reales de Tailwind
+       (cero regresión). En claro, los tonos de texto (200/300/400) se
+       oscurecen y los fondos (700–950) se aclaran, cruzando la rampa. */
+    --c-red-200: 254 202 202;
+    --c-red-300: 252 165 165;
+    --c-red-400: 248 113 113;
+    --c-red-700: 185 28 28;
+    --c-red-800: 153 27 27;
+    --c-red-900: 127 29 29;
+    --c-red-950: 69 10 10;
+    --c-green-200: 187 247 208;
+    --c-green-300: 134 239 172;
+    --c-green-400: 74 222 128;
+    --c-green-700: 21 128 61;
+    --c-green-800: 22 101 52;
+    --c-green-900: 20 83 45;
+    --c-green-950: 5 46 22;
+    --c-blue-200: 191 219 254;
+    --c-blue-300: 147 197 253;
+    --c-blue-400: 96 165 250;
+    --c-blue-700: 29 78 216;
+    --c-blue-800: 30 64 175;
+    --c-blue-900: 30 58 138;
+    --c-blue-950: 23 37 84;
+    --c-emerald-200: 167 243 208;
+    --c-emerald-300: 110 231 183;
+    --c-emerald-400: 52 211 153;
+    --c-emerald-700: 4 120 87;
+    --c-emerald-800: 6 95 70;
+    --c-emerald-900: 6 78 59;
+    --c-emerald-950: 2 44 34;
+    --c-yellow-200: 254 240 138;
+    --c-yellow-300: 253 224 71;
+    --c-yellow-400: 250 204 21;
+    --c-yellow-700: 161 98 7;
+    --c-yellow-800: 133 77 14;
+    --c-yellow-900: 113 63 18;
+    --c-yellow-950: 66 32 6;
+    --c-amber-200: 253 230 138;
+    --c-amber-300: 252 211 77;
+    --c-amber-400: 251 191 36;
+    --c-amber-700: 180 83 9;
+    --c-amber-800: 146 64 14;
+    --c-amber-900: 120 53 15;
+    --c-amber-950: 69 26 3;
+    --c-purple-200: 233 213 255;
+    --c-purple-300: 216 180 254;
+    --c-purple-400: 192 132 252;
+    --c-purple-700: 126 34 206;
+    --c-purple-800: 107 33 168;
+    --c-purple-900: 88 28 135;
+    --c-purple-950: 59 7 100;
+    --c-sky-200: 186 230 253;
+    --c-sky-300: 125 211 252;
+    --c-sky-400: 56 189 248;
+    --c-sky-700: 3 105 161;
+    --c-sky-800: 7 89 133;
+    --c-sky-900: 12 74 110;
+    --c-sky-950: 8 47 73;
+    --c-cyan-200: 165 243 252;
+    --c-cyan-300: 103 232 249;
+    --c-cyan-400: 34 211 238;
+    --c-cyan-700: 14 116 144;
+    --c-cyan-800: 21 94 117;
+    --c-cyan-900: 22 78 99;
+    --c-cyan-950: 8 51 68;
+    --c-orange-200: 254 215 170;
+    --c-orange-300: 253 186 116;
+    --c-orange-400: 251 146 60;
+    --c-orange-700: 194 65 12;
+    --c-orange-800: 154 52 18;
+    --c-orange-900: 124 45 18;
+    --c-orange-950: 67 20 7;
+    --c-indigo-200: 199 210 254;
+    --c-indigo-300: 165 180 252;
+    --c-indigo-400: 129 140 248;
+    --c-indigo-700: 67 56 202;
+    --c-indigo-800: 55 48 163;
+    --c-indigo-900: 49 46 129;
+    --c-indigo-950: 30 27 75;
+    color-scheme: dark;
   }
 
   /* TEMA CLARO: invierte la rampa neutra (50↔950, 100↔900, …) y oscurece el
@@ -44,6 +126,86 @@
     --c-slate-900: 241 245 249;
     --c-slate-950: 248 250 252;
     --c-white: 15 23 42;
+
+    /* Acentos cruzados: texto claro → tono oscuro legible; fondo oscuro →
+       tinte claro (los chips bg-*-900/40 pasan a pastilla pastel). */
+    --c-red-200: 153 27 27;
+    --c-red-300: 185 28 28;
+    --c-red-400: 220 38 38;
+    --c-red-700: 252 165 165;
+    --c-red-800: 254 202 202;
+    --c-red-900: 254 226 226;
+    --c-red-950: 254 242 242;
+    --c-green-200: 22 101 52;
+    --c-green-300: 21 128 61;
+    --c-green-400: 22 163 74;
+    --c-green-700: 134 239 172;
+    --c-green-800: 187 247 208;
+    --c-green-900: 220 252 231;
+    --c-green-950: 240 253 244;
+    --c-blue-200: 30 64 175;
+    --c-blue-300: 29 78 216;
+    --c-blue-400: 37 99 235;
+    --c-blue-700: 147 197 253;
+    --c-blue-800: 191 219 254;
+    --c-blue-900: 219 234 254;
+    --c-blue-950: 239 246 255;
+    --c-emerald-200: 6 95 70;
+    --c-emerald-300: 4 120 87;
+    --c-emerald-400: 5 150 105;
+    --c-emerald-700: 110 231 183;
+    --c-emerald-800: 167 243 208;
+    --c-emerald-900: 209 250 229;
+    --c-emerald-950: 236 253 245;
+    --c-yellow-200: 133 77 14;
+    --c-yellow-300: 161 98 7;
+    --c-yellow-400: 202 138 4;
+    --c-yellow-700: 253 224 71;
+    --c-yellow-800: 254 240 138;
+    --c-yellow-900: 254 249 195;
+    --c-yellow-950: 254 252 232;
+    --c-amber-200: 146 64 14;
+    --c-amber-300: 180 83 9;
+    --c-amber-400: 217 119 6;
+    --c-amber-700: 252 211 77;
+    --c-amber-800: 253 230 138;
+    --c-amber-900: 254 243 199;
+    --c-amber-950: 255 251 235;
+    --c-purple-200: 107 33 168;
+    --c-purple-300: 126 34 206;
+    --c-purple-400: 147 51 234;
+    --c-purple-700: 216 180 254;
+    --c-purple-800: 233 213 255;
+    --c-purple-900: 243 232 255;
+    --c-purple-950: 250 245 255;
+    --c-sky-200: 7 89 133;
+    --c-sky-300: 3 105 161;
+    --c-sky-400: 2 132 199;
+    --c-sky-700: 125 211 252;
+    --c-sky-800: 186 230 253;
+    --c-sky-900: 224 242 254;
+    --c-sky-950: 240 249 255;
+    --c-cyan-200: 21 94 117;
+    --c-cyan-300: 14 116 144;
+    --c-cyan-400: 8 145 178;
+    --c-cyan-700: 103 232 249;
+    --c-cyan-800: 165 243 252;
+    --c-cyan-900: 207 250 254;
+    --c-cyan-950: 236 254 255;
+    --c-orange-200: 154 52 18;
+    --c-orange-300: 194 65 12;
+    --c-orange-400: 234 88 12;
+    --c-orange-700: 253 186 116;
+    --c-orange-800: 254 215 170;
+    --c-orange-900: 255 237 213;
+    --c-orange-950: 255 247 237;
+    --c-indigo-200: 55 48 163;
+    --c-indigo-300: 67 56 202;
+    --c-indigo-400: 79 70 229;
+    --c-indigo-700: 165 180 252;
+    --c-indigo-800: 199 210 254;
+    --c-indigo-900: 224 231 255;
+    --c-indigo-950: 238 242 255;
     color-scheme: light;
   }
 
@@ -77,20 +239,20 @@
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #0f172a;
+    background: rgb(var(--c-slate-900));
   }
   ::-webkit-scrollbar-thumb {
-    background: #334155;
+    background: rgb(var(--c-slate-700));
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
+    background: rgb(var(--c-slate-600));
   }
 
   /* ── Selección de texto ── */
   ::selection {
     background: rgba(59, 130, 246, 0.35);
-    color: #f1f5f9;
+    color: rgb(var(--c-slate-100));
   }
 }
 
@@ -103,9 +265,9 @@
 .cw-shimmer {
   background: linear-gradient(
     90deg,
-    rgba(51, 65, 85, 0.5) 25%,
-    rgba(71, 85, 105, 0.7) 50%,
-    rgba(51, 65, 85, 0.5) 75%
+    rgb(var(--c-slate-700) / 0.5) 25%,
+    rgb(var(--c-slate-600) / 0.7) 50%,
+    rgb(var(--c-slate-700) / 0.5) 75%
   );
   background-size: 800px 100%;
   animation: cw-shimmer 1.6s ease-in-out infinite;

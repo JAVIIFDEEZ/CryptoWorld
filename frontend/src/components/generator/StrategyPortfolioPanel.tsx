@@ -142,7 +142,7 @@ export default function StrategyPortfolioPanel({ refreshKey = 0 }: Readonly<{ re
                 <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 9 }} axisLine={{ stroke: '#334155' }} tickLine={false} minTickGap={30} />
                 <YAxis domain={['dataMin', 'dataMax']} tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} width={44} />
                 <Tooltip
-                  contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+                  contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
                   formatter={(v) => [typeof v === 'number' ? v.toFixed(2) : v, 'equity (base 100)']}
                 />
                 <Area type="monotone" dataKey="value" stroke={equityUp ? '#22c55e' : '#ef4444'} strokeWidth={1.5} fill="url(#portfill)" />

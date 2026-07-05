@@ -26,7 +26,7 @@ export default function MultiChainBars2D({ data }: Readonly<{ data: CompareData 
           <CartesianGrid stroke="#1e293b" />
           <XAxis dataKey="chain" tick={{ fill: '#94a3b8', fontSize: 11 }} />
           <YAxis tick={{ fill: '#64748b', fontSize: 10 }} unit="%" domain={[0, 100]} />
-          <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }} />
+          <Tooltip contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {data.metrics.map((m, j) => (
             <Bar key={m.key} dataKey={m.key} name={m.label} fill={METRIC_PALETTE[j % METRIC_PALETTE.length]} radius={[2, 2, 0, 0]} />

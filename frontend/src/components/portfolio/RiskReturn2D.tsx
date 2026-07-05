@@ -27,7 +27,7 @@ export default function RiskReturn2D({ points }: Readonly<{ points: RiskReturnPo
           <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" />
           <Tooltip
             cursor={{ strokeDasharray: '3 3' }}
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
             formatter={(v) => (typeof v === 'number' ? v.toFixed(1) : String(v))}
           />
           <Scatter data={data}>

@@ -70,7 +70,7 @@ export default function PredictionMonitoringPanel() {
             )}
             <ReferenceLine y={50} stroke="#475569" strokeDasharray="2 2" strokeWidth={1} />
             <Tooltip
-              contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+              contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
               labelFormatter={(l) => `Ventana ${l}`}
               formatter={(v, _n, item) => [`${typeof v === 'number' ? v.toFixed(1) : v}% (${item?.payload?.n} pred.)`, 'precisión']}
             />

@@ -144,7 +144,7 @@ export default function OnChainPressurePanel({ chain = 'ethereum' }: Readonly<{ 
                 <YAxis tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtUsd(Number(v))} width={58} />
                 <ReferenceLine y={0} stroke="#475569" />
                 <Tooltip
-                  contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+                  contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
                   formatter={(val, name) => [fmtUsd(Number(val)), name === 'entrada' ? 'a exchanges' : 'de exchanges']}
                 />
                 <Bar dataKey="entrada" fill="#ef4444" fillOpacity={0.75} radius={[2, 2, 0, 0]} />

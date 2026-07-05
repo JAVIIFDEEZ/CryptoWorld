@@ -40,7 +40,7 @@ export default function IndicatorsRadar({ indicators }: Readonly<{ indicators: S
           <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
           <Radar dataKey="value" stroke={tone} fill={tone} fillOpacity={0.35} />
           <Tooltip
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
             formatter={(v) => [`${typeof v === 'number' ? v.toFixed(0) : v}/100`, 'alcismo']}
           />
         </RadarChart>

@@ -31,7 +31,7 @@ export default function ParetoFrontier2D({ points }: Readonly<{ points: ParetoPo
             label={{ value: 'Sharpe OOS ↑', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }} />
           <ZAxis type="number" dataKey="z" range={[80, 320]} name="Sobreajuste" />
           <Tooltip cursor={{ strokeDasharray: '3 3' }}
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
             formatter={(v, n) => [typeof v === 'number' ? v.toFixed(2) : String(v), n]} />
           <Scatter data={data}>
             {data.map((d, i) => <Cell key={i} fill={gapColor(d.z)} />)}

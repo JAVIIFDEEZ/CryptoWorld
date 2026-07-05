@@ -159,7 +159,7 @@ function BalanceCurve({ history, symbol }: Readonly<{ history: BalancePoint[]; s
           <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 9 }} axisLine={{ stroke: '#334155' }} tickLine={false} minTickGap={28} />
           <YAxis tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} width={48} />
           <Tooltip
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
             formatter={(v) => [`${typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 6 }) : v} ${symbol}`, 'saldo']}
           />
           <Area type="monotone" dataKey="balance" stroke={stroke} strokeWidth={1.5} fill="url(#balfill)" />

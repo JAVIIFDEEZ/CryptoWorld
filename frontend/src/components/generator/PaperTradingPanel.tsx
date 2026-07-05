@@ -309,7 +309,7 @@ function EquityCurve({ points, initial }: Readonly<{ points: { t: string; equity
           </defs>
           <YAxis domain={['dataMin', 'dataMax']} hide />
           <Tooltip
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
             labelFormatter={(l) => new Date(l as string).toLocaleString()}
             formatter={(v) => [`$${typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : v}`, 'patrimonio']}
           />

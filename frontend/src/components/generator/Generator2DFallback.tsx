@@ -33,7 +33,7 @@ export function Universe2D({ candidates }: Readonly<{ candidates: Candidate[] }>
           <ZAxis type="number" dataKey="z" range={[40, 360]} name="Robustez" />
           <Tooltip
             cursor={{ strokeDasharray: '3 3' }}
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }}
+            contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }}
             formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))}
           />
           <Scatter data={data}>
@@ -55,7 +55,7 @@ export function Landscape2D({ history }: Readonly<{ history: GenerationHistoryPo
           <XAxis dataKey="generation" tick={{ fill: '#64748b', fontSize: 10 }}
             label={{ value: 'Generación', position: 'insideBottom', offset: -8, fill: '#64748b', fontSize: 11 }} />
           <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
-          <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 11 }} />
+          <Tooltip contentStyle={{ background: 'rgb(var(--c-slate-900))', border: '1px solid rgb(var(--c-slate-700))', borderRadius: 8, fontSize: 11 }} />
           <Line type="monotone" dataKey="best" stroke="#34d399" strokeWidth={2} dot={false} name="Mejor" />
           <Line type="monotone" dataKey="mean" stroke="#60a5fa" strokeWidth={1.5} strokeDasharray="4 3" dot={false} name="Medio" />
         </LineChart>
