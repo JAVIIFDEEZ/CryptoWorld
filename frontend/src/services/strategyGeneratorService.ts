@@ -144,7 +144,8 @@ export interface GenerationReport {
   optimizer?: 'single' | 'nsga'
   ga_evolution: { history: GenerationHistoryPoint[]; evaluations: number; best_fitness: number }
   pareto_frontier?: ParetoPoint[]
-  summary: { candidates_gated: number; passed_gating: number; rejected: number }
+  summary: { candidates_gated: number; passed_gating: number; rejected: number; families_tried?: number }
+  gating_diagnostics?: Record<string, number>
   ranking: Finalist[]
   candidates: Candidate[]
   rejected: (Candidate & { failed_checks: string[] })[]

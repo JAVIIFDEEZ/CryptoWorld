@@ -436,6 +436,14 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
   )
 }
 
+const GATE_LABELS: Record<string, string> = {
+  min_trades: 'Pocas operaciones',
+  no_lookahead: 'Lookahead',
+  wf_efficiency: 'Eficiencia walk-forward',
+  pbo: 'Sobreajuste (PBO)',
+  mc_p5_positive: 'Monte Carlo p5 ≤ 0',
+}
+
 function SummaryStrip({ report }: Readonly<{ report: GenerationReport }>) {
   const cards = [
     { label: 'Robustas', value: report.summary.passed_gating, accent: 'text-emerald-400' },
@@ -443,14 +451,36 @@ function SummaryStrip({ report }: Readonly<{ report: GenerationReport }>) {
     { label: 'Mejor fitness', value: report.ga_evolution.best_fitness.toFixed(2), accent: 'text-blue-300' },
     { label: 'Generaciones', value: report.ga_config.generations, accent: 'text-slate-200' },
   ]
+  const diag = report.gating_diagnostics ?? {}
+  const killers = Object.entries(diag).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {cards.map((c) => (
-        <div key={c.label} className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-          <p className="text-[10px] text-slate-500 uppercase">{c.label}</p>
-          <p className={`text-2xl font-bold font-mono ${c.accent}`}>{c.value}</p>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {cards.map((c) => (
+          <div key={c.label} className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+            <p className="text-[10px] text-slate-500 uppercase">{c.label}</p>
+            <p className={`text-2xl font-bold font-mono ${c.accent}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      {/* Por qué mueren las candidatas: un vistazo al filtro que más mata.
+          Con 0 robustas, esta línea es la diferencia entre «no funciona» y
+          «el PBO está descartando familias sobreajustadas, prueba Exhaustivo». */}
+      {killers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+          <span className="uppercase text-slate-500 text-[10px]">Qué frena a las candidatas:</span>
+          {killers.map(([check, n]) => (
+            <span key={check} className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700">
+              {GATE_LABELS[check] ?? check}: <span className="text-slate-200 font-mono">{n}</span>
+            </span>
+          ))}
+          {report.summary.families_tried != null && (
+            <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700">
+              Familias probadas: <span className="text-slate-200 font-mono">{report.summary.families_tried}</span>
+            </span>
+          )}
         </div>
-      ))}
+      )}
     </div>
   )
 }

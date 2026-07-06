@@ -64,17 +64,17 @@ class GenerationConfig:
 # elige cuánto exhaustividad/espera quiere.
 _PRESETS = {
     "fast": GenerationConfig(
-        top_k=3, max_gating_attempts=6,
+        top_k=3, max_gating_attempts=8,
         ga=GAConfig(population_size=24, generations=8, elitism=3, random_injection=2),
         gating=GatingThresholds(wf_splits=3, pbo_neighbors=8, mc_sims=200),
     ),
     "balanced": GenerationConfig(
-        top_k=5, max_gating_attempts=12,
+        top_k=5, max_gating_attempts=16,
         ga=GAConfig(population_size=40, generations=15, elitism=4, random_injection=2),
         gating=GatingThresholds(wf_splits=4, pbo_neighbors=12, mc_sims=400),
     ),
     "thorough": GenerationConfig(
-        top_k=6, max_gating_attempts=18,
+        top_k=6, max_gating_attempts=28,
         ga=GAConfig(population_size=60, generations=25, elitism=6, random_injection=3),
         gating=GatingThresholds(wf_splits=4, pbo_neighbors=16, mc_sims=800),
     ),
@@ -182,11 +182,32 @@ def generate_strategies(
     # ── PASO 4: gating de robustez de los mejores candidatos ──────────
     # Recorremos la población ordenada por fitness; el holdout (PASO 5) se mide
     # pero NO decide la selección/ranking (sería snooping de la validación).
+    #
+    # Presupuesto con DIVERSIDAD: la cima de la población suele estar llena de
+    # hermanos casi idénticos de la misma familia; si todos los intentos de
+    # gating se gastan en ellos, fallan por lo mismo y candidatas distintas más
+    # abajo nunca se prueban. Cada familia estructural (indicadores+operadores)
+    # consume como máximo 2 intentos.
+    def _signature(spec: dict) -> tuple:
+        sig = []
+        for side in ("entry", "exit"):
+            for c in spec[side]["conditions"]:
+                if c["type"] in ("threshold", "slope"):
+                    sig.append((side, c["type"], c["indicator"], c["op"]))
+                else:
+                    sig.append((side, c["type"], c["a"]["indicator"], c["b"]["indicator"], c["op"]))
+        return tuple(sorted(sig))
+
     finalists: list[dict] = []
     attempts = 0
+    family_attempts: dict[tuple, int] = {}
     for cand in candidate_specs:
         if attempts >= cfg.max_gating_attempts:
             break
+        sig = _signature(cand["spec"])
+        if family_attempts.get(sig, 0) >= 2:
+            continue
+        family_attempts[sig] = family_attempts.get(sig, 0) + 1
         attempts += 1
         spec = cand["spec"]
         gate = gate_spec(df_evo, spec, cfg.gating, ppy=ppy, costs=costs)
@@ -267,6 +288,13 @@ def generate_strategies(
             "candidates_gated": len(finalists),
             "passed_gating": len(passed),
             "rejected": len(rejected),
+            "families_tried": len(family_attempts),
+        },
+        # Diagnóstico del gating: cuántas candidatas mata cada check. Si todo
+        # muere por el mismo filtro, el usuario ve POR QUÉ no salen robustas.
+        "gating_diagnostics": {
+            check: sum(1 for f in finalists if not f["gating"]["checks"].get(check, True))
+            for check in ("min_trades", "no_lookahead", "wf_efficiency", "pbo", "mc_p5_positive")
         },
         "ranking": passed,
         "candidates": [_coords(f) for f in finalists],

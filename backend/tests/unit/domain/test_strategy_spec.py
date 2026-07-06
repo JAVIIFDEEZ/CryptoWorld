@@ -254,3 +254,84 @@ class TestRegimeGate:
         }
         assert not ss.validate_spec(spec)
         assert "ADX≥" in ss.describe_spec({**spec, "regime": {"adx_min": 25.0}})
+
+
+class TestNewConditionTypes:
+    """Condiciones de estado (compare) y pendiente (slope) — estilo StrategyQuant."""
+
+    def _df(self, n=260):
+        rng = np.random.default_rng(9)
+        t = np.arange(n)
+        close = pd.Series(100 + t * 0.4 + 8 * np.sin(t / 9.0) + rng.normal(0, 0.6, n))
+        return pd.DataFrame({"open": close, "high": close * 1.01, "low": close * 0.99,
+                             "close": close, "volume": np.full(n, 1000.0)})
+
+    @pytest.mark.unit
+    def test_compare_is_persistent_state_not_single_bar(self):
+        """«PRICE POR ENCIMA de SMA» debe ser True MIENTRAS dure, no solo al cruzar."""
+        df = self._df()
+        cond = {"type": "compare", "a": {"indicator": "PRICE", "params": {}},
+                "b": {"indicator": "SMA", "params": {"window": 50}}, "op": "above"}
+        assert ss._validate_condition(cond)
+        active = ss._condition_bool(df, cond, {})
+        # Serie alcista: el estado se mantiene muchas velas seguidas (no impulsos sueltos)
+        assert active.sum() > 50
+        runs = np.diff(np.where(np.concatenate(([1], np.diff(active.astype(int)), [1])))[0])
+        assert runs.max() > 10
+
+    @pytest.mark.unit
+    def test_slope_rising_on_uptrend(self):
+        df = self._df()
+        cond = {"type": "slope", "indicator": "SMA", "params": {"window": 20},
+                "op": "rising", "bars": 5}
+        assert ss._validate_condition(cond)
+        active = ss._condition_bool(df, cond, {})
+        # En una serie con deriva alcista, la SMA sube la mayoría del tiempo
+        assert active[60:].mean() > 0.6
+
+    @pytest.mark.unit
+    def test_donchian_breakout_is_reachable(self):
+        """El canal va DESPLAZADO 1 vela: el cierre sí puede romper el máximo previo
+        (sin desfase sería imposible por construcción y la regla sería inútil)."""
+        df = self._df()
+        cond = {"type": "cross", "a": {"indicator": "PRICE", "params": {}},
+                "b": {"indicator": "DONCH_UPPER", "params": {"window": 20}}, "op": "cross_above"}
+        active = ss._condition_bool(df, cond, {})
+        assert active.sum() >= 1
+
+    @pytest.mark.unit
+    def test_fib_level_between_swing_extremes(self):
+        df = self._df()
+        arr = ss._fib_retr(df, {"window": 40, "ratio": 0.5})
+        hi = df["high"].rolling(40).max().shift(1)
+        lo = df["low"].rolling(40).min().shift(1)
+        mask = ~np.isnan(arr)
+        assert mask.sum() > 100
+        assert (arr[mask] <= hi.values[mask] + 1e-9).all()
+        assert (arr[mask] >= lo.values[mask] - 1e-9).all()
+
+    @pytest.mark.unit
+    def test_describe_covers_new_types(self):
+        cmp_ = {"type": "compare", "a": {"indicator": "PRICE", "params": {}},
+                "b": {"indicator": "SMA", "params": {"window": 200}}, "op": "above"}
+        slp = {"type": "slope", "indicator": "EMA", "params": {"window": 30},
+               "op": "falling", "bars": 3}
+        assert "POR ENCIMA de" in ss._describe_condition(cmp_)
+        assert "a la baja en 3 velas" in ss._describe_condition(slp)
+
+
+class TestEfficiencyFix:
+    """IS ≤ 0 con OOS > 0 es generalización, no fallo (antes eficiencia=0)."""
+
+    @pytest.mark.unit
+    def test_negative_is_positive_oos_counts_as_efficient(self):
+        from unittest.mock import patch
+        from core.domain.services import strategy_evaluation as ev
+
+        df = TestNewConditionTypes()._df(400)
+        spec = ss.seed_specs()[0]
+        sharpes = iter([-0.5, 0.8, -0.3, 0.6, -0.4, 0.7])  # IS negativos, OOS positivos
+        with patch.object(ev.metrics, "sharpe_ratio", side_effect=lambda *a, **k: next(sharpes)):
+            wf = ev.walk_forward_oos(df, spec, n_splits=3, ppy=365.0)
+        if wf["n_folds"] > 0 and wf["mean_is_sharpe"] <= 0 < wf["mean_oos_sharpe"]:
+            assert wf["efficiency"] == 1.0
