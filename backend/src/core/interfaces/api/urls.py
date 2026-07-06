@@ -214,6 +214,7 @@ urlpatterns = [
     path("notifications/", views.NotificationsView.as_view(), name="notifications"),
     path("notifications/seen/", views.NotificationsSeenView.as_view(), name="notifications-seen"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
+    path("news/globe/", views.NewsGlobeView.as_view(), name="news-globe"),
 
     # ── Admin ───────────────────────────────────────────────────────
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),

@@ -1428,6 +1428,27 @@ class NotificationsSeenView(APIView):
         )
 
 
+class NewsGlobeView(APIView):
+    """
+    GET /api/news/globe/ — Noticias importantes clasificadas por región del
+    mundo y categoría de evento (política monetaria, conflicto, salida a
+    bolsa, regulación, hackeo, adopción, macro) para el globo terráqueo 3D.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300
+
+    def get(self, request):
+        from core.application.use_cases.get_news_globe import GetNewsGlobeUseCase
+
+        cached = cache.get("news_globe")
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = GetNewsGlobeUseCase().execute()
+        if not result.get("error"):
+            cache.set("news_globe", result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class NewsFeedView(APIView):
     """
     GET /api/news/ â€” Feed de noticias con filtro de sentimiento.
