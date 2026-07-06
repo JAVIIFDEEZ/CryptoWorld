@@ -566,6 +566,11 @@ def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
 # 4. PREDICCIÓN ML
 # ═══════════════════════════════════════════════════════════════════
 
+# Media banda neutral alrededor del 50%: dentro de [45%, 55%] la predicción se
+# reporta como NEUTRAL (sin dirección accionable) en lugar de forzar un lado.
+_NEUTRAL_BAND = 0.05
+
+
 def _build_prediction_features(df: pd.DataFrame) -> pd.DataFrame:
     """Construye las features (todas causales) para el clasificador de dirección."""
     feat = pd.DataFrame(index=df.index)
@@ -741,7 +746,15 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     calibrated = platt is not None
     prob_up = float(platt.predict_proba([[raw_up]])[0, 1]) if calibrated else raw_up
     proba = np.array([1.0 - prob_up, prob_up])
-    pred_class = int(prob_up >= 0.5)
+    # Zona NEUTRAL: con la probabilidad calibrada a un paso del 50%, proclamar
+    # dirección sería vender una moneda al aire como señal. NEUTRAL no se
+    # registra en el historial (log_prediction solo guarda ALCISTA/BAJISTA).
+    if prob_up >= 0.5 + _NEUTRAL_BAND:
+        pred_label = "ALCISTA"
+    elif prob_up <= 0.5 - _NEUTRAL_BAND:
+        pred_label = "BAJISTA"
+    else:
+        pred_label = "NEUTRAL"
 
     top_features = sorted(zip(feature_cols, imp_model.feature_importances_),
                           key=lambda x: x[1], reverse=True)[:8]
@@ -781,9 +794,10 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         verdict_text = "Sin ventaja fiable sobre el azar: la predicción es prácticamente una moneda al aire."
 
     return {
-        "prediction": "ALCISTA" if pred_class == 1 else "BAJISTA",
+        "prediction": pred_label,
         "confidence": round(float(max(proba)), 4),
         "prob_up": round(float(proba[1]), 4),
+        "neutral_band": _NEUTRAL_BAND,
         "horizon": horizon,
         "model": "Ensemble (RF+GB+LR) calibrado, walk-forward" if calibrated else "Ensemble (RF+GB+LR), walk-forward",
         "calibrated": calibrated,

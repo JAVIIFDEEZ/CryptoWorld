@@ -87,6 +87,7 @@ export interface PredictionResult {
   prediction: string
   confidence: number
   prob_up?: number
+  neutral_band?: number
   horizon: number
   model?: string
   calibrated?: boolean
