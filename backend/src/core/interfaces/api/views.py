@@ -1428,6 +1428,30 @@ class NotificationsSeenView(APIView):
         )
 
 
+class ConfluenceView(APIView):
+    """
+    GET /api/analysis/confluence/?symbol=BTC — Motor de confluencia 360°:
+    fusión de señal técnica, ML, presión on-chain y sentimiento de noticias
+    con pesos aprendidos del acierto histórico real de cada fuente.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600   # las fuentes de fondo cambian despacio
+
+    def get(self, request):
+        from core.application.use_cases.get_confluence import GetConfluenceUseCase
+
+        symbol = (request.query_params.get("symbol") or "BTC").strip().upper()
+        cache_key = f"confluence:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = GetConfluenceUseCase().execute(symbol)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class OhlcvCoverageView(APIView):
     """
     GET /api/market/history/?symbol=BTC&interval=1d — Cobertura del almacén

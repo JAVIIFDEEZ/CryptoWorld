@@ -368,6 +368,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.sync_ohlcv_history",
         "schedule": 1800.0,  # segundos — solo persiste velas cerradas
     },
+    # Resolver lecturas de confluencia vencidas (aprendizaje de pesos, 30 min)
+    "resolve-confluence-snapshots": {
+        "task": "core.tasks.resolve_confluence_snapshots",
+        "schedule": 1800.0,
+    },
     # Ejecutar señales de las carteras de paper trading activas (cada 15 min)
     "evaluate-paper-trading": {
         "task": "core.tasks.evaluate_paper_trading",

@@ -702,3 +702,20 @@ def backfill_ohlcv(self, symbol: str, interval: str = "1d",
     )
     logger.info("backfill_ohlcv %s %s: %s", symbol, interval, result)
     return result
+
+
+@shared_task(
+    name="core.tasks.resolve_confluence_snapshots",
+    bind=True,
+    max_retries=0,
+)
+def resolve_confluence_snapshots(self) -> dict:
+    """
+    Resuelve las lecturas de confluencia vencidas contra el precio real. Es el
+    combustible del aprendizaje de pesos del motor 360°. Beat: cada 30 min.
+    """
+    from core.application.use_cases.get_confluence import ResolveConfluenceSnapshotsUseCase
+
+    result = ResolveConfluenceSnapshotsUseCase().execute()
+    logger.info("resolve_confluence_snapshots: %s", result)
+    return result

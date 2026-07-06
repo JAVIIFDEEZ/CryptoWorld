@@ -290,6 +290,30 @@ export interface StrategyInfo {
   description: string
 }
 
+// Motor de confluencia 360° (técnica + ML + on-chain + noticias)
+export interface ConfluenceSource {
+  available: boolean
+  score: number | null
+  detail: string
+  weight: number
+  weight_mode: 'aprendido' | 'a_priori'
+  hit_rate: number | null
+  sample: number
+}
+
+export interface ConfluenceReading {
+  asset_symbol: string
+  score: number
+  verdict: 'CONFLUENCIA_ALCISTA' | 'CONFLUENCIA_BAJISTA' | 'MIXTO' | 'NEUTRAL' | 'INSUFICIENTE'
+  verdict_text: string
+  agreement_pct: number
+  sources_available: number
+  sources: Record<string, ConfluenceSource>
+  horizon_hours: number
+  note: string
+  error?: string
+}
+
 // ── Caché en memoria con TTL ───────────────────────────────────────
 const _cache = new Map<string, { data: unknown; expires: number }>()
 function _cGet<T>(key: string): T | null {
@@ -354,6 +378,14 @@ export const analysisService = {
       { asset_symbol: assetSymbol, interval, horizon },
       { timeout: 90_000 },
     )
+    return data
+  },
+
+  /** Motor de confluencia 360°: fusión de las 4 fuentes con pesos aprendidos. */
+  async getConfluence(assetSymbol: string): Promise<ConfluenceReading> {
+    const { data } = await apiClient.get<ConfluenceReading>('/analysis/confluence/', {
+      params: { symbol: assetSymbol }, timeout: 90_000,
+    })
     return data
   },
 

@@ -98,6 +98,7 @@ urlpatterns = [
     path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
     path("analysis/predictions/", views.PredictionTrackRecordView.as_view(), name="analysis-predictions"),
     path("analysis/predictions/monitoring/", views.PredictionMonitoringView.as_view(), name="analysis-predictions-monitoring"),
+    path("analysis/confluence/", views.ConfluenceView.as_view(), name="analysis-confluence"),
     path("analysis/patterns/", views.DetectPatternsView.as_view(), name="analysis-patterns"),
     path("analysis/backtest/", views.RunBacktestView.as_view(), name="analysis-backtest"),
     path(

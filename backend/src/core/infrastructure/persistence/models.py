@@ -1105,3 +1105,40 @@ class OhlcvCandle(models.Model):
 
     def __str__(self) -> str:
         return f"{self.symbol} {self.interval} @ {self.open_time}"
+
+
+class ConfluenceSnapshot(models.Model):
+    """
+    Lectura del motor de confluencia 360° registrada para su verificación.
+
+    El bucle de auto-aprendizaje del motor: cada lectura guarda el score de
+    CADA fuente (técnica, ML, on-chain, noticias) y el precio del momento; al
+    vencer el horizonte se resuelve contra el precio real y el aprendizaje de
+    pesos (confluence_fusion.learn_weights) se alimenta de estas filas — las
+    fuentes que aciertan ganan peso, las que no, lo pierden.
+    """
+
+    STATUS_CHOICES = [("pending", "Pendiente"), ("resolved", "Resuelta")]
+
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    scores = models.JSONField(default=dict)      # {fuente: score ∈ [-1,1]}
+    fused_score = models.FloatField()
+    verdict = models.CharField(max_length=30)
+    price_at = models.FloatField()
+    horizon_hours = models.PositiveIntegerField(default=24)
+    resolve_at = models.DateTimeField(db_index=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES,
+                              default="pending", db_index=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    actual_return_pct = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "confluence_snapshots"
+        verbose_name = "Lectura de confluencia"
+        verbose_name_plural = "Lecturas de confluencia"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["status", "resolve_at"])]
+
+    def __str__(self) -> str:
+        return f"Confluencia {self.asset_symbol} {self.verdict} ({self.status})"
