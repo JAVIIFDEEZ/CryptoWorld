@@ -1084,7 +1084,14 @@ def backtest_signals(
     low = df["low"].values if "low" in df.columns else close
     n = len(close)
 
-    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk, sizing=sizing)
+    # El stop por ATR necesita la serie de ATR(14); solo se paga si el spec lo usa.
+    atr_arr = None
+    if risk is not None and getattr(risk, "atr_stop_mult", None) is not None:
+        atr_arr = ta_lib.volatility.AverageTrueRange(
+            pd.Series(high), pd.Series(low), pd.Series(close), window=14,
+        ).average_true_range().values
+
+    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk, sizing=sizing, atr=atr_arr)
     trades = sim["trades"]
     equity_curve = sim["equity_curve"]
     final_capital = sim["final_capital"]

@@ -169,3 +169,30 @@ class TestSizing:
         )
         # notional = 2%/5% = 40% del capital → exposición parcial, retorno positivo pero menor
         assert 0 < bt["total_return_pct"] < 10
+
+
+class TestNewExits:
+    """Salida por tiempo y stop por ATR (estilo StrategyQuant)."""
+
+    @pytest.mark.unit
+    def test_time_exit_closes_after_max_bars(self):
+        close = np.full(50, 100.0)
+        signals = np.zeros(50); signals[2] = 1   # compra y nunca llega señal de venta
+        out = simulate(close, close, close, signals, risk=RiskModel(max_bars=7))
+        assert len(out["trades"]) >= 1
+        t = out["trades"][0]
+        assert t["exit_reason"] == "time_exit"
+        assert t["exit_index"] - t["entry_index"] == 7
+
+    @pytest.mark.unit
+    def test_atr_stop_triggers_at_entry_atr_multiple(self):
+        n = 30
+        close = np.full(n, 100.0); close[20:] = 89.0   # caída del 11%
+        low = close.copy(); high = close.copy()
+        atr = np.full(n, 2.0)                          # ATR constante de 2.0
+        signals = np.zeros(n); signals[5] = 1
+        out = simulate(close, high, low, signals, risk=RiskModel(atr_stop_mult=3.0), atr=atr)
+        t = out["trades"][0]
+        # stop = 100 − 3×2 = 94: salta en la vela de la caída, al precio del stop
+        assert t["exit_reason"] == "atr_stop"
+        assert abs(t["exit_price"] - 94.0) < 1e-6

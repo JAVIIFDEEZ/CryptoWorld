@@ -324,11 +324,14 @@ def _random_block(rng: np.random.Generator) -> dict:
     }
 
 
-# Rangos de la gestión de riesgo (fracciones): stop-loss, take-profit, trailing.
+# Rangos de la gestión de riesgo: stops en fracciones, salida por tiempo en
+# velas y stop por volatilidad en múltiplos de ATR (estilo StrategyQuant).
 RISK_RANGES = {
     "stop_loss_pct": (0.02, 0.15),
     "take_profit_pct": (0.03, 0.30),
     "trailing_stop_pct": (0.03, 0.20),
+    "max_bars": (5, 60),
+    "atr_stop_mult": (1.5, 4.0),
 }
 
 
@@ -336,19 +339,26 @@ def _random_risk(rng: np.random.Generator) -> dict | None:
     """Bloque de riesgo aleatorio (o None). Combina stop-loss/take-profit o
     trailing, para que el GA pueda evolucionar gestión de riesgo, no solo señales."""
     roll = rng.random()
-    if roll < 0.4:
+    if roll < 0.35:
         return None  # sin gestión de riesgo
     risk: dict = {}
-    if roll < 0.7:  # stop-loss (+ a veces take-profit)
+    if roll < 0.6:  # stop-loss (+ a veces take-profit)
         lo, hi = RISK_RANGES["stop_loss_pct"]
         risk["stop_loss_pct"] = round(float(rng.uniform(lo, hi)), 3)
         if rng.random() < 0.6:
             lo, hi = RISK_RANGES["take_profit_pct"]
             risk["take_profit_pct"] = round(float(rng.uniform(lo, hi)), 3)
-    else:  # trailing-stop
+    elif roll < 0.8:  # trailing-stop
         lo, hi = RISK_RANGES["trailing_stop_pct"]
         risk["trailing_stop_pct"] = round(float(rng.uniform(lo, hi)), 3)
-    return risk
+    else:  # stop por volatilidad (múltiplos de ATR en la entrada)
+        lo, hi = RISK_RANGES["atr_stop_mult"]
+        risk["atr_stop_mult"] = round(float(rng.uniform(lo, hi)), 2)
+    # Salida por tiempo: componible con cualquiera de los stops (o sola).
+    if rng.random() < 0.3:
+        lo, hi = RISK_RANGES["max_bars"]
+        risk["max_bars"] = int(rng.integers(int(lo), int(hi) + 1))
+    return risk or None
 
 
 # Rangos del dimensionamiento de posición.
@@ -518,6 +528,8 @@ def spec_risk(spec: dict):
         stop_loss_pct=risk.get("stop_loss_pct"),
         take_profit_pct=risk.get("take_profit_pct"),
         trailing_stop_pct=risk.get("trailing_stop_pct"),
+        max_bars=int(risk["max_bars"]) if risk.get("max_bars") is not None else None,
+        atr_stop_mult=risk.get("atr_stop_mult"),
     )
 
 
@@ -697,6 +709,10 @@ def _describe_risk(risk: dict | None) -> str:
         parts.append(f"TP {round(risk['take_profit_pct'] * 100, 1)}%")
     if risk.get("trailing_stop_pct") is not None:
         parts.append(f"trailing {round(risk['trailing_stop_pct'] * 100, 1)}%")
+    if risk.get("atr_stop_mult") is not None:
+        parts.append(f"stop {risk['atr_stop_mult']}×ATR")
+    if risk.get("max_bars") is not None:
+        parts.append(f"máx {int(risk['max_bars'])} velas")
     return f" [{' · '.join(parts)}]" if parts else ""
 
 
@@ -784,7 +800,8 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
         for name, value in out["risk"].items():
             lo, hi = RISK_RANGES[name]
             span = (hi - lo) * 0.1
-            out["risk"][name] = round(float(min(hi, max(lo, value + rng.uniform(-span, span)))), 3)
+            nv = float(min(hi, max(lo, value + rng.uniform(-span, span))))
+            out["risk"][name] = int(round(nv)) if name == "max_bars" else round(nv, 3)
     # Perturbar el dimensionamiento de posición
     sizing = out.get("sizing")
     if sizing and sizing.get("mode") == "fraction":
