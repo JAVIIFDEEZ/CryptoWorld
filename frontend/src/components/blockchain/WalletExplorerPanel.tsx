@@ -14,6 +14,7 @@ import {
   blockchainService,
   type BalancePoint,
   type WalletChain,
+  type WalletDossier,
   type WalletOverview,
 } from '@/services/blockchainService'
 import { useWallet } from '@/hooks/useWallet'
@@ -35,6 +36,8 @@ export default function WalletExplorerPanel() {
   const [address, setAddress] = useState('')
   const [data, setData] = useState<WalletOverview | null>(null)
   const [history, setHistory] = useState<BalancePoint[]>([])
+  const [dossier, setDossier] = useState<WalletDossier | null>(null)
+  const [dossierLoading, setDossierLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -46,7 +49,7 @@ export default function WalletExplorerPanel() {
     const addr = (addrArg ?? address).trim()
     const ch = chainArg ?? chain
     if (!addr) return
-    setLoading(true); setError(null); setData(null); setHistory([])
+    setLoading(true); setError(null); setData(null); setHistory([]); setDossier(null)
     try {
       const r = await blockchainService.getWalletOverview(ch, addr)
       if (r.error) { setError(r.error); return }
@@ -55,6 +58,12 @@ export default function WalletExplorerPanel() {
       blockchainService.getWalletBalanceHistory(ch, addr)
         .then((h) => { if (!h.error) setHistory(h.history) })
         .catch(() => { /* sin historial */ })
+      // Dossier cruzado (contrapartes, comportamiento, histórico, multi-cadena).
+      setDossierLoading(true)
+      blockchainService.getWalletDossier(ch, addr)
+        .then((d) => { if (!d.error) setDossier(d) })
+        .catch(() => { /* sin dossier */ })
+        .finally(() => setDossierLoading(false))
     } catch (e: unknown) {
       const resp = (e as { response?: { data?: { error?: string } } })?.response
       setError(resp?.data?.error ?? 'No se pudo consultar la dirección.')
@@ -134,7 +143,7 @@ export default function WalletExplorerPanel() {
 
       {error && <div className="text-red-400 text-sm bg-red-900/20 border border-red-700/40 rounded-lg px-3 py-2">{error}</div>}
 
-      {data && <WalletResult data={data} history={history} fmtUsd={fmtUsd} />}
+      {data && <WalletResult data={data} history={history} fmtUsd={fmtUsd} dossier={dossier} dossierLoading={dossierLoading} />}
     </div>
   )
 }
@@ -169,7 +178,7 @@ function BalanceCurve({ history, symbol }: Readonly<{ history: BalancePoint[]; s
   )
 }
 
-function WalletResult({ data, history, fmtUsd }: Readonly<{ data: WalletOverview; history: BalancePoint[]; fmtUsd: (n: number | null | undefined) => string }>) {
+function WalletResult({ data, history, fmtUsd, dossier, dossierLoading }: Readonly<{ data: WalletOverview; history: BalancePoint[]; fmtUsd: (n: number | null | undefined) => string; dossier: WalletDossier | null; dossierLoading: boolean }>) {
   return (
     <div className="space-y-4">
       {/* Resumen */}
@@ -246,7 +255,98 @@ function WalletResult({ data, history, fmtUsd }: Readonly<{ data: WalletOverview
         </div>
       )}
 
+      {dossierLoading && (
+        <p className="text-[11px] text-slate-500 mb-3">Construyendo el dossier cruzado (contrapartes, histórico, multi-cadena)…</p>
+      )}
+      {dossier && <DossierSection dossier={dossier} />}
+
       <p className="text-[10px] text-slate-600">Datos on-chain en vivo desde Blockscout. No es asesoramiento financiero.</p>
+    </div>
+  )
+}
+
+function DossierSection({ dossier }: Readonly<{ dossier: WalletDossier }>) {
+  const b = dossier.behavior
+  const wh = dossier.whale_history
+  const reading = b.reading ?? ''
+  const readingTone = reading.startsWith('ACUMULA')
+    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+    : reading.startsWith('DISTRIBUYE')
+      ? 'bg-red-500/10 border-red-500/30 text-red-300'
+      : 'bg-slate-700/30 border-slate-600/50 text-slate-300'
+  return (
+    <div className="border border-indigo-500/30 rounded-xl p-4 mb-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <span>🕵️</span>
+        <h3 className="text-sm font-bold text-white">Dossier de la dirección</h3>
+        <span className="text-[10px] text-slate-500">información cruzada · Blockscout + histórico propio</span>
+        {dossier.partial && (
+          <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">parcial</span>
+        )}
+      </div>
+
+      {/* Lectura de comportamiento */}
+      {reading && (
+        <div className={`rounded-lg border px-3 py-2 text-xs ${readingTone}`}>
+          {reading}
+          {b.txs_analyzed != null && (
+            <span className="text-slate-500 ml-2">
+              · {b.txs_analyzed} txs analizadas · {b.exchange_interaction_pct ?? 0}% con exchanges
+              · {b.withdrawals_from_exchange ?? 0} retiradas / {b.deposits_to_exchange ?? 0} depósitos
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Contrapartes */}
+      {dossier.counterparties.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase text-slate-500 mb-2">Contrapartes principales (txs recientes)</p>
+          <div className="space-y-1">
+            {dossier.counterparties.map((c) => (
+              <div key={c.address} className="flex items-center gap-2 text-[11px]">
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${c.is_exchange ? 'bg-blue-500/15 text-blue-300' : 'bg-slate-700/60 text-slate-400'}`}>
+                  {c.is_exchange ? 'EXCHANGE' : 'WALLET'}
+                </span>
+                <span className="font-mono text-slate-300">{c.label ?? shorten(c.address)}</span>
+                <span className="text-slate-600">·</span>
+                <span className="text-slate-400">{c.txs} txs</span>
+                <span className="ml-auto font-mono text-emerald-400" title="Recibido de esta contraparte">↓{c.received_native.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                <span className="font-mono text-red-400" title="Enviado a esta contraparte">↑{c.sent_native.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cruce con el histórico propio + presencia multi-cadena */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3">
+          <p className="text-[10px] uppercase text-slate-500 mb-1">En nuestro radar de ballenas</p>
+          {wh.appearances > 0 ? (
+            <>
+              <p className="text-sm text-white font-mono">{wh.appearances} movimientos grandes · {fmtUsd(wh.total_usd)}</p>
+              <p className="text-[10px] text-slate-500">{wh.as_sender ?? 0} como origen · {wh.as_receiver ?? 0} como destino (histórico del escáner)</p>
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-500">Sin apariciones en los movimientos registrados por el escáner.</p>
+          )}
+        </div>
+        <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3">
+          <p className="text-[10px] uppercase text-slate-500 mb-1">Presencia en otras redes</p>
+          {dossier.multichain.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {dossier.multichain.map((m) => (
+                <span key={m.chain} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono">
+                  {m.chain}: {m.balance_native.toLocaleString(undefined, { maximumFractionDigits: 4 })} · {m.tx_count} txs
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500">Sin saldo ni actividad en las demás redes soportadas.</p>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

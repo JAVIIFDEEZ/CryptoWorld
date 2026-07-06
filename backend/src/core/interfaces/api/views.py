@@ -1153,6 +1153,36 @@ class WalletChainsView(APIView):
         return Response(GetSupportedChainsUseCase().execute(), status=status.HTTP_200_OK)
 
 
+class WalletDossierView(APIView):
+    """
+    GET /api/blockchain/wallet/dossier/?chain=ethereum&address=0x… — Dossier de
+    inteligencia cruzada de una dirección: perfil, contrapartes con etiquetado
+    de exchanges, lectura de comportamiento, apariciones en el histórico propio
+    del escáner de ballenas y presencia multi-cadena.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # el dossier hace varias llamadas externas: cachear 5 min
+
+    def get(self, request):
+        from core.application.use_cases.wallet_dossier import WalletDossierUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        if not address:
+            return Response({"error": "Falta el parámetro address."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"wallet_dossier:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = WalletDossierUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class WalletOverviewView(APIView):
     """
     GET /api/blockchain/wallet/?chain=ethereum&address=0x... — Retrato on-chain de

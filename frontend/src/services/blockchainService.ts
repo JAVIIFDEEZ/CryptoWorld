@@ -102,6 +102,51 @@ export interface WalletTransaction {
   timestamp: string | null
 }
 
+export interface DossierCounterparty {
+  address: string
+  label: string | null
+  is_exchange: boolean
+  txs: number
+  sent_native: number
+  received_native: number
+}
+
+export interface WalletDossier {
+  chain: string
+  address: string
+  profile: {
+    balance_native?: number
+    balance_usd?: number | null
+    tx_count?: number
+    is_contract?: boolean
+    public_label?: string | null
+    is_exchange?: boolean
+  }
+  counterparties: DossierCounterparty[]
+  behavior: {
+    txs_analyzed?: number
+    sent_native?: number
+    received_native?: number
+    net_native?: number
+    exchange_interaction_pct?: number
+    deposits_to_exchange?: number
+    withdrawals_from_exchange?: number
+    reading?: string
+  }
+  whale_history: {
+    appearances: number
+    as_sender?: number
+    as_receiver?: number
+    total_usd?: number
+    recent?: { chain: string; symbol: string; value_usd: number; direction: string; moved_at: string | null }[]
+    note?: string
+  }
+  multichain: { chain: string; balance_native: number; tx_count: number }[]
+  partial: boolean
+  note: string
+  error?: string
+}
+
 export interface WalletOverview {
   chain: string
   chain_name: string
@@ -334,6 +379,14 @@ export const blockchainService = {
   },
 
   /** Retrato on-chain de una dirección: saldo, tokens valorados y transacciones. */
+  /** Dossier cruzado de una dirección (perfil + contrapartes + histórico + multi-cadena). */
+  getWalletDossier: async (chain: string, address: string): Promise<WalletDossier> => {
+    const { data } = await apiClient.get<WalletDossier>('/blockchain/wallet/dossier/', {
+      params: { chain, address }, timeout: 45_000,
+    })
+    return data
+  },
+
   getWalletOverview: async (chain: string, address: string): Promise<WalletOverview> => {
     const params = new URLSearchParams({ chain, address })
     const { data } = await apiClient.get(`/blockchain/wallet/?${params}`)
