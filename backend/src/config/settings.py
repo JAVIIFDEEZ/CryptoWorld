@@ -363,6 +363,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.warm_ml_predictions",
         "schedule": 600.0,   # segundos — la caché de predicción dura 15 min
     },
+    # Mantener al día el almacén histórico OHLCV propio (cada 30 min)
+    "sync-ohlcv-history": {
+        "task": "core.tasks.sync_ohlcv_history",
+        "schedule": 1800.0,  # segundos — solo persiste velas cerradas
+    },
     # Ejecutar señales de las carteras de paper trading activas (cada 15 min)
     "evaluate-paper-trading": {
         "task": "core.tasks.evaluate_paper_trading",

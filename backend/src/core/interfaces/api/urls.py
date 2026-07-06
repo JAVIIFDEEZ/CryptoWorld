@@ -215,6 +215,8 @@ urlpatterns = [
     path("notifications/seen/", views.NotificationsSeenView.as_view(), name="notifications-seen"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
     path("news/globe/", views.NewsGlobeView.as_view(), name="news-globe"),
+    path("market/history/", views.OhlcvCoverageView.as_view(), name="market-history"),
+    path("market/history/backfill/", views.OhlcvBackfillView.as_view(), name="market-history-backfill"),
 
     # ── Admin ───────────────────────────────────────────────────────
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),

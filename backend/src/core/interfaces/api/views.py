@@ -19,7 +19,7 @@ Principio aplicado: Single Responsibility + Clean Architecture.
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
@@ -1426,6 +1426,43 @@ class NotificationsSeenView(APIView):
             MarkNotificationsSeenUseCase().execute(owner=request.user),
             status=status.HTTP_200_OK,
         )
+
+
+class OhlcvCoverageView(APIView):
+    """
+    GET /api/market/history/?symbol=BTC&interval=1d — Cobertura del almacén
+    histórico OHLCV propio: velas almacenadas, primera/última y huecos.
+    POST /api/market/history/backfill/ (solo staff) dispara la retro-carga.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.ohlcv_store import coverage
+
+        symbol = (request.query_params.get("symbol") or "BTC").strip().upper()
+        interval = (request.query_params.get("interval") or "1d").strip()
+        return Response(coverage(symbol, interval), status=status.HTTP_200_OK)
+
+
+class OhlcvBackfillView(APIView):
+    """POST /api/market/history/backfill/ — Retro-carga del histórico (staff)."""
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        from core.tasks import backfill_ohlcv, dispatch_task
+
+        symbol = (request.data.get("symbol") or "").strip().upper()
+        interval = (request.data.get("interval") or "1d").strip()
+        try:
+            target = min(int(request.data.get("target_candles", 3000)), 20000)
+        except (TypeError, ValueError):
+            target = 3000
+        if not symbol:
+            return Response({"error": "Falta symbol."}, status=status.HTTP_400_BAD_REQUEST)
+        dispatch_task(backfill_ohlcv, symbol=symbol, interval=interval, target_candles=target)
+        return Response({"status": "dispatched", "symbol": symbol,
+                         "interval": interval, "target_candles": target},
+                        status=status.HTTP_202_ACCEPTED)
 
 
 class NewsGlobeView(APIView):

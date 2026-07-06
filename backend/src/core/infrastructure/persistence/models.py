@@ -1065,3 +1065,43 @@ class ExchangeConnection(models.Model):
     def __str__(self) -> str:
         mode = "testnet" if self.is_testnet else "REAL"
         return f"{self.exchange} ({mode}) · {self.owner_id}"
+
+
+class OhlcvCandle(models.Model):
+    """
+    Vela OHLCV persistida — el almacén histórico PROPIO del sistema.
+
+    Un actor institucional no re-pide 500 velas a un exchange en cada análisis:
+    acumula un histórico inmutable, verificable y reproducible. Cada análisis /
+    backtest / generación puede entonces cubrir ciclos completos de mercado y
+    citar exactamente sobre qué datos se validó. Solo se persisten velas
+    CERRADAS (la vela en curso cambia hasta que cierra) y la restricción de
+    unicidad hace idempotente cualquier re-ingesta.
+    """
+
+    symbol = models.CharField(max_length=20, db_index=True)      # BTC, ETH…
+    interval = models.CharField(max_length=8)                    # 1h, 4h, 1d…
+    open_time = models.BigIntegerField()                         # epoch ms UTC (apertura)
+    open = models.FloatField()
+    high = models.FloatField()
+    low = models.FloatField()
+    close = models.FloatField()
+    volume = models.FloatField()
+    source = models.CharField(max_length=20, default="binance")  # procedencia del dato
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ohlcv_candles"
+        verbose_name = "Vela OHLCV"
+        verbose_name_plural = "Velas OHLCV"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "interval", "open_time"], name="uq_ohlcv_candle",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["symbol", "interval", "-open_time"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.symbol} {self.interval} @ {self.open_time}"
