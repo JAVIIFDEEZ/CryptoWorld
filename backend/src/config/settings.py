@@ -378,6 +378,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.evaluate_confluence",
         "schedule": 1800.0,
     },
+    # OMS: reconciliar posición esperada ↔ balance real del exchange (cada hora)
+    "reconcile-live-positions": {
+        "task": "core.tasks.reconcile_live_positions",
+        "schedule": 3600.0,
+    },
     # Ejecutar señales de las carteras de paper trading activas (cada 15 min)
     "evaluate-paper-trading": {
         "task": "core.tasks.evaluate_paper_trading",

@@ -2343,6 +2343,43 @@ class BestStrategiesView(APIView):
         )
 
 
+class LiveRiskPolicyView(APIView):
+    """
+    GET/PUT /api/trading/risk-policy/ — Política de riesgo global de la
+    ejecución real (OMS): límite de pérdida diaria en USD. Al alcanzarlo se
+    bloquean nuevas COMPRAS en real hasta el día siguiente (las ventas nunca
+    se bloquean). Incluye el PnL realizado hoy para ver el margen restante.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.paper_trading import daily_live_realized_pnl
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        policy = LiveRiskPolicy.objects.filter(owner=request.user).first()
+        return Response({
+            "daily_loss_limit_usd": policy.daily_loss_limit_usd if policy else None,
+            "realized_today_usd": daily_live_realized_pnl(request.user),
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        raw = request.data.get("daily_loss_limit_usd", None)
+        limit = None
+        if raw not in (None, "", 0, "0"):
+            try:
+                limit = abs(float(raw))
+            except (TypeError, ValueError):
+                return Response({"error": "daily_loss_limit_usd debe ser numérico o null."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            limit = min(max(limit, 10.0), 100_000.0)
+        LiveRiskPolicy.objects.update_or_create(
+            owner=request.user, defaults={"daily_loss_limit_usd": limit},
+        )
+        return Response({"daily_loss_limit_usd": limit}, status=status.HTTP_200_OK)
+
+
 class TradingConnectionsView(APIView):
     """
     GET  /api/trading/connections/ — Conexiones de exchange del usuario (sin

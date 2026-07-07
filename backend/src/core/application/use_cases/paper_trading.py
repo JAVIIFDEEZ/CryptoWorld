@@ -102,6 +102,64 @@ def _apply_signal(account, signal: str, price: float) -> "object | None":
     return trade
 
 
+def _pair_realized_events(records) -> list[dict]:
+    """Recorre los registros ENVIADOS de una cuenta (ascendentes) emparejando
+    compras acumuladas con cada venta (posición única) y devuelve los eventos
+    realizados: [{"pnl": float, "created_at": datetime}] — uno por venta."""
+    events = []
+    pos_amount = pos_cost = 0.0
+    for r in records:
+        px = r.fill_price if r.fill_price else r.ref_price
+        if r.side == "buy":
+            pos_amount += r.amount
+            pos_cost += r.amount * px
+        elif r.side == "sell" and pos_amount > 0:
+            events.append({"pnl": r.amount * px - pos_cost, "created_at": r.created_at})
+            pos_amount = pos_cost = 0.0
+    return events
+
+
+def daily_live_realized_pnl(owner) -> float:
+    """PnL realizado HOY (UTC) en ejecución real, sumando todas las promociones
+    del usuario. Es la métrica del límite de pérdida diaria del OMS: las ventas
+    de hoy se emparejan con el coste de sus compras (aunque fueran de días
+    anteriores), que es como un libro de órdenes real mide su día."""
+    from django.utils import timezone
+    from core.infrastructure.persistence.models import LiveOrderRecord
+
+    today = timezone.now().date()
+    total = 0.0
+    # order_by() vacío: sin él, el ordering por defecto del modelo entra en el
+    # DISTINCT y devuelve el mismo account_id repetido (gotcha clásico de Django).
+    account_ids = (LiveOrderRecord.objects.filter(account__owner=owner, status="sent")
+                   .order_by().values_list("account_id", flat=True).distinct())
+    for account_id in account_ids:
+        records = list(LiveOrderRecord.objects
+                       .filter(account_id=account_id, status="sent")
+                       .order_by("created_at"))
+        for ev in _pair_realized_events(records):
+            if ev["created_at"].date() == today:
+                total += ev["pnl"]
+    return round(total, 2)
+
+
+def _daily_loss_blocked(owner) -> "float | None":
+    """Si el usuario tiene límite diario y ya lo ha alcanzado, devuelve la
+    pérdida de hoy (para el mensaje); si no, None."""
+    try:
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+        policy = LiveRiskPolicy.objects.filter(owner_id=owner if isinstance(owner, int) else owner.id).first()
+        if policy is None or not policy.daily_loss_limit_usd:
+            return None
+        pnl_today = daily_live_realized_pnl(owner)
+        if pnl_today <= -abs(policy.daily_loss_limit_usd):
+            return pnl_today
+        return None
+    except Exception:  # noqa: BLE001 — el control de riesgo nunca rompe el paper
+        logger.exception("daily_loss check falló")
+        return None
+
+
 def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
     """Espeja una operación de paper en el exchange REAL del usuario, con tope.
 
@@ -152,6 +210,20 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
         notional_usd=round(base_amount * float(price), 2),
         is_testnet=connection.is_testnet,
     )
+
+    # OMS: límite de pérdida diaria GLOBAL del usuario. Bloquea nuevas COMPRAS
+    # (abrir riesgo) sin desactivar la promoción — mañana se reanuda sola. Las
+    # ventas jamás se bloquean: reducir exposición siempre está permitido.
+    if side == "buy":
+        loss_today = _daily_loss_blocked(account.owner)
+        if loss_today is not None:
+            record.status = "blocked"
+            record.error = (f"Límite de pérdida diaria alcanzado "
+                            f"({loss_today:+.2f} USD hoy): compra no enviada.")[:300]
+            record.save()
+            broadcast_notification(account.owner_id, {"kind": "live"})
+            logger.warning("OMS: compra bloqueada por límite diario (cuenta #%s)", account.id)
+            return
     try:
         order = factory(connection).create_order(symbol, side, "market", base_amount)
         if side == "buy":
@@ -278,6 +350,14 @@ class LiveOrdersUseCase:
                 realized += r.amount * px - pos_cost
                 pos_amount = pos_cost = 0.0
 
+        def _slippage_bps(r) -> "float | None":
+            """Deslizamiento REAL medido: ejecución vs referencia, firmado de
+            forma que positivo = peor que la referencia (coste), en ambos lados."""
+            if not r.fill_price or not r.ref_price:
+                return None
+            raw = (r.fill_price - r.ref_price) / r.ref_price * 10_000.0
+            return round(raw if r.side == "buy" else -raw, 2)
+
         items = [
             {
                 "id": r.id,
@@ -286,6 +366,7 @@ class LiveOrdersUseCase:
                 "amount": round(r.amount, 8),
                 "ref_price": round(r.ref_price, 6),
                 "fill_price": round(r.fill_price, 6) if r.fill_price else None,
+                "slippage_bps": _slippage_bps(r),
                 "notional_usd": r.notional_usd,
                 "is_testnet": r.is_testnet,
                 "status": r.status,
@@ -295,11 +376,21 @@ class LiveOrdersUseCase:
             }
             for r in list(reversed(records))[:limit]
         ]
+        # Slippage real agregado vs el modelado en el backtest: si el real
+        # supera de forma sostenida al modelo, los backtests son optimistas.
+        measured = [s for s in (_slippage_bps(r) for r in sent) if s is not None]
+        slippage = {
+            "n_filled": len(measured),
+            "avg_slippage_bps": round(sum(measured) / len(measured), 2) if measured else None,
+            "modeled_slippage_bps": 5.0,
+        }
         return {
             "account_id": acc.id,
             "orders": items,
             "orders_sent": len(sent),
             "orders_failed": len(failed),
+            "slippage": slippage,
+            "blocked_orders": sum(1 for r in records if r.status == "blocked"),
             "live_realized_pnl_usd": round(realized, 2),
             "pnl_is_estimate": est_used,
             "paper_realized_pnl_usd": round(acc.realized_pnl, 2),
@@ -398,6 +489,8 @@ def _serialize_account(a) -> dict:
         "live_base_position": round(a.live_base_position, 8),
         "live_error": a.live_error or None,
         "live_disabled_at": a.live_disabled_at.isoformat() if a.live_disabled_at else None,
+        "live_reconciled_at": a.live_reconciled_at.isoformat() if a.live_reconciled_at else None,
+        "live_discrepancy": round(a.live_discrepancy, 8) if a.live_discrepancy is not None else None,
         "trades_count": a.trades_count,
         "wins": a.wins,
         "win_rate": win_rate,
@@ -405,3 +498,62 @@ def _serialize_account(a) -> dict:
         "last_eval_at": a.last_eval_at.isoformat() if a.last_eval_at else None,
         "started_at": a.started_at.isoformat(),
     }
+
+
+class ReconcileLivePositionsUseCase:
+    """OMS: reconciliación periódica posición esperada ↔ balance real.
+
+    Para cada promoción activa consulta el balance de la moneda base en el
+    exchange y lo compara con live_base_position. Una discrepancia mayor que
+    la tolerancia (restos de redondeo del exchange aparte) significa que el
+    estado interno y la realidad han divergido — órdenes manuales del usuario,
+    fills parciales, comisiones en especie — y eso se registra y se notifica,
+    porque operar sobre un estado falso es como los sistemas reales pierden
+    dinero. Pensada para Celery beat."""
+
+    # Tolerancia: 1% de la posición o polvo absoluto, lo que sea mayor.
+    _REL_TOL = 0.01
+    _ABS_TOL = 1e-6
+
+    def __init__(self, broker_factory=None) -> None:
+        self._broker_factory = broker_factory
+
+    def execute(self) -> dict:
+        from django.utils import timezone
+        from core.application.use_cases.broker_trading import _broker_for
+        from core.infrastructure.persistence.models import PaperTradingAccount
+        from core.interfaces.ws.broadcast import broadcast_notification
+
+        factory = self._broker_factory or _broker_for
+        accounts = list(
+            PaperTradingAccount.objects.select_related("live_connection")
+            .filter(is_active=True, live_enabled=True, live_connection__isnull=False)
+        )
+        checked = mismatches = 0
+        for acc in accounts:
+            try:
+                balances = factory(acc.live_connection).fetch_balance()
+                base = acc.asset_symbol.upper()
+                actual = 0.0
+                for b in balances if isinstance(balances, list) else []:
+                    if (b.get("asset") or "").upper() == base:
+                        actual = float(b.get("free") or 0.0) + float(b.get("used") or 0.0)
+                        break
+                expected = float(acc.live_base_position)
+                diff = actual - expected
+                tolerance = max(self._ABS_TOL, abs(expected) * self._REL_TOL)
+                acc.live_reconciled_at = timezone.now()
+                acc.live_discrepancy = round(diff, 8) if abs(diff) > tolerance else 0.0
+                acc.save(update_fields=["live_reconciled_at", "live_discrepancy", "updated_at"])
+                checked += 1
+                if abs(diff) > tolerance:
+                    mismatches += 1
+                    broadcast_notification(acc.owner_id, {"kind": "live"})
+                    logger.warning(
+                        "OMS reconciliación #%s: esperado %.8f, real %.8f (Δ %.8f)",
+                        acc.id, expected, actual, diff,
+                    )
+            except Exception as exc:  # noqa: BLE001 — una cuenta caída no frena el resto
+                logger.warning("OMS reconciliación #%s falló: %s", acc.id, exc)
+        logger.info("reconcile_live: %d cuentas, %d discrepancias", checked, mismatches)
+        return {"checked": checked, "mismatches": mismatches}

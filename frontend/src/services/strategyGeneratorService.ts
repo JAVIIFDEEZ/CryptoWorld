@@ -293,6 +293,8 @@ export interface PaperAccount {
   live_cap_usd: number
   live_base_position: number
   live_error: string | null
+  live_reconciled_at?: string | null
+  live_discrepancy?: number | null
   trades_count: number
   wins: number
   win_rate: number | null
@@ -323,6 +325,8 @@ export interface PaperTrade {
 
 export interface LiveOrderAudit {
   account_id: number
+  slippage?: { n_filled: number; avg_slippage_bps: number | null; modeled_slippage_bps: number }
+  blocked_orders?: number
   orders: {
     id: number
     side: 'buy' | 'sell'
@@ -330,9 +334,10 @@ export interface LiveOrderAudit {
     amount: number
     ref_price: number
     fill_price: number | null
+    slippage_bps: number | null
     notional_usd: number
     is_testnet: boolean
-    status: 'sent' | 'failed'
+    status: 'sent' | 'failed' | 'blocked'
     error: string | null
     broker_order_id: string | null
     created_at: string

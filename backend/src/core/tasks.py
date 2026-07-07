@@ -737,3 +737,21 @@ def evaluate_confluence(self) -> dict:
     result = EvaluateConfluenceUseCase().execute()
     logger.info("evaluate_confluence: %s", result)
     return result
+
+
+@shared_task(
+    name="core.tasks.reconcile_live_positions",
+    bind=True,
+    max_retries=0,
+)
+def reconcile_live_positions(self) -> dict:
+    """
+    OMS: reconcilia la posición esperada de cada promoción activa con el
+    balance real del exchange; las discrepancias se registran y notifican.
+    Beat: cada hora.
+    """
+    from core.application.use_cases.paper_trading import ReconcileLivePositionsUseCase
+
+    result = ReconcileLivePositionsUseCase().execute()
+    logger.info("reconcile_live_positions: %s", result)
+    return result

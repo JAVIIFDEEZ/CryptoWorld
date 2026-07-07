@@ -706,6 +706,10 @@ class PaperTradingAccount(models.Model):
     # Sello del último kill-switch: alimenta el centro de notificaciones y se
     # limpia al reactivar la promoción.
     live_disabled_at = models.DateTimeField(null=True, blank=True)
+    # Reconciliación OMS: última comparación posición esperada ↔ balance real
+    # del exchange y discrepancia detectada (unidades base; 0 = cuadra).
+    live_reconciled_at = models.DateTimeField(null=True, blank=True)
+    live_discrepancy = models.FloatField(null=True, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -953,7 +957,7 @@ class LiveOrderRecord(models.Model):
     qué hizo exactamente la promoción en cada señal.
     """
 
-    STATUS_CHOICES = [("sent", "Enviada"), ("failed", "Fallida")]
+    STATUS_CHOICES = [("sent", "Enviada"), ("failed", "Fallida"), ("blocked", "Bloqueada")]
 
     account = models.ForeignKey(
         "PaperTradingAccount", on_delete=models.CASCADE, related_name="live_orders",
@@ -1169,3 +1173,29 @@ class ConfluenceSignalEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.asset_symbol}: {self.previous_verdict or '—'} → {self.verdict}"
+
+
+class LiveRiskPolicy(models.Model):
+    """
+    Política de riesgo GLOBAL de la ejecución real de un usuario (OMS).
+
+    daily_loss_limit_usd: si la pérdida realizada HOY (sumando todas sus
+    promociones paper→real) alcanza este umbral, el OMS bloquea nuevas COMPRAS
+    en real hasta el día siguiente. Las ventas nunca se bloquean: reducir
+    exposición siempre está permitido. Null = sin límite configurado.
+    """
+
+    owner = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="live_risk_policy",
+    )
+    daily_loss_limit_usd = models.FloatField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "live_risk_policies"
+        verbose_name = "Política de riesgo en vivo"
+        verbose_name_plural = "Políticas de riesgo en vivo"
+
+    def __str__(self) -> str:
+        limit = f"{self.daily_loss_limit_usd} USD/día" if self.daily_loss_limit_usd else "sin límite"
+        return f"RiskPolicy({self.owner_id}, {limit})"

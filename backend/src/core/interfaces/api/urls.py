@@ -206,6 +206,7 @@ urlpatterns = [
     path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
     path("blockchain/watchlist/<int:watch_id>/", views.AddressWatchlistItemView.as_view(), name="blockchain-watchlist-item"),
     # ── Trading real multi-exchange (ccxt, manual, testnet por defecto) ──
+    path("trading/risk-policy/", views.LiveRiskPolicyView.as_view(), name="trading-risk-policy"),
     path("trading/connections/", views.TradingConnectionsView.as_view(), name="trading-connections"),
     path("trading/connections/<int:connection_id>/", views.TradingConnectionDetailView.as_view(), name="trading-connection-detail"),
     path("trading/connections/<int:connection_id>/balance/", views.TradingBalanceView.as_view(), name="trading-balance"),
