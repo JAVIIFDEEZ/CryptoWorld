@@ -231,6 +231,7 @@ urlpatterns = [
     path("admin/market/sync/", admin_views.AdminMarketSyncView.as_view(), name="admin-market-sync"),
 
     # ── Portfolio ────────────────────────────────────────────────────
+    path("portfolio/risk/", views.PortfolioRiskView.as_view(), name="portfolio-risk"),
     path("portfolio/", views.PortfolioView.as_view(), name="portfolio-summary"),
     path("portfolio/trades/", views.TradeListView.as_view(), name="portfolio-trades"),
     path("portfolio/trades/<int:trade_id>/", views.TradeDetailView.as_view(), name="portfolio-trade-detail"),

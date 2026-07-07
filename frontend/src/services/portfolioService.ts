@@ -131,7 +131,44 @@ export interface AddToPositionPayload {
   notes?: string
 }
 
+export interface PortfolioRiskExposure {
+  symbol: string
+  net_usd: number
+  by_book: { manual: number; paper: number; live: number }
+  in_var: boolean
+}
+
+export interface PortfolioRisk {
+  status: 'OK' | 'EMPTY'
+  exposures: PortfolioRiskExposure[]
+  gross_usd: number
+  net_usd: number
+  long_usd?: number
+  short_usd?: number
+  top_concentration_pct?: number
+  var?: {
+    status: 'OK' | 'INSUFICIENTE'
+    days: number
+    var95_usd?: number
+    cvar95_usd?: number
+    var99_usd?: number
+    cvar99_usd?: number
+    worst_day_usd?: number
+    note?: string
+  }
+  var_symbols_excluded?: string[]
+  stress?: { window_days: number; impact_usd: number; shocks_pct: Record<string, number>; symbols_covered: number; symbols_total: number }[]
+  history_days?: number
+  note?: string
+}
+
 export const portfolioService = {
+  /** Riesgo agregado del libro completo: exposición firmada, VaR/CVaR y stress. */
+  getRisk: async (): Promise<PortfolioRisk> => {
+    const { data } = await apiClient.get<PortfolioRisk>('/portfolio/risk/')
+    return data
+  },
+
   /** Obtener el precio actual de un activo por símbolo (null si no está en el catálogo) */
   getAssetPrice: async (symbol: string): Promise<number | null> => {
     try {

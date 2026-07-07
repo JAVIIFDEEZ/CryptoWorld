@@ -2583,6 +2583,28 @@ class AvailableStrategiesView(APIView):
 
 # ── Portfolio Views ────────────────────────────────────────────────
 
+class PortfolioRiskView(APIView):
+    """
+    GET /api/portfolio/risk/ — Riesgo agregado del libro completo del usuario:
+    exposición firmada por activo (posiciones manuales + paper + real), VaR/CVaR
+    1 día por simulación histórica y stress testing con los peores movimientos
+    realmente observados. Datos sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.portfolio_risk import PortfolioRiskUseCase
+
+        cache_key = f"portfolio_risk:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = PortfolioRiskUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class PortfolioView(APIView):
     """
     GET  /api/portfolio/  — Resumen del portfolio con PnL calculado.

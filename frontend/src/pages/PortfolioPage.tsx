@@ -23,6 +23,7 @@ import {
   type AddToPositionPayload,
 } from '../services/portfolioService'
 import PortfolioInsights from '@/components/portfolio/PortfolioInsights'
+import RiskPanel from '@/components/portfolio/RiskPanel'
 import EmptyState from '../components/ui/EmptyState'
 import AnimatedNumber from '../components/ui/AnimatedNumber'
 import Skeleton from '../components/ui/Skeleton'
@@ -832,6 +833,8 @@ export default function PortfolioPage() {
 
         {!loading && !error && positionSummary && (
           <>
+            {/* Riesgo agregado del libro completo (manual + paper + real) */}
+            <RiskPanel />
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-slate-800 rounded-xl p-4">
