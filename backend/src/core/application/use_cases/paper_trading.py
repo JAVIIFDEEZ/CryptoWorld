@@ -160,6 +160,39 @@ def _daily_loss_blocked(owner) -> "float | None":
         return None
 
 
+def _concentration_blocked(owner, symbol: str, add_usd: float) -> "str | None":
+    """Si el usuario fija un límite de concentración y esta compra dejaría al
+    activo por encima de ese % del libro completo (post-trade), devuelve el
+    mensaje de bloqueo; si no, None. Reutiliza la exposición agregada del
+    módulo de riesgo (los tres libros: manual, paper y real)."""
+    try:
+        from core.application.use_cases.portfolio_risk import PortfolioRiskUseCase
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        policy = LiveRiskPolicy.objects.filter(
+            owner_id=owner if isinstance(owner, int) else owner.id).first()
+        if policy is None or not policy.max_concentration_pct:
+            return None
+        exposures = PortfolioRiskUseCase._aggregate_exposures(owner)
+        gross = sum(abs(e["net_usd"]) for e in exposures.values())
+        cur_symbol = exposures.get(symbol.upper(), {}).get("net_usd", 0.0)
+        # Libro post-trade: el resto igual + este activo con su nueva exposición.
+        gross_others = gross - abs(cur_symbol)
+        projected_symbol = abs(cur_symbol + add_usd)
+        projected_gross = gross_others + projected_symbol
+        if projected_gross <= 0:
+            return None
+        pct = projected_symbol / projected_gross * 100.0
+        if pct > policy.max_concentration_pct + 1e-9:
+            return (f"Límite de concentración superado: {symbol.upper()} quedaría al "
+                    f"{pct:.0f}% del libro (máx. {policy.max_concentration_pct:.0f}%): "
+                    "compra no enviada.")
+        return None
+    except Exception:  # noqa: BLE001 — el control de riesgo nunca rompe el paper
+        logger.exception("concentration check falló")
+        return None
+
+
 def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
     """Espeja una operación de paper en el exchange REAL del usuario, con tope.
 
@@ -216,13 +249,20 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
     # ventas jamás se bloquean: reducir exposición siempre está permitido.
     if side == "buy":
         loss_today = _daily_loss_blocked(account.owner)
+        conc_msg = _concentration_blocked(
+            account.owner, account.asset_symbol, base_amount * float(price))
+        block_reason = None
         if loss_today is not None:
+            block_reason = (f"Límite de pérdida diaria alcanzado "
+                            f"({loss_today:+.2f} USD hoy): compra no enviada.")
+        elif conc_msg is not None:
+            block_reason = conc_msg
+        if block_reason is not None:
             record.status = "blocked"
-            record.error = (f"Límite de pérdida diaria alcanzado "
-                            f"({loss_today:+.2f} USD hoy): compra no enviada.")[:300]
+            record.error = block_reason[:300]
             record.save()
             broadcast_notification(account.owner_id, {"kind": "live"})
-            logger.warning("OMS: compra bloqueada por límite diario (cuenta #%s)", account.id)
+            logger.warning("OMS: compra bloqueada (cuenta #%s): %s", account.id, block_reason)
             return
     try:
         order = factory(connection).create_order(symbol, side, "market", base_amount)

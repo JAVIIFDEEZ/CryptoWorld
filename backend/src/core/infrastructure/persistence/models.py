@@ -1179,6 +1179,9 @@ class LiveRiskPolicy(models.Model):
     """
     Política de riesgo GLOBAL de la ejecución real de un usuario (OMS).
 
+    Dos controles: límite de pérdida diaria y límite de concentración por
+    activo. Ambos bloquean COMPRAS en real (abrir riesgo), nunca ventas.
+
     daily_loss_limit_usd: si la pérdida realizada HOY (sumando todas sus
     promociones paper→real) alcanza este umbral, el OMS bloquea nuevas COMPRAS
     en real hasta el día siguiente. Las ventas nunca se bloquean: reducir
@@ -1189,6 +1192,10 @@ class LiveRiskPolicy(models.Model):
         User, on_delete=models.CASCADE, related_name="live_risk_policy",
     )
     daily_loss_limit_usd = models.FloatField(null=True, blank=True)
+    # Máximo % del libro completo (exposición bruta) que puede ocupar un solo
+    # activo. Si una compra en real lo superaría, se bloquea (nunca las ventas).
+    # Null = sin límite de concentración.
+    max_concentration_pct = models.FloatField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

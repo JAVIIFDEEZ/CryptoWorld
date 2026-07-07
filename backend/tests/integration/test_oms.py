@@ -177,3 +177,100 @@ class TestRiskPolicyApi:
         off = authenticated_client.put("/api/trading/risk-policy/",
                                        {"daily_loss_limit_usd": None}, format="json")
         assert off.status_code == 200 and off.data["daily_loss_limit_usd"] is None
+
+
+class TestConcentrationLimit:
+    """Límite de concentración por activo: bloquea compras que dejarían un
+    activo por encima del % del libro; nunca bloquea ventas."""
+
+    def _paper_only(self, acc, units, price):
+        """Exposición SOLO paper (sin ejecución real) de units a `price`."""
+        acc.units = units
+        acc.last_price = price
+        acc.live_enabled = False
+        acc.save(update_fields=["units", "last_price", "live_enabled"])
+
+    def _live_position(self, acc, units, price):
+        """Posición real ya abierta (units a `price`) con la promoción activa."""
+        acc.units = units
+        acc.last_price = price
+        acc.live_base_position = units
+        acc.save(update_fields=["units", "last_price", "live_base_position"])
+
+    @pytest.mark.integration
+    def test_buy_blocked_when_it_would_exceed_concentration(self, db, test_user):
+        from core.application.use_cases.paper_trading import _apply_signal, _mirror_live
+        from core.infrastructure.persistence.models import LiveOrderRecord, LiveRiskPolicy
+
+        # Libro previo: ETH con 500 USD de exposición (solo paper).
+        eth, _ = _account(test_user, symbol="ETH", cap=100000.0)
+        self._paper_only(eth, units=0.25, price=2000.0)     # 500 USD
+
+        # BTC vacío; una compra de 100 USD dejaría BTC al 100/(500+100)=16.7%.
+        btc, _ = _account(test_user, symbol="BTC", cap=100000.0)
+        btc.cash = 100.0
+        btc.save(update_fields=["cash"])
+        LiveRiskPolicy.objects.create(owner=test_user, max_concentration_pct=15.0)
+
+        sent = []
+        class _Broker:
+            def create_order(self, *a, **kw):
+                sent.append(1); return {"id": "1", "average": 100000.0}
+
+        trade = _apply_signal(btc, "BUY", price=100000.0)      # nocional ≈ 100 USD
+        _mirror_live(btc, trade, 100000.0, broker_factory=lambda c: _Broker())
+        assert sent == []                                      # bloqueada
+        blocked = LiveOrderRecord.objects.filter(account=btc, status="blocked").first()
+        assert blocked is not None and "concentración" in blocked.error.lower()
+        assert btc.live_enabled is True                        # no es kill-switch
+
+    @pytest.mark.integration
+    def test_buy_allowed_under_limit(self, db, test_user):
+        from core.application.use_cases.paper_trading import _apply_signal, _mirror_live
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        eth, _ = _account(test_user, symbol="ETH", cap=100000.0)
+        self._paper_only(eth, units=0.25, price=2000.0)     # 500 USD
+        btc, _ = _account(test_user, symbol="BTC", cap=100000.0)
+        btc.cash = 100.0
+        btc.save(update_fields=["cash"])
+        LiveRiskPolicy.objects.create(owner=test_user, max_concentration_pct=25.0)  # 16.7% < 25%
+
+        sent = []
+        class _Broker:
+            def create_order(self, *a, **kw):
+                sent.append("buy"); return {"id": "1", "average": 100000.0}
+        trade = _apply_signal(btc, "BUY", price=100000.0)
+        _mirror_live(btc, trade, 100000.0, broker_factory=lambda c: _Broker())
+        assert sent == ["buy"]
+
+    @pytest.mark.integration
+    def test_concentration_never_blocks_sells(self, db, test_user):
+        from core.application.use_cases.paper_trading import _apply_signal, _mirror_live
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        # Un solo activo = 100% del libro, límite estricto: la VENTA debe pasar.
+        acc, _ = _account(test_user, symbol="BTC", cap=100000.0)
+        self._live_position(acc, units=0.01, price=100000.0)   # 1000 USD, 100% del libro
+        LiveRiskPolicy.objects.create(owner=test_user, max_concentration_pct=10.0)
+
+        sent = []
+        class _Broker:
+            def create_order(self, symbol, side, otype, amount, price=None):
+                sent.append(side); return {"id": "1", "average": 100000.0}
+        trade = _apply_signal(acc, "SELL", price=100000.0)
+        _mirror_live(acc, trade, 100000.0, broker_factory=lambda c: _Broker())
+        assert sent == ["sell"]
+
+    @pytest.mark.integration
+    def test_api_roundtrip_concentration(self, authenticated_client):
+        put = authenticated_client.put("/api/trading/risk-policy/",
+                                       {"max_concentration_pct": 3}, format="json")
+        assert put.status_code == 200 and put.data["max_concentration_pct"] == 5.0  # clamp mín
+        # Actualizar solo el otro campo NO borra la concentración
+        put2 = authenticated_client.put("/api/trading/risk-policy/",
+                                        {"daily_loss_limit_usd": 200}, format="json")
+        assert put2.data["max_concentration_pct"] == 5.0
+        assert put2.data["daily_loss_limit_usd"] == 200.0
+        get = authenticated_client.get("/api/trading/risk-policy/")
+        assert get.data["max_concentration_pct"] == 5.0

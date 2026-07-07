@@ -2346,9 +2346,9 @@ class BestStrategiesView(APIView):
 class LiveRiskPolicyView(APIView):
     """
     GET/PUT /api/trading/risk-policy/ — Política de riesgo global de la
-    ejecución real (OMS): límite de pérdida diaria en USD. Al alcanzarlo se
-    bloquean nuevas COMPRAS en real hasta el día siguiente (las ventas nunca
-    se bloquean). Incluye el PnL realizado hoy para ver el margen restante.
+    ejecución real (OMS): límite de pérdida diaria en USD y límite de
+    concentración por activo (% del libro). Ambos bloquean nuevas COMPRAS en
+    real (las ventas nunca se bloquean). Incluye el PnL realizado hoy.
     """
     permission_classes = [IsAuthenticated]
 
@@ -2359,25 +2359,42 @@ class LiveRiskPolicyView(APIView):
         policy = LiveRiskPolicy.objects.filter(owner=request.user).first()
         return Response({
             "daily_loss_limit_usd": policy.daily_loss_limit_usd if policy else None,
+            "max_concentration_pct": policy.max_concentration_pct if policy else None,
             "realized_today_usd": daily_live_realized_pnl(request.user),
         }, status=status.HTTP_200_OK)
 
     def put(self, request):
         from core.infrastructure.persistence.models import LiveRiskPolicy
 
-        raw = request.data.get("daily_loss_limit_usd", None)
-        limit = None
-        if raw not in (None, "", 0, "0"):
-            try:
-                limit = abs(float(raw))
-            except (TypeError, ValueError):
-                return Response({"error": "daily_loss_limit_usd debe ser numérico o null."},
-                                status=status.HTTP_400_BAD_REQUEST)
-            limit = min(max(limit, 10.0), 100_000.0)
-        LiveRiskPolicy.objects.update_or_create(
-            owner=request.user, defaults={"daily_loss_limit_usd": limit},
+        defaults = {}
+        if "daily_loss_limit_usd" in request.data:
+            raw = request.data.get("daily_loss_limit_usd")
+            limit = None
+            if raw not in (None, "", 0, "0"):
+                try:
+                    limit = min(max(abs(float(raw)), 10.0), 100_000.0)
+                except (TypeError, ValueError):
+                    return Response({"error": "daily_loss_limit_usd debe ser numérico o null."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            defaults["daily_loss_limit_usd"] = limit
+        if "max_concentration_pct" in request.data:
+            raw = request.data.get("max_concentration_pct")
+            conc = None
+            if raw not in (None, "", 0, "0"):
+                try:
+                    conc = min(max(abs(float(raw)), 5.0), 100.0)
+                except (TypeError, ValueError):
+                    return Response({"error": "max_concentration_pct debe ser numérico o null."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            defaults["max_concentration_pct"] = conc
+
+        policy, _ = LiveRiskPolicy.objects.update_or_create(
+            owner=request.user, defaults=defaults,
         )
-        return Response({"daily_loss_limit_usd": limit}, status=status.HTTP_200_OK)
+        return Response({
+            "daily_loss_limit_usd": policy.daily_loss_limit_usd,
+            "max_concentration_pct": policy.max_concentration_pct,
+        }, status=status.HTTP_200_OK)
 
 
 class TradingConnectionsView(APIView):
