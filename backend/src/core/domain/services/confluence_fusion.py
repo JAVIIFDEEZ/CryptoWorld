@@ -146,3 +146,62 @@ def fuse(sources: dict[str, dict], weights: dict[str, dict]) -> dict:
         "agreement_pct": round(agreement * 100.0, 1),
         "sources_available": n_avail,
     }
+
+
+def learn_weights_hierarchical(asset_rows: list[dict], global_rows: list[dict]) -> dict[str, dict]:
+    """
+    Aprendizaje jerárquico de pesos: para cada fuente se usa el acierto sobre
+    las lecturas de ESTE activo si hay muestra suficiente (los regímenes de BTC
+    y de una altcoin no tienen por qué parecerse); si no, el acierto GLOBAL de
+    la fuente; y sin muestra global, el peso a priori. El modo lo declara:
+    "aprendido_activo" | "aprendido_global" | "a_priori".
+    """
+    per_asset = learn_weights(asset_rows)
+    global_ = learn_weights(global_rows)
+    out: dict[str, dict] = {}
+    for source in SOURCES:
+        if per_asset[source]["mode"] == "aprendido":
+            out[source] = {**per_asset[source], "mode": "aprendido_activo"}
+        elif global_[source]["mode"] == "aprendido":
+            out[source] = {**global_[source], "mode": "aprendido_global"}
+        else:
+            out[source] = global_[source]   # a_priori (n = muestra global)
+    total = sum(v["weight"] for v in out.values()) or 1.0
+    for v in out.values():
+        v["weight"] = round(v["weight"] / total, 4)
+    return out
+
+
+def engine_track_record(resolved: list[dict]) -> dict:
+    """
+    Track record del PROPIO motor: sobre lecturas verificadas, ¿acertó la
+    dirección el score fusionado? Global y desglosado por veredicto. El retorno
+    medio va FIRMADO por la dirección de la lectura (positivo = la lectura fue
+    rentable en su sentido), que es lo que un operador querría saber.
+    """
+    total = {"n": 0, "hits": 0, "signed_return_sum": 0.0}
+    by_verdict: dict[str, dict] = {}
+    for row in resolved:
+        ret = row.get("actual_return_pct")
+        fused = row.get("fused_score")
+        verdict = row.get("verdict") or "—"
+        if ret is None or fused is None or abs(fused) < DIRECTIONAL_MIN:
+            continue
+        hit = (fused > 0) == (ret > 0)
+        signed = ret if fused > 0 else -ret
+        for bucket in (total, by_verdict.setdefault(
+                verdict, {"n": 0, "hits": 0, "signed_return_sum": 0.0})):
+            bucket["n"] += 1
+            bucket["hits"] += int(hit)
+            bucket["signed_return_sum"] += signed
+
+    def _fmt(b: dict) -> dict:
+        n = b["n"]
+        return {
+            "n": n,
+            "hit_rate": round(b["hits"] / n, 4) if n else None,
+            "avg_signed_return_pct": round(b["signed_return_sum"] / n, 4) if n else None,
+        }
+
+    return {"overall": _fmt(total),
+            "by_verdict": {k: _fmt(v) for k, v in by_verdict.items()}}

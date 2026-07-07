@@ -719,3 +719,21 @@ def resolve_confluence_snapshots(self) -> dict:
     result = ResolveConfluenceSnapshotsUseCase().execute()
     logger.info("resolve_confluence_snapshots: %s", result)
     return result
+
+
+@shared_task(
+    name="core.tasks.evaluate_confluence",
+    bind=True,
+    max_retries=0,
+)
+def evaluate_confluence(self) -> dict:
+    """
+    Evalúa el motor de confluencia 360° para los activos relevantes: alimenta
+    el aprendizaje continuo de pesos y registra los cambios de veredicto como
+    eventos (centro de notificaciones). Beat: cada 30 min.
+    """
+    from core.application.use_cases.get_confluence import EvaluateConfluenceUseCase
+
+    result = EvaluateConfluenceUseCase().execute()
+    logger.info("evaluate_confluence: %s", result)
+    return result

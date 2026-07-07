@@ -296,7 +296,7 @@ export interface ConfluenceSource {
   score: number | null
   detail: string
   weight: number
-  weight_mode: 'aprendido' | 'a_priori'
+  weight_mode: 'aprendido_activo' | 'aprendido_global' | 'a_priori'
   hit_rate: number | null
   sample: number
 }
@@ -309,6 +309,10 @@ export interface ConfluenceReading {
   agreement_pct: number
   sources_available: number
   sources: Record<string, ConfluenceSource>
+  track_record?: {
+    overall: { n: number; hit_rate: number | null; avg_signed_return_pct: number | null }
+    by_verdict: Record<string, { n: number; hit_rate: number | null; avg_signed_return_pct: number | null }>
+  }
   horizon_hours: number
   note: string
   error?: string

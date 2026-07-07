@@ -114,3 +114,55 @@ class TestApi:
         assert resp.status_code == 200
         assert set(resp.data) >= {"asset_symbol", "score", "verdict", "sources",
                                   "agreement_pct", "horizon_hours"}
+
+
+class TestScheduledEvaluation:
+
+    @pytest.mark.integration
+    def test_transitions_create_events_and_repeats_do_not(self, db, monkeypatch):
+        from core.application.use_cases.get_confluence import EvaluateConfluenceUseCase
+        from core.infrastructure.persistence.models import ConfluenceSignalEvent
+
+        _mock_sources(monkeypatch)   # todas alcistas → CONFLUENCIA_ALCISTA
+        uc = EvaluateConfluenceUseCase()
+
+        out1 = uc.execute(symbols=["BTC"])
+        assert out1["transitions"] == 1
+        ev = ConfluenceSignalEvent.objects.get()
+        assert ev.verdict == "CONFLUENCIA_ALCISTA" and ev.previous_verdict == ""
+
+        # Mismo veredicto en la siguiente pasada: SIN evento nuevo
+        out2 = uc.execute(symbols=["BTC"])
+        assert out2["transitions"] == 0
+        assert ConfluenceSignalEvent.objects.count() == 1
+
+        # Cambio de régimen (fuentes bajistas) → nuevo evento con el anterior
+        _mock_sources(monkeypatch, technical=-0.6, ml=-0.5, onchain=-0.4, news=-0.3)
+        out3 = uc.execute(symbols=["BTC"])
+        assert out3["transitions"] == 1
+        last = ConfluenceSignalEvent.objects.order_by("-created_at").first()
+        assert last.verdict == "CONFLUENCIA_BAJISTA"
+        assert last.previous_verdict == "CONFLUENCIA_ALCISTA"
+
+    @pytest.mark.integration
+    def test_confluence_events_reach_notifications_feed(self, db, test_user, monkeypatch):
+        from core.application.use_cases.get_confluence import EvaluateConfluenceUseCase
+        from core.application.use_cases.notifications import NotificationsFeedUseCase
+
+        _mock_sources(monkeypatch)
+        EvaluateConfluenceUseCase().execute(symbols=["BTC"])
+        feed = NotificationsFeedUseCase().execute(owner=test_user)
+        item = next(it for it in feed["items"] if it["kind"] == "confluence")
+        assert "BTC" in item["title"] and item["link"] == "/analysis"
+        assert feed["unread"] >= 1
+
+
+class TestHierarchyAndRecordInPayload:
+
+    @pytest.mark.integration
+    def test_payload_includes_track_record_and_weight_modes(self, db, monkeypatch):
+        _mock_sources(monkeypatch)
+        out = GetConfluenceUseCase().execute("BTC")
+        assert "track_record" in out and "overall" in out["track_record"]
+        modes = {s["weight_mode"] for s in out["sources"].values()}
+        assert modes <= {"aprendido_activo", "aprendido_global", "a_priori"}

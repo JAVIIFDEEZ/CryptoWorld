@@ -127,19 +127,44 @@ export default function ConfluencePanel({ symbol }: Readonly<{ symbol: string }>
                   {src.available && src.score !== null ? `${src.score >= 0 ? '+' : ''}${src.score.toFixed(2)}` : '—'}
                 </span>
                 <span
-                  className={`w-24 shrink-0 text-right text-[10px] font-mono ${
-                    src.weight_mode === 'aprendido' ? 'text-emerald-400' : 'text-slate-500'
+                  className={`w-28 shrink-0 text-right text-[10px] font-mono ${
+                    src.weight_mode === 'aprendido_activo' ? 'text-emerald-400'
+                      : src.weight_mode === 'aprendido_global' ? 'text-teal-400' : 'text-slate-500'
                   }`}
-                  title={src.weight_mode === 'aprendido'
-                    ? `Peso aprendido: acierto ${(100 * (src.hit_rate ?? 0)).toFixed(0)}% en ${src.sample} lecturas verificadas`
-                    : `Peso a priori (muestra insuficiente: ${src.sample} lecturas verificadas)`}
+                  title={src.weight_mode === 'a_priori'
+                    ? `Peso a priori (muestra insuficiente: ${src.sample} lecturas verificadas)`
+                    : `Peso aprendido ${src.weight_mode === 'aprendido_activo' ? 'sobre ESTE activo' : 'del acierto global de la fuente'}: ${(100 * (src.hit_rate ?? 0)).toFixed(0)}% de acierto en ${src.sample} lecturas verificadas`}
                 >
-                  peso {(src.weight * 100).toFixed(0)}%{src.weight_mode === 'aprendido' ? ' ✓' : ''}
+                  peso {(src.weight * 100).toFixed(0)}%
+                  {src.weight_mode === 'aprendido_activo' ? ' ✓✓' : src.weight_mode === 'aprendido_global' ? ' ✓' : ''}
                 </span>
               </div>
             )
           })}
         </div>
+
+        {/* Track record del propio motor (acierto verificado a posteriori) */}
+        {data.track_record && data.track_record.overall.n > 0 && (
+          <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 px-3 py-2 flex items-center gap-3 flex-wrap">
+            <span className="text-[10px] uppercase text-slate-500">Acierto del motor</span>
+            <span className={`text-sm font-bold font-mono ${
+              (data.track_record.overall.hit_rate ?? 0) >= 0.55 ? 'text-green-400'
+                : (data.track_record.overall.hit_rate ?? 0) >= 0.5 ? 'text-yellow-400' : 'text-red-400'
+            }`}>
+              {(100 * (data.track_record.overall.hit_rate ?? 0)).toFixed(0)}%
+            </span>
+            <span className="text-[10px] text-slate-500">
+              en {data.track_record.overall.n} lecturas verificadas · retorno medio en la dirección de la lectura{' '}
+              {(data.track_record.overall.avg_signed_return_pct ?? 0) >= 0 ? '+' : ''}
+              {(data.track_record.overall.avg_signed_return_pct ?? 0).toFixed(2)}%
+            </span>
+            {Object.entries(data.track_record.by_verdict).map(([verd, st]) => (
+              <span key={verd} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-400">
+                {verd.replace('CONFLUENCIA_', '')}: {(100 * (st.hit_rate ?? 0)).toFixed(0)}% ({st.n})
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Detalles de cada fuente (una línea honesta por fuente) */}
         <div className="space-y-0.5">

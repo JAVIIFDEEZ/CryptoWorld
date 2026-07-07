@@ -106,3 +106,43 @@ class TestFuse:
         assert out["verdict"] == "CONFLUENCIA_ALCISTA"
         # El score fusionado está entre los dos scores (media ponderada)
         assert 0.5 <= out["score"] <= 0.6
+
+
+class TestHierarchicalWeights:
+
+    @pytest.mark.unit
+    def test_asset_sample_beats_global(self):
+        from core.domain.services.confluence_fusion import learn_weights_hierarchical
+        asset = _rows("ml", 30, hit_rate=0.8)          # en ESTE activo, ML brilla
+        global_ = _rows("ml", 100, hit_rate=0.4)       # globalmente, ML flojea
+        w = learn_weights_hierarchical(asset, global_)
+        assert w["ml"]["mode"] == "aprendido_activo"
+        assert w["ml"]["hit_rate"] == pytest.approx(0.8)
+
+    @pytest.mark.unit
+    def test_falls_back_to_global_then_prior(self):
+        from core.domain.services.confluence_fusion import learn_weights_hierarchical
+        w = learn_weights_hierarchical([], _rows("technical", 40, hit_rate=0.65))
+        assert w["technical"]["mode"] == "aprendido_global"
+        assert w["news"]["mode"] == "a_priori"
+        assert sum(v["weight"] for v in w.values()) == pytest.approx(1.0, abs=1e-3)
+
+
+class TestEngineTrackRecord:
+
+    @pytest.mark.unit
+    def test_record_by_verdict_with_signed_returns(self):
+        from core.domain.services.confluence_fusion import engine_track_record
+        rows = [
+            {"fused_score": 0.5, "verdict": "CONFLUENCIA_ALCISTA", "actual_return_pct": 2.0},
+            {"fused_score": 0.4, "verdict": "CONFLUENCIA_ALCISTA", "actual_return_pct": -1.0},
+            {"fused_score": -0.6, "verdict": "CONFLUENCIA_BAJISTA", "actual_return_pct": -3.0},
+            {"fused_score": 0.05, "verdict": "NEUTRAL", "actual_return_pct": 9.9},  # no direccional
+        ]
+        tr = engine_track_record(rows)
+        assert tr["overall"]["n"] == 3
+        assert tr["overall"]["hit_rate"] == pytest.approx(2 / 3, abs=1e-4)
+        # Retorno firmado: +2, -1, +3 (la bajista acertó) → media 4/3
+        assert tr["overall"]["avg_signed_return_pct"] == pytest.approx(4 / 3, abs=1e-3)
+        assert tr["by_verdict"]["CONFLUENCIA_BAJISTA"]["hit_rate"] == 1.0
+        assert "NEUTRAL" not in tr["by_verdict"]

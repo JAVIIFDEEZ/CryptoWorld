@@ -19,7 +19,8 @@ confluencia funciona con las que estén vivas y lo dice.
 import logging
 
 from core.domain.services.confluence_fusion import (
-    DIRECTIONAL_MIN, PRIOR_WEIGHTS, clamp, fuse, learn_weights,
+    DIRECTIONAL_MIN, PRIOR_WEIGHTS, clamp, engine_track_record, fuse,
+    learn_weights_hierarchical,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class GetConfluenceUseCase:
             "onchain": self._onchain(),
             "news": self._news(symbol),
         }
-        weights = self._learned_weights()
+        weights = self._learned_weights(symbol)
         fused = fuse(sources, weights)
 
         last_price = sources["technical"].get("last_price") or self._last_price(symbol)
@@ -59,6 +60,7 @@ class GetConfluenceUseCase:
                        "sample": weights[name]["n"]}
                 for name, src in sources.items()
             },
+            "track_record": self._track_record(),
             "horizon_hours": _HORIZON_HOURS,
             "note": (
                 "Score por fuente ∈ [-1, +1]. Los pesos se aprenden del acierto "
@@ -164,19 +166,36 @@ class GetConfluenceUseCase:
     # ── Aprendizaje y registro ──────────────────────────────────────
 
     @staticmethod
-    def _learned_weights() -> dict:
+    def _learned_weights(symbol: str) -> dict:
+        """Jerárquico: acierto sobre lecturas de ESTE activo si hay muestra,
+        si no el global, si no los priors (el modo lo declara por fuente)."""
         try:
             from core.infrastructure.persistence.models import ConfluenceSnapshot
 
-            resolved = list(
-                ConfluenceSnapshot.objects.filter(status="resolved")
-                .order_by("-resolved_at")
-                .values("scores", "actual_return_pct")[:_LEARN_WINDOW]
-            )
-            return learn_weights(resolved)
+            base = ConfluenceSnapshot.objects.filter(status="resolved").order_by("-resolved_at")
+            global_rows = list(base.values("scores", "actual_return_pct")[:_LEARN_WINDOW])
+            asset_rows = list(base.filter(asset_symbol=symbol)
+                              .values("scores", "actual_return_pct")[:_LEARN_WINDOW])
+            return learn_weights_hierarchical(asset_rows, global_rows)
         except Exception:  # noqa: BLE001 — sin BD: pesos a priori
             return {s: {"weight": w, "hit_rate": None, "n": 0, "mode": "a_priori"}
                     for s, w in PRIOR_WEIGHTS.items()}
+
+    @staticmethod
+    def _track_record() -> dict:
+        """Acierto verificado del PROPIO motor (global y por veredicto)."""
+        try:
+            from core.infrastructure.persistence.models import ConfluenceSnapshot
+
+            rows = list(
+                ConfluenceSnapshot.objects.filter(status="resolved")
+                .order_by("-resolved_at")
+                .values("fused_score", "verdict", "actual_return_pct")[:_LEARN_WINDOW]
+            )
+            return engine_track_record(rows)
+        except Exception:  # noqa: BLE001
+            return {"overall": {"n": 0, "hit_rate": None, "avg_signed_return_pct": None},
+                    "by_verdict": {}}
 
     @staticmethod
     def _last_price(symbol: str) -> float | None:
@@ -245,3 +264,60 @@ class ResolveConfluenceSnapshotsUseCase:
             resolved += 1
         logger.info("resolve_confluence: %d/%d lecturas resueltas", resolved, len(due))
         return {"due": len(due), "resolved": resolved}
+
+
+class EvaluateConfluenceUseCase:
+    """Evaluación programada del motor para los activos relevantes.
+
+    Dos efectos: (1) el motor APRENDE de forma continua — cada pasada registra
+    lecturas direccionales que se verificarán a las 24h aunque nadie visite la
+    página; (2) los CAMBIOS de veredicto (entrar/salir/cambiar de confluencia)
+    se registran como eventos y llegan al centro de notificaciones. El estado
+    repetido nunca genera eventos; INSUFICIENTE ni señala ni resetea el último
+    régimen conocido (sin fuentes no hay información, no un cambio)."""
+
+    def execute(self, symbols: list[str] | None = None) -> dict:
+        from django.core.cache import cache
+        from core.infrastructure.persistence.models import (
+            ConfluenceSignalEvent, CryptoAsset, PaperTradingAccount,
+        )
+
+        if symbols is None:
+            top = list(
+                CryptoAsset.objects.exclude(market_cap__isnull=True)
+                .order_by("-market_cap").values_list("symbol", flat=True)[:8]
+            )
+            active = list(
+                PaperTradingAccount.objects.filter(is_active=True)
+                .values_list("asset_symbol", flat=True).distinct()
+            )
+            symbols = list(dict.fromkeys(top + active))
+
+        evaluated = transitions = 0
+        uc = GetConfluenceUseCase()
+        for symbol in symbols:
+            try:
+                reading = uc.execute(symbol)
+            except Exception as exc:  # noqa: BLE001 — un activo caído no frena el resto
+                logger.warning("evaluate_confluence %s: %s", symbol, exc)
+                continue
+            verdict = reading.get("verdict")
+            if reading.get("error") or verdict in (None, "INSUFICIENTE"):
+                continue
+            evaluated += 1
+            # La lectura programada también alimenta la caché del endpoint.
+            cache.set(f"confluence:{symbol}", reading, 600)
+            last = (ConfluenceSignalEvent.objects
+                    .filter(asset_symbol=symbol).order_by("-created_at").first())
+            if last is None or last.verdict != verdict:
+                ConfluenceSignalEvent.objects.create(
+                    asset_symbol=symbol,
+                    verdict=verdict,
+                    previous_verdict=last.verdict if last else "",
+                    score=reading["score"],
+                    agreement_pct=reading["agreement_pct"],
+                )
+                transitions += 1
+
+        logger.info("evaluate_confluence: %d evaluados, %d transiciones", evaluated, transitions)
+        return {"symbols": symbols, "evaluated": evaluated, "transitions": transitions}

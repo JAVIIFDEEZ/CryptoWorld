@@ -1142,3 +1142,30 @@ class ConfluenceSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"Confluencia {self.asset_symbol} {self.verdict} ({self.status})"
+
+
+class ConfluenceSignalEvent(models.Model):
+    """
+    Cambio de régimen del motor de confluencia 360° para un activo.
+
+    La evaluación programada compara el veredicto actual con el del último
+    evento y solo registra la TRANSICIÓN (entrar/salir/cambiar de confluencia)
+    — nunca el estado repetido. Global (como los eventos de presión on-chain):
+    alimenta el centro de notificaciones de todos los usuarios.
+    """
+
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    verdict = models.CharField(max_length=30)
+    previous_verdict = models.CharField(max_length=30, blank=True, default="")
+    score = models.FloatField()
+    agreement_pct = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "confluence_signal_events"
+        verbose_name = "Evento de confluencia"
+        verbose_name_plural = "Eventos de confluencia"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.asset_symbol}: {self.previous_verdict or '—'} → {self.verdict}"
