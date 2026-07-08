@@ -8,7 +8,9 @@
  */
 
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { portfolioService, type PortfolioRisk } from '@/services/portfolioService'
+import { tradingService, type LiveRiskPolicy } from '@/services/tradingService'
 
 function usd(n: number | undefined | null, sign = false): string {
   if (n == null) return '—'
@@ -20,6 +22,7 @@ const BOOK_LABEL: Record<string, string> = { manual: 'Manual', paper: 'Paper', l
 
 export default function RiskPanel() {
   const [risk, setRisk] = useState<PortfolioRisk | null>(null)
+  const [policy, setPolicy] = useState<LiveRiskPolicy | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -28,6 +31,9 @@ export default function RiskPanel() {
       .then((r) => { if (!cancelled) setRisk(r) })
       .catch(() => { /* sin riesgo */ })
       .finally(() => { if (!cancelled) setLoading(false) })
+    tradingService.getRiskPolicy()
+      .then((p) => { if (!cancelled) setPolicy(p) })
+      .catch(() => { /* sin política */ })
     return () => { cancelled = true }
   }, [])
 
@@ -74,6 +80,9 @@ export default function RiskPanel() {
             </p>
           </div>
         </div>
+
+        {/* Controles activos del OMS cruzados con el uso actual del libro */}
+        <OmsControls policy={policy} topConcentration={risk.top_concentration_pct ?? 0} />
 
         {/* VaR / CVaR */}
         {v?.status === 'OK' ? (
@@ -155,6 +164,69 @@ export default function RiskPanel() {
 
         {risk.note && <p className="text-[10px] text-slate-600">{risk.note}</p>}
       </div>
+    </div>
+  )
+}
+
+function OmsControls({ policy, topConcentration }: Readonly<{
+  policy: LiveRiskPolicy | null; topConcentration: number
+}>) {
+  const hasLoss = policy?.daily_loss_limit_usd != null
+  const hasConc = policy?.max_concentration_pct != null
+  if (!policy || (!hasLoss && !hasConc)) {
+    return (
+      <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 px-3 py-2 text-[11px] text-slate-400">
+        <span className="text-slate-300 font-medium">Sin barreras de riesgo activas.</span>{' '}
+        Fija un límite de pérdida diaria y de concentración en{' '}
+        <Link to="/trading" className="text-blue-400 hover:text-blue-300">Trading</Link> para proteger la ejecución real.
+      </div>
+    )
+  }
+  const today = policy.realized_today_usd ?? 0
+  // Uso de cada barrera: 0 = holgado, ≥1 = tocado.
+  const lossUse = hasLoss ? Math.min(Math.max(-today / (policy.daily_loss_limit_usd || 1), 0), 1) : 0
+  const concUse = hasConc ? Math.min(topConcentration / (policy.max_concentration_pct || 1), 1) : 0
+  const tone = (u: number) => u >= 1 ? 'bg-red-500' : u >= 0.75 ? 'bg-amber-400' : 'bg-emerald-500'
+
+  return (
+    <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold text-slate-300">Barreras de riesgo activas (OMS)</h3>
+        <Link to="/trading" className="text-[10px] text-blue-400 hover:text-blue-300">editar →</Link>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {hasLoss && (
+          <div>
+            <div className="flex items-center justify-between text-[10px] mb-1">
+              <span className="text-slate-500 uppercase">Pérdida diaria</span>
+              <span className="font-mono text-slate-300">
+                {usd(today, true)} / −{usd(policy.daily_loss_limit_usd)}
+              </span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div className={`h-full ${tone(lossUse)}`} style={{ width: `${lossUse * 100}%` }} />
+            </div>
+          </div>
+        )}
+        {hasConc && (
+          <div>
+            <div className="flex items-center justify-between text-[10px] mb-1">
+              <span className="text-slate-500 uppercase">Concentración máx.</span>
+              <span className="font-mono text-slate-300">
+                {topConcentration.toFixed(0)}% / {policy.max_concentration_pct}%
+              </span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div className={`h-full ${tone(concUse)}`} style={{ width: `${concUse * 100}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+      {(lossUse >= 1 || concUse >= 1) && (
+        <p className="text-[10px] text-amber-300 mt-2">
+          ⚠ Una barrera está tocada: las compras en real que la crucen se bloquean.
+        </p>
+      )}
     </div>
   )
 }
