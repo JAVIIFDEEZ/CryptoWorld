@@ -102,6 +102,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="Recibir resúmenes periódicos del estado del mercado.",
     )
+    notify_risk_digest = models.BooleanField(
+        default=False,
+        help_text="Recibir un resumen diario del riesgo de la cartera (VaR, "
+                  "barreras del OMS y P&L) por email.",
+    )
     notifications_seen_at = models.DateTimeField(
         null=True,
         blank=True,

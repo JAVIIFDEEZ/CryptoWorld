@@ -348,6 +348,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.send_market_digest",
         "schedule": crontab(day_of_week=1, hour=8, minute=0),
     },
+    # Resumen diario de riesgo de cartera (días laborables 07:00 UTC)
+    "send-risk-digest": {
+        "task": "core.tasks.send_risk_digest",
+        "schedule": crontab(day_of_week="1-5", hour=7, minute=0),
+    },
     # Señales en vivo de estrategias generadas monitorizadas (cada 15 min)
     "evaluate-monitored-strategies": {
         "task": "core.tasks.evaluate_monitored_strategies",

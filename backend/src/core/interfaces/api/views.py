@@ -405,6 +405,7 @@ class MeView(APIView):
             "preferred_currency": user.preferred_currency,
             "notify_price_alerts": user.notify_price_alerts,
             "notify_market_digest": user.notify_market_digest,
+            "notify_risk_digest": user.notify_risk_digest,
             "recovery_codes_remaining": (
                 remaining_recovery_codes(user) if user.is_2fa_enabled else 0
             ),

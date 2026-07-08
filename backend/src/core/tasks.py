@@ -755,3 +755,25 @@ def reconcile_live_positions(self) -> dict:
     result = ReconcileLivePositionsUseCase().execute()
     logger.info("reconcile_live_positions: %s", result)
     return result
+
+
+@shared_task(
+    name="core.tasks.send_risk_digest",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=300,
+)
+def send_risk_digest(self) -> dict:
+    """
+    Envía a diario el resumen de riesgo de cartera a los usuarios suscritos
+    (notify_risk_digest=True). Programado por celery beat (lunes-viernes 07:00).
+    """
+    try:
+        from core.application.use_cases.send_risk_digest import SendRiskDigestUseCase
+
+        sent = SendRiskDigestUseCase().execute()
+        logger.info("send_risk_digest: %d emails enviados", sent)
+        return {"sent": sent}
+    except Exception as exc:
+        logger.error("send_risk_digest error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)

@@ -71,6 +71,7 @@ export interface UserMeResponse {
   preferred_currency: PreferredCurrency
   notify_price_alerts: boolean
   notify_market_digest: boolean
+  notify_risk_digest: boolean
   recovery_codes_remaining: number
 }
 
@@ -79,6 +80,7 @@ export interface UpdatePreferencesPayload {
   preferred_currency?: PreferredCurrency
   notify_price_alerts?: boolean
   notify_market_digest?: boolean
+  notify_risk_digest?: boolean
 }
 
 export interface Setup2FAResponse {
