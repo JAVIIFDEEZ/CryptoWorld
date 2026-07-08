@@ -313,6 +313,17 @@ export interface ConfluenceReading {
     overall: { n: number; hit_rate: number | null; avg_signed_return_pct: number | null }
     by_verdict: Record<string, { n: number; hit_rate: number | null; avg_signed_return_pct: number | null }>
   }
+  backtest?: {
+    status: 'OK' | 'INSUFICIENTE'
+    trades: number
+    total_return_pct?: number
+    win_rate?: number
+    avg_trade_pct?: number
+    max_drawdown_pct?: number
+    profit_factor?: number | null
+    cost_bps?: number
+    equity_curve?: number[]
+  }
   horizon_hours: number
   note: string
   error?: string

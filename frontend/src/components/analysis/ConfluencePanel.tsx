@@ -43,6 +43,23 @@ function ScoreBar({ score }: Readonly<{ score: number | null }>) {
   )
 }
 
+function EquitySparkline({ curve }: Readonly<{ curve: number[] }>) {
+  const w = 90, h = 22
+  const min = Math.min(...curve), max = Math.max(...curve)
+  const range = max - min || 1
+  const pts = curve.map((v, i) => {
+    const x = (i / (curve.length - 1)) * w
+    const y = h - ((v - min) / range) * h
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  const up = curve[curve.length - 1] >= curve[0]
+  return (
+    <svg width={w} height={h} className="shrink-0" aria-hidden>
+      <polyline points={pts} fill="none" stroke={up ? '#22c55e' : '#ef4444'} strokeWidth={1.5} />
+    </svg>
+  )
+}
+
 export default function ConfluencePanel({ symbol }: Readonly<{ symbol: string }>) {
   const [data, setData] = useState<ConfluenceReading | null>(null)
   const [loading, setLoading] = useState(false)
@@ -163,6 +180,27 @@ export default function ConfluencePanel({ symbol }: Readonly<{ symbol: string }>
                 {verd.replace('CONFLUENCIA_', '')}: {(100 * (st.hit_rate ?? 0)).toFixed(0)}% ({st.n})
               </span>
             ))}
+          </div>
+        )}
+
+        {/* Backtest del motor: ¿habría sido rentable operar sus veredictos? */}
+        {data.backtest && data.backtest.status === 'OK' && (
+          <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 px-3 py-2">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-[10px] uppercase text-slate-500">Backtest del motor</span>
+              <span className={`text-sm font-bold font-mono ${(data.backtest.total_return_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {(data.backtest.total_return_pct ?? 0) >= 0 ? '+' : ''}{(data.backtest.total_return_pct ?? 0).toFixed(1)}%
+              </span>
+              <span className="text-[10px] text-slate-500">
+                operando sus veredictos · {data.backtest.trades} ops · win {(100 * (data.backtest.win_rate ?? 0)).toFixed(0)}%
+                {' '}· DD máx {(data.backtest.max_drawdown_pct ?? 0).toFixed(1)}%
+                {data.backtest.profit_factor != null && <> · PF {data.backtest.profit_factor.toFixed(2)}</>}
+                {' '}· neto {data.backtest.cost_bps} bps
+              </span>
+              {data.backtest.equity_curve && data.backtest.equity_curve.length > 2 && (
+                <EquitySparkline curve={data.backtest.equity_curve} />
+              )}
+            </div>
           </div>
         )}
 

@@ -19,7 +19,7 @@ confluencia funciona con las que estén vivas y lo dice.
 import logging
 
 from core.domain.services.confluence_fusion import (
-    DIRECTIONAL_MIN, PRIOR_WEIGHTS, clamp, engine_track_record, fuse,
+    DIRECTIONAL_MIN, PRIOR_WEIGHTS, backtest_engine, clamp, engine_track_record, fuse,
     learn_weights_hierarchical,
 )
 
@@ -61,6 +61,7 @@ class GetConfluenceUseCase:
                 for name, src in sources.items()
             },
             "track_record": self._track_record(),
+            "backtest": self._backtest(),
             "horizon_hours": _HORIZON_HOURS,
             "note": (
                 "Score por fuente ∈ [-1, +1]. Los pesos se aprenden del acierto "
@@ -180,6 +181,21 @@ class GetConfluenceUseCase:
         except Exception:  # noqa: BLE001 — sin BD: pesos a priori
             return {s: {"weight": w, "hit_rate": None, "n": 0, "mode": "a_priori"}
                     for s, w in PRIOR_WEIGHTS.items()}
+
+    @staticmethod
+    def _backtest() -> dict:
+        """Backtest del motor sobre sus lecturas resueltas (orden cronológico)."""
+        try:
+            from core.infrastructure.persistence.models import ConfluenceSnapshot
+
+            rows = list(
+                ConfluenceSnapshot.objects.filter(status="resolved")
+                .order_by("resolved_at")
+                .values("fused_score", "actual_return_pct")[:_LEARN_WINDOW]
+            )
+            return backtest_engine(rows)
+        except Exception:  # noqa: BLE001
+            return {"status": "INSUFICIENTE", "trades": 0}
 
     @staticmethod
     def _track_record() -> dict:

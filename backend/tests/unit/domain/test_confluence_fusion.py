@@ -146,3 +146,38 @@ class TestEngineTrackRecord:
         assert tr["overall"]["avg_signed_return_pct"] == pytest.approx(4 / 3, abs=1e-3)
         assert tr["by_verdict"]["CONFLUENCIA_BAJISTA"]["hit_rate"] == 1.0
         assert "NEUTRAL" not in tr["by_verdict"]
+
+
+class TestBacktestEngine:
+
+    @pytest.mark.unit
+    def test_compounds_signed_returns_net_of_costs(self):
+        from core.domain.services.confluence_fusion import backtest_engine
+        rows = [
+            {"fused_score": 0.5, "actual_return_pct": 4.0},   # largo, acierta +4%
+            {"fused_score": -0.6, "actual_return_pct": -3.0}, # corto, acierta +3%
+            {"fused_score": 0.05, "actual_return_pct": 9.9},  # no direccional: ignorada
+        ]
+        bt = backtest_engine(rows, cost_bps=10.0)
+        assert bt["status"] == "OK" and bt["trades"] == 2
+        # Neto: (0.04-0.002) y (0.03-0.002); equity compuesto
+        exp = 1.0 * (1 + 0.038) * (1 + 0.028)
+        assert bt["equity_curve"][-1] == pytest.approx(round(exp, 4), abs=1e-4)
+        assert bt["win_rate"] == 1.0 and bt["profit_factor"] is None  # sin pérdidas
+        assert len(bt["equity_curve"]) == 3   # inicio + 2 operaciones
+
+    @pytest.mark.unit
+    def test_drawdown_and_profit_factor(self):
+        from core.domain.services.confluence_fusion import backtest_engine
+        rows = [
+            {"fused_score": 0.5, "actual_return_pct": 10.0},   # +10% (bruto)
+            {"fused_score": 0.5, "actual_return_pct": -8.0},   # -8%
+        ]
+        bt = backtest_engine(rows, cost_bps=0.0)
+        assert bt["max_drawdown_pct"] == pytest.approx(8.0, abs=1e-2)
+        assert bt["profit_factor"] == pytest.approx(10.0 / 8.0, abs=1e-2)
+
+    @pytest.mark.unit
+    def test_empty_is_insufficient(self):
+        from core.domain.services.confluence_fusion import backtest_engine
+        assert backtest_engine([])["status"] == "INSUFICIENTE"

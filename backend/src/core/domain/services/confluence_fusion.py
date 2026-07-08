@@ -205,3 +205,60 @@ def engine_track_record(resolved: list[dict]) -> dict:
 
     return {"overall": _fmt(total),
             "by_verdict": {k: _fmt(v) for k, v in by_verdict.items()}}
+
+
+def backtest_engine(resolved: list[dict], cost_bps: float = 15.0) -> dict:
+    """
+    Backtest honesto del PROPIO motor sobre sus lecturas verificadas: ¿habría
+    sido rentable operar cada veredicto direccional a su horizonte, NETO de
+    costes?
+
+    Cada lectura direccional (|fused| ≥ umbral) es una operación: se entra en la
+    dirección del veredicto y se materializa su retorno firmado al vencer el
+    horizonte. Se descuenta `cost_bps` de ida y vuelta (entrada + salida). Los
+    retornos se COMPONEN cronológicamente (orden de resolución) en una curva de
+    equity partiendo de 1.0. Devuelve la curva, el retorno total, el máximo
+    drawdown, el profit factor y el nº de operaciones.
+
+    `resolved`: lecturas verificadas ORDENADAS por fecha ascendente, cada una
+    {"fused_score", "actual_return_pct", "resolved_at"?}.
+    """
+    cost = cost_bps / 10_000.0 * 2.0     # ida y vuelta
+    equity = [1.0]
+    trade_returns: list[float] = []
+    for row in resolved:
+        fused = row.get("fused_score")
+        ret = row.get("actual_return_pct")
+        if fused is None or ret is None or abs(fused) < DIRECTIONAL_MIN:
+            continue
+        signed = (ret if fused > 0 else -ret) / 100.0    # dirección del veredicto
+        net = signed - cost
+        trade_returns.append(net)
+        equity.append(equity[-1] * (1.0 + net))
+
+    n = len(trade_returns)
+    if n == 0:
+        return {"status": "INSUFICIENTE", "trades": 0,
+                "note": "Sin lecturas direccionales verificadas todavía."}
+
+    peak = equity[0]
+    max_dd = 0.0
+    for e in equity:
+        peak = max(peak, e)
+        max_dd = max(max_dd, (peak - e) / peak if peak > 0 else 0.0)
+
+    gains = sum(r for r in trade_returns if r > 0)
+    losses = -sum(r for r in trade_returns if r < 0)
+    wins = sum(1 for r in trade_returns if r > 0)
+
+    return {
+        "status": "OK",
+        "trades": n,
+        "total_return_pct": round((equity[-1] - 1.0) * 100.0, 2),
+        "win_rate": round(wins / n, 4),
+        "avg_trade_pct": round(sum(trade_returns) / n * 100.0, 3),
+        "max_drawdown_pct": round(max_dd * 100.0, 2),
+        "profit_factor": round(gains / losses, 2) if losses > 1e-9 else None,
+        "cost_bps": cost_bps,
+        "equity_curve": [round(e, 4) for e in equity],
+    }
