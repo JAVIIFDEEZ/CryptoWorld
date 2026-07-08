@@ -1532,6 +1532,32 @@ class PushSubscriptionView(APIView):
         return Response({"status": "unsubscribed"}, status=status.HTTP_200_OK)
 
 
+class PortfolioExportView(APIView):
+    """
+    GET /api/portfolio/export/?type=positions|risk — Descarga un informe CSV
+    del usuario (posiciones o riesgo agregado). Formato universal para análisis
+    posterior en Excel/Python/R.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from core.application.use_cases.export_reports import EXPORTERS
+
+        kind = (request.query_params.get("type") or "positions").strip().lower()
+        entry = EXPORTERS.get(kind)
+        if entry is None:
+            return Response({"error": f"Tipo '{kind}' no soportado. Usa: {list(EXPORTERS)}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        label, exporter = entry
+        content = exporter(request.user)
+        stamp = timezone.now().strftime("%Y%m%d")
+        resp = HttpResponse(content, content_type="text/csv; charset=utf-8")
+        resp["Content-Disposition"] = f'attachment; filename="cryptoworld_{label}_{stamp}.csv"'
+        return resp
+
+
 class NewsGlobeView(APIView):
     """
     GET /api/news/globe/ — Noticias importantes clasificadas por región del

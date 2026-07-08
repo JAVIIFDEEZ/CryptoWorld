@@ -164,6 +164,22 @@ export interface PortfolioRisk {
 
 export const portfolioService = {
   /** Riesgo agregado del libro completo: exposición firmada, VaR/CVaR y stress. */
+  /** Descarga un informe CSV (positions | risk) del usuario. */
+  downloadReport: async (type: 'positions' | 'risk'): Promise<void> => {
+    const resp = await apiClient.get('/portfolio/export/', {
+      params: { type }, responseType: 'blob',
+    })
+    const url = window.URL.createObjectURL(resp.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    a.download = `cryptoworld_${type}_${stamp}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+  },
+
   getRisk: async (): Promise<PortfolioRisk> => {
     const { data } = await apiClient.get<PortfolioRisk>('/portfolio/risk/')
     return data
