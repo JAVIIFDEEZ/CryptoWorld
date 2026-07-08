@@ -1206,3 +1206,33 @@ class LiveRiskPolicy(models.Model):
     def __str__(self) -> str:
         limit = f"{self.daily_loss_limit_usd} USD/día" if self.daily_loss_limit_usd else "sin límite"
         return f"RiskPolicy({self.owner_id}, {limit})"
+
+
+class PushSubscription(models.Model):
+    """
+    Suscripción Web Push de un navegador del usuario (PWA).
+
+    Guarda el endpoint del push service y las claves del cliente (p256dh, auth)
+    necesarias para cifrar el payload. Permite que las notificaciones críticas
+    (kill-switch de ejecución real, controles de riesgo, cambios de régimen)
+    lleguen al dispositivo AUNQUE la app esté cerrada. El endpoint es único por
+    suscripción; un usuario puede tener varios dispositivos.
+    """
+
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="push_subscriptions",
+    )
+    endpoint = models.URLField(max_length=500, unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    user_agent = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "push_subscriptions"
+        verbose_name = "Suscripción Push"
+        verbose_name_plural = "Suscripciones Push"
+
+    def __str__(self) -> str:
+        return f"Push({self.owner_id}, {self.endpoint[:40]}…)"

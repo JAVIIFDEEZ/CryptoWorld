@@ -1489,6 +1489,48 @@ class OhlcvBackfillView(APIView):
                         status=status.HTTP_202_ACCEPTED)
 
 
+class PushPublicKeyView(APIView):
+    """GET /api/push/public-key/ — Clave pública VAPID para suscribirse a push."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.push.web_push import is_configured, vapid_public_key
+        return Response({"public_key": vapid_public_key(), "enabled": is_configured()},
+                        status=status.HTTP_200_OK)
+
+
+class PushSubscriptionView(APIView):
+    """
+    POST /api/push/subscribe/   — Guarda la suscripción Web Push del navegador.
+      Body: {"endpoint", "keys": {"p256dh", "auth"}}.
+    DELETE /api/push/subscribe/ — Elimina la suscripción por endpoint.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.infrastructure.persistence.models import PushSubscription
+
+        endpoint = (request.data.get("endpoint") or "").strip()
+        keys = request.data.get("keys") or {}
+        p256dh, auth = keys.get("p256dh"), keys.get("auth")
+        if not endpoint or not p256dh or not auth:
+            return Response({"error": "Suscripción incompleta (endpoint + keys)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        PushSubscription.objects.update_or_create(
+            endpoint=endpoint,
+            defaults={"owner": request.user, "p256dh": p256dh, "auth": auth,
+                      "user_agent": (request.META.get("HTTP_USER_AGENT") or "")[:300]},
+        )
+        return Response({"status": "subscribed"}, status=status.HTTP_201_CREATED)
+
+    def delete(self, request):
+        from core.infrastructure.persistence.models import PushSubscription
+
+        endpoint = (request.data.get("endpoint") or "").strip()
+        PushSubscription.objects.filter(owner=request.user, endpoint=endpoint).delete()
+        return Response({"status": "unsubscribed"}, status=status.HTTP_200_OK)
+
+
 class NewsGlobeView(APIView):
     """
     GET /api/news/globe/ — Noticias importantes clasificadas por región del

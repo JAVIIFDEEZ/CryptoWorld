@@ -57,3 +57,31 @@ self.addEventListener('fetch', (event) => {
     return cached || network
   })())
 })
+
+/* ── Web Push (PWA): notificaciones con la app cerrada ── */
+self.addEventListener('push', (event) => {
+  let data = {}
+  try { data = event.data ? event.data.json() : {} } catch { data = {} }
+  const title = data.title || 'CryptoWorld'
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || 'Toca para ver el detalle.',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: data.kind || 'cw',
+      data: { url: data.url || '/' },
+    }),
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = (event.notification.data && event.notification.data.url) || '/'
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    for (const c of all) {
+      if ('focus' in c) { c.navigate(url); return c.focus() }
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(url)
+  })())
+})

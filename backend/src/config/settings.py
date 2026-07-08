@@ -405,3 +405,13 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+
+
+# ------------------------------------------------------------------
+# Web Push (PWA) — notificaciones con la app cerrada.
+# Genera el par VAPID una vez y ponlo en el entorno. Vacío = push desactivado
+# (el WebSocket y el centro in-app siguen funcionando).
+# ------------------------------------------------------------------
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "admin@cryptoworld.app")
