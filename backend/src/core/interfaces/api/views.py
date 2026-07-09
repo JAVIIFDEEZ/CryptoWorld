@@ -1789,6 +1789,37 @@ class PriceStructureView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class QuantSnapshotView(APIView):
+    """
+    GET /api/analysis/quant/?asset_symbol=BTC&interval=1h — Terminal cuantitativa
+    institucional: volatilidad realizada anualizada, ATR, retornos multi-horizonte
+    con z-score, Sharpe/Sortino del activo, drawdown, posición en el rango, beta y
+    correlación frente a BTC, volumen relativo y clasificador de régimen. Es la
+    fotografía cuantitativa densa (estilo Bloomberg) del estado del activo.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 180  # segundos — datos derivados de OHLCV, se cachea 3 min
+
+    def get(self, request):
+        from core.application.use_cases.get_quant_snapshot import GetQuantSnapshotUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        interval = (request.query_params.get("interval") or "1h").strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"quant_snapshot:{symbol}:{interval}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetQuantSnapshotUseCase().execute(asset_symbol=symbol, interval=interval)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class PredictPriceView(APIView):
     """
     POST /api/analysis/predict/ — Predicción ML de dirección de precio.

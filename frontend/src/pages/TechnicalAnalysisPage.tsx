@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAssets } from '@/hooks/queries/useMarketData'
 import AnalysisPanel from '@/components/analysis/AnalysisPanel'
 import ConfluencePanel from '@/components/analysis/ConfluencePanel'
+import QuantTerminal from '@/components/analysis/QuantTerminal'
 import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
@@ -96,6 +97,8 @@ function TechnicalAnalysisPage() {
 
       {!isLoadingAssets && assets.length > 0 && (
         <>
+          {/* Terminal cuantitativa: fotografía institucional del estado del activo */}
+          <QuantTerminal symbol={selectedSymbol} />
           {/* Confluencia 360°: el resumen ejecutivo antes del detalle por pestañas */}
           <ConfluencePanel symbol={selectedSymbol} />
           <AnalysisPanel symbol={selectedSymbol} />

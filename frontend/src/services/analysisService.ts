@@ -329,6 +329,56 @@ export interface ConfluenceReading {
   error?: string
 }
 
+// ── Terminal cuantitativa (snapshot institucional estilo Bloomberg) ─
+export interface QuantSnapshot {
+  symbol: string
+  interval: string
+  last_price: number | null
+  candles: number
+  data_source?: string
+  volatility: {
+    annualized_pct: number | null
+    atr: number | null
+    atr_pct: number | null
+    regime: string
+    ratio_vs_median: number | null
+  }
+  returns: { h: number; pct: number | null }[]
+  z_last_return: number | null
+  risk: {
+    sharpe: number | null
+    sortino: number | null
+    max_drawdown_pct: number | null
+    current_drawdown_pct: number | null
+  }
+  range: {
+    high: number | null
+    low: number | null
+    pct_rank: number | null
+    dist_to_high_pct: number | null
+    dist_to_low_pct: number | null
+  }
+  market: { beta_btc: number | null; corr_btc: number | null }
+  volume: { has_volume: boolean; relative: number | null; z_score: number | null }
+  regime: {
+    label: string
+    direction: 'ALCISTA' | 'BAJISTA' | 'NEUTRAL'
+    strength: string
+    adx: number | null
+    plus_di: number | null
+    minus_di: number | null
+    sma20: number | null
+    sma50: number | null
+    price_vs_sma20_pct: number | null
+    price_vs_sma50_pct: number | null
+  }
+  bias: 'ALCISTA' | 'BAJISTA' | 'NEUTRAL'
+  bull_confirmations: number
+  spark: number[]
+  disclaimer: string
+  error?: string
+}
+
 // ── Caché en memoria con TTL ───────────────────────────────────────
 const _cache = new Map<string, { data: unknown; expires: number }>()
 function _cGet<T>(key: string): T | null {
@@ -377,6 +427,15 @@ export const analysisService = {
   /** Soportes/resistencias por pivotes + divergencias RSI/precio. */
   async getPriceStructure(assetSymbol: string, interval: IntervalType = '1h'): Promise<PriceStructure> {
     const { data } = await apiClient.get<PriceStructure>('/analysis/levels/', {
+      params: { asset_symbol: assetSymbol, interval },
+    })
+    return data
+  },
+
+  /** Terminal cuantitativa: snapshot institucional (volatilidad, riesgo,
+   * régimen, beta) derivado del OHLCV. Cacheado 3 min en el backend. */
+  async getQuantSnapshot(assetSymbol: string, interval: IntervalType = '1h'): Promise<QuantSnapshot> {
+    const { data } = await apiClient.get<QuantSnapshot>('/analysis/quant/', {
       params: { asset_symbol: assetSymbol, interval },
     })
     return data
