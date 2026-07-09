@@ -25,6 +25,7 @@ import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
 import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
 import WhaleMovementsPanel from '@/components/blockchain/WhaleMovementsPanel'
 import OnChainPressurePanel from '@/components/blockchain/OnChainPressurePanel'
+import MarketPulsePanel from '@/components/blockchain/MarketPulsePanel'
 import SmartMoneyPanel from '@/components/blockchain/SmartMoneyPanel'
 import WatchlistPanel from '@/components/blockchain/WatchlistPanel'
 
@@ -300,9 +301,10 @@ export default function BlockchainPage() {
           </>
         )}
 
-        {/* ── Mercado on-chain: comparador + estadísticas por cadena ── */}
+        {/* ── Mercado on-chain: pulso agregado + comparador por cadena ── */}
         {view === 'market' && (
           <>
+        <MarketPulsePanel />
         {/* ── Selector de chain ── */}
         <div className="flex flex-wrap gap-2 mb-6">
           {MULTICHAIN_SYMBOLS.map(s => (

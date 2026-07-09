@@ -1295,6 +1295,31 @@ class WhaleMovementsView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class OnChainMarketPulseView(APIView):
+    """
+    GET /api/blockchain/pulse/?hours=24 — Pulso on-chain de mercado: flujo neto
+    a/desde exchanges agregado de TODAS las redes escaneadas, con veredicto,
+    desglose por cadena/exchange/activo y serie temporal. Vista institucional.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 180
+
+    def get(self, request):
+        from core.application.use_cases.onchain_market_pulse import OnChainMarketPulseUseCase
+
+        try:
+            hours = min(max(int(request.query_params.get("hours", 24)), 1), 168)
+        except (TypeError, ValueError):
+            hours = 24
+        cache_key = f"onchain_pulse:{hours}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = OnChainMarketPulseUseCase().execute(hours=hours)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class OnChainPressureView(APIView):
     """
     GET /api/blockchain/pressure/?chain=ethereum&hours=24 — Indicador de presión

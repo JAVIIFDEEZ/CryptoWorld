@@ -350,7 +350,31 @@ export interface SmartMoneyRadar {
   error?: string
 }
 
+export interface OnChainPulse {
+  status: 'OK' | 'INSUFICIENTE'
+  hours?: number
+  verdict?: string
+  verdict_text?: string
+  pressure?: number
+  inflow_usd?: number
+  outflow_usd?: number
+  net_flow_usd?: number
+  movements?: number
+  classified?: number
+  chains?: { chain: string; net_flow_usd: number; inflow_usd: number; outflow_usd: number; movements: number }[]
+  exchanges?: { exchange: string; net_flow_usd: number; inflow_usd: number; outflow_usd: number; movements: number }[]
+  symbols?: { symbol: string; net_flow_usd: number; inflow_usd: number; outflow_usd: number; movements: number }[]
+  series?: { t: number; net_flow_usd: number; inflow_usd: number; outflow_usd: number }[]
+  note?: string
+}
+
 export const blockchainService = {
+  /** Pulso on-chain de mercado: flujo neto a/desde exchanges agregado. */
+  getMarketPulse: async (hours = 24): Promise<OnChainPulse> => {
+    const { data } = await apiClient.get<OnChainPulse>('/blockchain/pulse/', { params: { hours } })
+    return data
+  },
+
   /** Obtener datos históricos de una métrica on-chain de Bitcoin */
   getMetrics: async (
     metric: OnChainMetric = 'active_addresses',
