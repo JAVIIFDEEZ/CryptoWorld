@@ -171,17 +171,26 @@ function CandidateGrid({ top }: Readonly<{ top: EvolutionProgress['top'] }>) {
 
 export default function EvolutionLiveBoard({ progress }: Readonly<{ progress: EvolutionProgress }>) {
   const isGating = progress.phase === 'gating'
+  const isRefining = progress.phase === 'refining'
   const gen = progress.generation ?? Math.max(0, progress.history.length - 1)
   const total = progress.generations_total ?? progress.history.length
   const islands = progress.island_best?.length ?? 0
+  const phaseLabel = isGating ? 'Gating de robustez'
+    : isRefining ? 'Refinando finalistas'
+    : `Generación ${gen + 1}/${total}`
 
   return (
     <div className="space-y-4">
       {/* Chips de estado del motor */}
       <div className="flex flex-wrap items-center gap-2 text-[10px]">
         <span className="px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 font-medium">
-          {isGating ? 'Gating de robustez' : `Generación ${gen + 1}/${total}`}
+          {phaseLabel}
         </span>
+        {(progress.restarts_total ?? 1) > 1 && (
+          <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-medium">
+            Ronda {progress.restart}/{progress.restarts_total} · búsqueda hasta objetivo
+          </span>
+        )}
         {progress.evaluations != null && (
           <span className="px-2 py-0.5 rounded-full bg-slate-700/60 text-slate-300 font-mono">
             {progress.evaluations} genomas evaluados
@@ -233,8 +242,27 @@ export default function EvolutionLiveBoard({ progress }: Readonly<{ progress: Ev
         </div>
       )}
 
+      {/* Avance del refinamiento local (hill-climb re-validado) */}
+      {isRefining && progress.refining && (
+        <div>
+          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+            <span>Refinando finalistas: vecinos jitter re-validados con el gating completo</span>
+            <span className="font-mono">{progress.refining.current}/{progress.refining.total}</span>
+          </div>
+          <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
+              style={{ width: `${(progress.refining.current / Math.max(1, progress.refining.total)) * 100}%` }}
+            />
+          </div>
+          {progress.refining.candidate && (
+            <p className="text-[9px] text-slate-500 truncate mt-1">Afinando: {progress.refining.candidate}</p>
+          )}
+        </div>
+      )}
+
       {/* Curvas de equity de las mejores candidatas de la generación */}
-      {!isGating && progress.top && progress.top.length > 0 && (
+      {!isGating && !isRefining && progress.top && progress.top.length > 0 && (
         <div>
           <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1.5">
             Mejores candidatas de la generación · equity sobre la zona de evolución (el holdout queda intacto)

@@ -451,20 +451,44 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
 }
 
 function SummaryStrip({ report }: Readonly<{ report: GenerationReport }>) {
+  const s = report.summary
   const cards = [
-    { label: 'Robustas', value: report.summary.passed_gating, accent: 'text-emerald-400' },
+    { label: 'Libro robusto', value: s.passed_gating, accent: 'text-emerald-400' },
     { label: 'Candidatas evaluadas', value: report.ga_evolution.evaluations, accent: 'text-slate-200' },
     { label: 'Mejor fitness', value: report.ga_evolution.best_fitness.toFixed(2), accent: 'text-blue-300' },
     { label: 'Generaciones', value: report.ga_config.generations, accent: 'text-slate-200' },
   ]
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {cards.map((c) => (
-        <div key={c.label} className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-          <p className="text-[10px] text-slate-500 uppercase">{c.label}</p>
-          <p className={`text-2xl font-bold font-mono ${c.accent}`}>{c.value}</p>
-        </div>
-      ))}
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {cards.map((c) => (
+          <div key={c.label} className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+            <p className="text-[10px] text-slate-500 uppercase">{c.label}</p>
+            <p className={`text-2xl font-bold font-mono ${c.accent}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      {/* Rendimiento del generador: rondas, refinamiento y decorrelación */}
+      <div className="flex flex-wrap items-center gap-2 text-[10px]">
+        {(s.restarts ?? 1) > 1 && (
+          <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300">
+            {s.restarts} rondas de búsqueda (semillas frescas)
+          </span>
+        )}
+        {(s.refined ?? 0) > 0 && (
+          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+            {s.refined} finalista{s.refined === 1 ? '' : 's'} refinada{s.refined === 1 ? '' : 's'} (hill-climb re-validado)
+          </span>
+        )}
+        {(s.correlated_dropped ?? 0) > 0 && (
+          <span
+            className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300"
+            title={report.correlation_filter?.note}
+          >
+            {s.correlated_dropped} clon{s.correlated_dropped === 1 ? '' : 'es'} descartado{s.correlated_dropped === 1 ? '' : 's'} por correlación (libro decorrelacionado)
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -522,7 +546,17 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
           #{f.rank}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-slate-200 font-mono truncate">{f.description}</p>
+          <p className="text-sm text-slate-200 font-mono truncate">
+            {f.description}
+            {f.refined && (
+              <span
+                className="ml-2 text-[9px] align-middle px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-sans"
+                title={`Refinada por hill-climb re-validado (+${f.fitness_gain?.toFixed(3)} fitness)`}
+              >
+                refinada
+              </span>
+            )}
+          </p>
           <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-[11px] text-slate-500">
             <span>fitness <span className="text-blue-300 font-medium">{f.fitness.toFixed(2)}</span></span>
             <span>Sharpe OOS <span className="text-slate-300">{m.mean_oos_sharpe.toFixed(2)}</span></span>

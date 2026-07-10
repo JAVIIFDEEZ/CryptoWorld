@@ -103,6 +103,10 @@ export interface Finalist {
   gating: { checks: GatingChecks; metrics: GatingMetrics }
   evolution_metrics: { fitness: number; wf_efficiency: number; mean_oos_sharpe: number; pbo: number | null }
   holdout_validation: HoldoutMetrics
+  /** Refinamiento local: la finalista fue sustituida por un vecino mejor re-validado. */
+  refined?: boolean
+  refined_from?: string
+  fitness_gain?: number
 }
 
 /** Coordenadas de robustez de una candidata (para el universo 3D). */
@@ -150,7 +154,21 @@ export interface GenerationReport {
   ga_evolution: { history: GenerationHistoryPoint[]; evaluations: number; best_fitness: number; islands?: number }
   hall_of_fame?: { spec_hash: string; description: string; fitness: number }[]
   pareto_frontier?: ParetoPoint[]
-  summary: { candidates_gated: number; passed_gating: number; rejected: number }
+  summary: {
+    candidates_gated: number
+    passed_gating: number
+    passed_gating_total?: number
+    rejected: number
+    restarts?: number
+    refined?: number
+    correlated_dropped?: number
+  }
+  restarts?: { restart: number; seed: number; gated: number; passed_cumulative: number; evaluations_cumulative: number }[]
+  correlation_filter?: {
+    threshold: number
+    dropped: { spec_hash: string; description: string; fitness: number; correlated_with: { kept_hash: string; kept_description: string; corr: number } }[]
+    note: string
+  }
   ranking: Finalist[]
   candidates: Candidate[]
   rejected: (Candidate & { failed_checks: string[] })[]
@@ -174,9 +192,12 @@ export interface EvolutionCandidate {
 }
 
 export interface EvolutionProgress {
-  phase: 'evolving' | 'gating' | 'done'
+  phase: 'evolving' | 'gating' | 'refining' | 'done'
   generation?: number
   generations_total?: number
+  /** Ronda de búsqueda hasta objetivo (semilla fresca por ronda). */
+  restart?: number
+  restarts_total?: number
   best?: number
   mean?: number
   diversity?: number
@@ -188,6 +209,7 @@ export interface EvolutionProgress {
   history: GenerationHistoryPoint[]
   top?: EvolutionCandidate[]
   gating?: { current: number; total: number; passed: number; candidate?: string }
+  refining?: { current: number; total: number; candidate?: string }
   passed?: number
 }
 

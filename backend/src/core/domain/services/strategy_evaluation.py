@@ -121,6 +121,13 @@ def equity_curve(df, spec: dict, costs: CostModel | None = None, points: int = 1
     }
 
 
+def returns_series(df, spec: dict, costs: CostModel | None = None) -> np.ndarray:
+    """Serie completa de retornos por vela del spec sobre `df` (para medir la
+    correlación entre estrategias: un libro institucional quiere finalistas
+    DECORRELACIONADAS, no clones del mismo edge)."""
+    return np.asarray(_segment_backtest(df, spec, costs)["bar_returns"], dtype=float)
+
+
 def evaluate_fitness(
     df,
     spec: dict,

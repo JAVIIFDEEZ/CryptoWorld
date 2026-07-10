@@ -228,3 +228,98 @@ class TestParsimony:
         assert penal["fitness"] == pytest.approx(
             base["fitness"] - 0.05 * (n_conds - 3), abs=1e-6)
         assert base["complexity"] == n_conds
+
+
+class TestGenerateUntilTarget:
+    """Búsqueda hasta objetivo: rondas con semilla fresca hasta llenar el cupo."""
+
+    @pytest.mark.unit
+    def test_noise_exhausts_all_restarts(self):
+        from dataclasses import replace
+        cfg = replace(_small_config(), max_restarts=2, top_k=2, max_gating_attempts=3)
+        snapshots = []
+        report = generate_strategies(_noise_df(600), config=cfg,
+                                     progress_cb=snapshots.append)
+        # En ruido puro no se llena el cupo ⇒ se consumen las dos rondas
+        assert report["summary"]["restarts"] == 2
+        assert len(report["restarts"]) == 2
+        assert report["restarts"][0]["seed"] != report["restarts"][1]["seed"]
+        # La telemetría anuncia la ronda y la historia encadena generaciones
+        evolving = [s for s in snapshots if s["phase"] == "evolving"]
+        assert {s["restart"] for s in evolving} == {1, 2}
+        gens = [h["generation"] for h in evolving[-1]["history"]]
+        assert gens == sorted(gens) and len(set(gens)) == len(gens)
+
+    @pytest.mark.unit
+    def test_restart_stops_early_when_quota_filled(self):
+        from dataclasses import replace
+        # Cupo mínimo (top_k=1 + colchón) sobre serie con señal clara
+        cfg = replace(_small_config(), max_restarts=3, top_k=1, max_gating_attempts=6)
+        report = generate_strategies(_mean_reverting_df(700), config=cfg)
+        if report["summary"]["passed_gating_total"] >= 3:   # cupo 1+2 lleno en ronda 1
+            assert report["summary"]["restarts"] < 3
+
+
+class TestDecorrelatedBook:
+    """El ranking es un libro decorrelacionado, no clones del mismo edge."""
+
+    @pytest.mark.unit
+    def test_clones_are_dropped_best_kept(self):
+        from core.application.use_cases.generate_strategies import decorrelate_finalists
+        rng = np.random.default_rng(0)
+        base = rng.normal(0, 0.01, 300)
+        series = {
+            "A": base,                                   # fitness alto
+            "B": base * 1.0001 + 1e-7,                   # clon de A (ρ≈1)
+            "C": rng.normal(0, 0.01, 300),               # independiente
+        }
+        passed = [
+            {"spec_hash": "A", "description": "a", "fitness": 1.0},
+            {"spec_hash": "B", "description": "b", "fitness": 0.9},
+            {"spec_hash": "C", "description": "c", "fitness": 0.5},
+        ]
+        kept, dropped = decorrelate_finalists(
+            passed, lambda f: series[f["spec_hash"]], threshold=0.7)
+        assert [k["spec_hash"] for k in kept] == ["A", "C"]   # el clon B cae
+        assert dropped[0]["spec_hash"] == "B"
+        assert dropped[0]["correlated_with"]["kept_hash"] == "A"
+        assert abs(dropped[0]["correlated_with"]["corr"]) >= 0.7
+
+    @pytest.mark.unit
+    def test_zero_variance_series_never_clash(self):
+        from core.application.use_cases.generate_strategies import decorrelate_finalists
+        flat = np.zeros(100)
+        passed = [
+            {"spec_hash": "A", "description": "a", "fitness": 1.0},
+            {"spec_hash": "B", "description": "b", "fitness": 0.9},
+        ]
+        kept, dropped = decorrelate_finalists(passed, lambda f: flat, threshold=0.7)
+        assert len(kept) == 2 and not dropped
+
+    @pytest.mark.unit
+    def test_report_includes_correlation_filter(self):
+        report = generate_strategies(_mean_reverting_df(700), config=_small_config())
+        assert "correlation_filter" in report
+        assert report["correlation_filter"]["threshold"] == pytest.approx(0.7)
+        assert "correlated_dropped" in report["summary"]
+
+
+class TestRefinement:
+    """Refinamiento local: vecinos jitter re-gateados de cada finalista."""
+
+    @pytest.mark.unit
+    def test_refined_finalists_stay_validated(self):
+        from dataclasses import replace
+        cfg = replace(_small_config(), refine_neighbors=4)
+        snapshots = []
+        report = generate_strategies(_mean_reverting_df(700), config=cfg,
+                                     progress_cb=snapshots.append)
+        assert report["summary"]["refined"] >= 0
+        for f in report["ranking"]:
+            assert f["passed_gating"] is True               # jamás sin validar
+            if f.get("refined"):
+                assert f["fitness_gain"] > 0
+                assert f["refined_from"] != f["spec_hash"]
+        # Si hubo finalistas, la fase de refinamiento se anunció en vivo
+        if report["summary"]["passed_gating_total"] > 0:
+            assert any(s["phase"] == "refining" for s in snapshots)

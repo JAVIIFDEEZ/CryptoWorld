@@ -64,6 +64,22 @@ describe('EvolutionLiveBoard', () => {
     expect(screen.getByRole('img', { name: /Convergencia del fitness/ })).toBeInTheDocument()
   })
 
+  it('muestra la ronda de búsqueda hasta objetivo cuando hay varias', () => {
+    render(<EvolutionLiveBoard progress={{ ...EVOLVING, restart: 2, restarts_total: 3 }} />)
+    expect(screen.getByText(/Ronda 2\/3/)).toBeInTheDocument()
+  })
+
+  it('en fase de refinamiento muestra el avance del hill-climb', () => {
+    const refining: EvolutionProgress = {
+      phase: 'refining', history: HISTORY,
+      refining: { current: 2, total: 5, candidate: 'RSI(14) < 30' },
+    }
+    render(<EvolutionLiveBoard progress={refining} />)
+    expect(screen.getByText('Refinando finalistas')).toBeInTheDocument()
+    expect(screen.getByText('2/5')).toBeInTheDocument()
+    expect(screen.getByText(/Afinando: RSI\(14\) < 30/)).toBeInTheDocument()
+  })
+
   it('en fase de gating muestra el avance y las aprobadas', () => {
     const gating: EvolutionProgress = {
       phase: 'gating', history: HISTORY,
