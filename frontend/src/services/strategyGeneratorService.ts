@@ -20,6 +20,8 @@ export interface GenerateRequest {
   initial_capital?: number
   preset?: GenPreset
   optimizer?: 'single' | 'nsga'
+  /** Semilla reproducible del GA (misma semilla + mismos datos → misma evolución). */
+  seed?: number
 }
 
 export interface ParetoPoint {
@@ -123,6 +125,9 @@ export interface GenerationHistoryPoint {
   best: number
   mean: number
   diversity: number
+  island_best?: number[]
+  mutation_rate?: number
+  stagnation?: number
 }
 
 export interface GenerationReport {
@@ -142,7 +147,8 @@ export interface GenerationReport {
   ga_config: Record<string, number>
   gating_thresholds: Record<string, number>
   optimizer?: 'single' | 'nsga'
-  ga_evolution: { history: GenerationHistoryPoint[]; evaluations: number; best_fitness: number }
+  ga_evolution: { history: GenerationHistoryPoint[]; evaluations: number; best_fitness: number; islands?: number }
+  hall_of_fame?: { spec_hash: string; description: string; fitness: number }[]
   pareto_frontier?: ParetoPoint[]
   summary: { candidates_gated: number; passed_gating: number; rejected: number }
   ranking: Finalist[]
@@ -153,11 +159,44 @@ export interface GenerationReport {
 
 export type JobResult = GenerationReport | { error: string }
 
+// ── Telemetría en vivo de la evolución ─────────────────────────────
+
+/** Candidata visualizable: mejores de la generación con su curva de equity
+ *  (calculada SOLO sobre la zona de evolución; el holdout nunca se muestra). */
+export interface EvolutionCandidate {
+  hash: string
+  description: string
+  fitness: number
+  equity: number[]
+  total_return_pct: number
+  max_drawdown_pct: number
+  n_trades: number
+}
+
+export interface EvolutionProgress {
+  phase: 'evolving' | 'gating' | 'done'
+  generation?: number
+  generations_total?: number
+  best?: number
+  mean?: number
+  diversity?: number
+  island_best?: number[]
+  mutation_rate?: number
+  stagnation?: number
+  hypermutation?: boolean
+  evaluations?: number
+  history: GenerationHistoryPoint[]
+  top?: EvolutionCandidate[]
+  gating?: { current: number; total: number; passed: number; candidate?: string }
+  passed?: number
+}
+
 export interface StatusResponse {
   job_id: string
   status: JobStatus
   result?: JobResult
   error?: string
+  progress?: EvolutionProgress
 }
 
 export function isGenerationReport(r: JobResult | undefined): r is GenerationReport {

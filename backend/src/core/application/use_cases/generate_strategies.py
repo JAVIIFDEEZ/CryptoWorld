@@ -32,6 +32,7 @@ from core.domain.services import backtest_metrics as metrics
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_evaluation import (
     GatingThresholds,
+    equity_curve,
     evaluate_fitness,
     gate_spec,
     holdout_performance,
@@ -56,26 +57,32 @@ class GenerationConfig:
     commission_bps: float = 10.0       # comisión por lado (realismo de costes)
     slippage_bps: float = 5.0          # deslizamiento por lado
     optimizer: str = "single"          # "single" (fitness escalar) | "nsga" (multi-objetivo)
+    parsimony: float = 0.0             # presión de simplicidad (por condición > 3)
     ga: GAConfig = GAConfig()
     gating: GatingThresholds = GatingThresholds()
 
 
 # Presets de cómputo: el GA hace cientos de walk-forwards, así que el usuario
-# elige cuánto exhaustividad/espera quiere.
+# elige cuánto exhaustividad/espera quiere. Los tres activan el grado
+# StrategyQuant: hipermutación anti-estancamiento y presión de parsimonia;
+# balanced/thorough añaden el modelo de islas con migración.
 _PRESETS = {
     "fast": GenerationConfig(
-        top_k=3, max_gating_attempts=6,
-        ga=GAConfig(population_size=24, generations=8, elitism=3, random_injection=2),
+        top_k=3, max_gating_attempts=6, parsimony=0.03,
+        ga=GAConfig(population_size=24, generations=8, elitism=3, random_injection=2,
+                    stagnation_patience=3),
         gating=GatingThresholds(wf_splits=3, pbo_neighbors=8, mc_sims=200),
     ),
     "balanced": GenerationConfig(
-        top_k=5, max_gating_attempts=12,
-        ga=GAConfig(population_size=40, generations=15, elitism=4, random_injection=2),
+        top_k=5, max_gating_attempts=12, parsimony=0.03,
+        ga=GAConfig(population_size=40, generations=15, elitism=4, random_injection=2,
+                    islands=2, migration_every=4, stagnation_patience=4),
         gating=GatingThresholds(wf_splits=4, pbo_neighbors=12, mc_sims=400),
     ),
     "thorough": GenerationConfig(
-        top_k=6, max_gating_attempts=18,
-        ga=GAConfig(population_size=60, generations=25, elitism=6, random_injection=3),
+        top_k=6, max_gating_attempts=18, parsimony=0.03,
+        ga=GAConfig(population_size=60, generations=25, elitism=6, random_injection=3,
+                    islands=3, migration_every=4, stagnation_patience=4, hof_size=24),
         gating=GatingThresholds(wf_splits=4, pbo_neighbors=16, mc_sims=800),
     ),
 }
@@ -97,7 +104,7 @@ def _json_safe(value):
     return value
 
 
-def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs):
+def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs, on_generation=None):
     """
     Optimización multi-objetivo: maximizar Sharpe OOS, minimizar drawdown y
     minimizar sobreajuste. Devuelve los specs de la frontera de Pareto (como
@@ -105,7 +112,8 @@ def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs):
     evaluaciones y la frontera con sus objetivos.
     """
     def objectives(spec: dict) -> tuple:
-        ev = evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy, costs=costs)
+        ev = evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
+                              costs=costs, parsimony=cfg.parsimony)
         if ev["n_trades"] < 8 or ev["efficiency"] == 0:
             return (-99.0, -99.0, -99.0)            # degeneradas: dominadas por todo
         return (ev["mean_oos_sharpe"], -ev["max_drawdown_pct"] / 100.0, -ev["overfit_gap"])
@@ -118,7 +126,7 @@ def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs):
         seed_fraction=cfg.ga.seed_fraction,
         seed=cfg.ga.seed,
     )
-    res = evolve_nsga(objectives, nsga_cfg)
+    res = evolve_nsga(objectives, nsga_cfg, on_generation=on_generation)
 
     candidate_specs = [{"spec": p["spec"], "fitness": p["objectives"][0]} for p in res["pareto"]]
     history = [
@@ -154,10 +162,17 @@ def generate_strategies(
     interval: str = "1d",
     config: GenerationConfig | None = None,
     initial_capital: float = 10000.0,
+    progress_cb=None,
 ) -> dict:
     """
     Genera estrategias por GA y devuelve el informe con el ranking de finalistas
     que pasan el gating de robustez. Función pura (solo dominio).
+
+    `progress_cb(snapshot)` (opcional): telemetría en vivo. Se invoca al cerrar
+    cada generación con la convergencia acumulada y las CURVAS DE EQUITY de los
+    mejores candidatos (calculadas SOLO sobre la zona de evolución: el holdout
+    jamás aparece en la telemetría), y durante el gating con su avance. Fases:
+    "evolving" → "gating" → "done".
     """
     cfg = config or GenerationConfig()
     ppy = metrics.annualization_factor(interval)
@@ -166,22 +181,79 @@ def generate_strategies(
     # ── PASO 5: partición anti data-snooping ──────────────────────────
     df_evo, df_holdout, split = _partition(df, cfg.holdout_fraction)
 
+    # ── Telemetría en vivo: curvas de equity por candidato (cacheadas) ─
+    equity_cache: dict[str, dict] = {}
+    live_history: list[dict] = []
+
+    def _candidate_card(entry: dict) -> dict:
+        h = entry["hash"]
+        if h not in equity_cache:
+            equity_cache[h] = equity_curve(df_evo, entry["spec"], costs=costs)
+        return {
+            "hash": h,
+            "description": describe_spec(entry["spec"]),
+            "fitness": entry["fitness"],
+            **equity_cache[h],
+        }
+
+    def _on_generation(snap: dict) -> None:
+        live_history.append({k: snap[k] for k in
+                             ("generation", "best", "mean", "diversity")})
+        if progress_cb is None:
+            return
+        top_cards = [_candidate_card(e) for e in snap.get("top", [])[:6]]
+        progress_cb(_json_safe({
+            "phase": "evolving",
+            "generation": snap["generation"],
+            "generations_total": snap["generations_total"],
+            "best": snap["best"],
+            "mean": snap["mean"],
+            "diversity": snap["diversity"],
+            "island_best": snap.get("island_best", []),
+            "mutation_rate": snap.get("mutation_rate"),
+            "stagnation": snap.get("stagnation", 0),
+            "hypermutation": snap.get("hypermutation", False),
+            "evaluations": snap.get("evaluations", 0),
+            "history": list(live_history),
+            "top": top_cards,
+        }))
+
     # ── PASO 3: optimización SOLO sobre la zona de evolución ──────────
     # "single": un fitness escalar robustez-aware. "nsga": multi-objetivo
     # (maximizar Sharpe OOS, minimizar drawdown y sobreajuste) → frontera de Pareto.
     pareto_frontier: list[dict] = []
+    hall_of_fame: list[dict] = []
+    n_islands = 1
     if cfg.optimizer == "nsga":
-        candidate_specs, ga_history, evaluations, pareto_frontier = _run_nsga(df_evo, cfg, ppy, costs)
+        candidate_specs, ga_history, evaluations, pareto_frontier = _run_nsga(
+            df_evo, cfg, ppy, costs, on_generation=_on_generation)
     else:
         def fitness_fn(spec: dict) -> float:
-            return evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy, costs=costs)["fitness"]
-        ga_result = evolve(fitness_fn, cfg.ga)
-        candidate_specs = [{"spec": p["spec"], "fitness": p["fitness"]} for p in ga_result["population"]]
+            return evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
+                                    costs=costs, parsimony=cfg.parsimony)["fitness"]
+        ga_result = evolve(fitness_fn, cfg.ga, on_generation=_on_generation)
+        # Pool de candidatas: hall of fame (mejores-de-siempre) primero, luego la
+        # población final — el HoF domina estrictamente a la población sola.
+        seen_hashes: set[str] = set()
+        candidate_specs = []
+        for p in ga_result["hall_of_fame"] + ga_result["population"]:
+            if p["hash"] in seen_hashes:
+                continue
+            seen_hashes.add(p["hash"])
+            candidate_specs.append({"spec": p["spec"], "fitness": p["fitness"]})
+        candidate_specs.sort(key=lambda c: c["fitness"], reverse=True)
         ga_history, evaluations = ga_result["history"], ga_result["evaluations"]
+        n_islands = ga_result.get("islands", 1)
+        hall_of_fame = [
+            {"spec_hash": p["hash"], "description": describe_spec(p["spec"]),
+             "fitness": p["fitness"]}
+            for p in ga_result["hall_of_fame"][:10]
+        ]
 
     # ── PASO 4: gating de robustez de los mejores candidatos ──────────
     # Recorremos la población ordenada por fitness; el holdout (PASO 5) se mide
     # pero NO decide la selección/ranking (sería snooping de la validación).
+    gating_total = min(cfg.max_gating_attempts, len(candidate_specs))
     finalists: list[dict] = []
     attempts = 0
     for cand in candidate_specs:
@@ -189,6 +261,14 @@ def generate_strategies(
             break
         attempts += 1
         spec = cand["spec"]
+        if progress_cb is not None:
+            progress_cb(_json_safe({
+                "phase": "gating",
+                "gating": {"current": attempts, "total": gating_total,
+                           "passed": sum(1 for f in finalists if f["passed_gating"]),
+                           "candidate": describe_spec(spec)},
+                "history": list(live_history),
+            }))
         gate = gate_spec(df_evo, spec, cfg.gating, ppy=ppy, costs=costs)
         holdout = holdout_performance(df_holdout, spec, ppy=ppy, costs=costs)
         finalists.append({
@@ -261,7 +341,9 @@ def generate_strategies(
             "history": ga_history,
             "evaluations": evaluations,
             "best_fitness": max((c["fitness"] for c in candidate_specs), default=0.0),
+            "islands": n_islands,
         },
+        "hall_of_fame": hall_of_fame,
         "pareto_frontier": pareto_frontier,
         "summary": {
             "candidates_gated": len(finalists),
@@ -278,6 +360,9 @@ def generate_strategies(
             for f in rejected
         ],
     }
+    if progress_cb is not None:
+        progress_cb(_json_safe({"phase": "done", "history": list(live_history),
+                                "passed": len(passed)}))
     return _json_safe(report)
 
 
@@ -294,6 +379,8 @@ class GenerateStrategiesUseCase:
         optimizer: str = "single",
         config: GenerationConfig | None = None,
         persist: bool = True,
+        seed: int | None = None,
+        progress_cb=None,
     ) -> dict:
         # Import diferido: mantiene generate_strategies (dominio puro) importable
         # sin arrastrar infraestructura/Django.
@@ -313,8 +400,13 @@ class GenerateStrategiesUseCase:
         cfg = config or config_for_preset(preset)
         if optimizer in ("single", "nsga"):
             cfg = replace(cfg, optimizer=optimizer)
+        if seed is not None:
+            # Semilla reproducible elegida por el usuario (mismos datos + misma
+            # semilla → misma evolución), como en StrategyQuant.
+            cfg = replace(cfg, ga=replace(cfg.ga, seed=int(seed)))
         report = generate_strategies(
             result.df, interval=interval, config=cfg, initial_capital=initial_capital,
+            progress_cb=progress_cb,
         )
         report["asset_symbol"] = symbol
         report["data_source"] = result.source

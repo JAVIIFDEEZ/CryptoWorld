@@ -156,3 +156,75 @@ class TestMultiObjective:
         # Cada punto del frente trae sus tres objetivos
         for p in report["pareto_frontier"]:
             assert "oos_sharpe" in p and "max_drawdown_pct" in p and "overfit_gap" in p
+
+
+class TestLiveTelemetry:
+    """Telemetría en vivo del generador: fases, convergencia y curvas de equity."""
+
+    @pytest.mark.unit
+    def test_progress_phases_and_equity_curves(self):
+        snapshots = []
+        generate_strategies(_mean_reverting_df(700), interval="1d",
+                            config=_small_config(), progress_cb=snapshots.append)
+        phases = [s["phase"] for s in snapshots]
+        # Evoluciona → gatea → termina, en ese orden
+        assert phases[0] == "evolving"
+        assert "gating" in phases
+        assert phases[-1] == "done"
+        assert phases.index("gating") > phases.index("evolving")
+
+        evolving = [s for s in snapshots if s["phase"] == "evolving"]
+        assert len(evolving) == 6                      # una por generación
+        last = evolving[-1]
+        # Convergencia acumulada y candidatas visualizables con su curva
+        assert len(last["history"]) == 6
+        assert 0 < len(last["top"]) <= 6
+        for card in last["top"]:
+            eq = card["equity"]
+            assert 2 <= len(eq) <= 120                 # submuestreada
+            assert eq[0] == pytest.approx(1.0)         # base normalizada
+            assert {"hash", "description", "fitness", "total_return_pct",
+                    "n_trades"} <= set(card)
+
+        gating = [s for s in snapshots if s["phase"] == "gating"]
+        assert all(g["gating"]["current"] <= g["gating"]["total"] for g in gating)
+
+    @pytest.mark.unit
+    def test_equity_curve_helper(self):
+        df = _mean_reverting_df(500)
+        out = ev.equity_curve(df, seed_specs()[0], points=80)
+        assert out["equity"][0] == pytest.approx(1.0)
+        assert len(out["equity"]) <= 80
+        assert "total_return_pct" in out and "n_trades" in out
+
+    @pytest.mark.unit
+    def test_report_includes_hall_of_fame_and_islands(self):
+        from dataclasses import replace
+        cfg = replace(_small_config(),
+                      ga=GAConfig(population_size=20, generations=6, seed=7, islands=2))
+        report = generate_strategies(_mean_reverting_df(700), config=cfg)
+        assert report["ga_evolution"]["islands"] == 2
+        assert len(report["hall_of_fame"]) > 0
+        assert {"spec_hash", "description", "fitness"} <= set(report["hall_of_fame"][0])
+
+
+class TestParsimony:
+    """Presión de simplicidad al estilo StrategyQuant."""
+
+    @pytest.mark.unit
+    def test_complexity_penalty_lowers_fitness_of_complex_specs(self):
+        df = _mean_reverting_df(600)
+        # Spec artificialmente complejo: duplicamos condiciones de una semilla
+        spec = seed_specs()[0]
+        complex_spec = {
+            "entry": {"combine": spec["entry"]["combine"],
+                      "conditions": spec["entry"]["conditions"] * 3},
+            "exit": spec["exit"],
+        }
+        base = ev.evaluate_fitness(df, complex_spec, n_splits=3, parsimony=0.0)
+        penal = ev.evaluate_fitness(df, complex_spec, n_splits=3, parsimony=0.05)
+        n_conds = ev.spec_complexity(complex_spec)
+        assert n_conds > 3
+        assert penal["fitness"] == pytest.approx(
+            base["fitness"] - 0.05 * (n_conds - 3), abs=1e-6)
+        assert base["complexity"] == n_conds

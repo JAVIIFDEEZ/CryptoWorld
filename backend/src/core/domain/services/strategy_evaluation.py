@@ -95,6 +95,32 @@ def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_
     }
 
 
+def spec_complexity(spec: dict) -> int:
+    """Nº total de condiciones del spec (entrada + salida): su 'tamaño genético'."""
+    return len(spec.get("entry", {}).get("conditions", [])) + \
+        len(spec.get("exit", {}).get("conditions", []))
+
+
+def equity_curve(df, spec: dict, costs: CostModel | None = None, points: int = 120) -> dict:
+    """
+    Curva de equity normalizada (base 1.0) del spec sobre `df`, submuestreada a
+    ≤ `points` puntos: alimenta la telemetría visual en vivo del generador sin
+    inflar el payload. Devuelve además las métricas de cabecera de la curva.
+    """
+    bt = _segment_backtest(df, spec, costs)
+    r = np.asarray(bt["bar_returns"], dtype=float)
+    eq = np.concatenate([[1.0], np.cumprod(1.0 + r)])
+    if eq.size > points:
+        idx = np.linspace(0, eq.size - 1, points).astype(int)
+        eq = eq[idx]
+    return {
+        "equity": [round(float(v), 5) for v in eq],
+        "total_return_pct": bt["total_return_pct"],
+        "max_drawdown_pct": bt["max_drawdown_pct"],
+        "n_trades": bt["total_trades"],
+    }
+
+
 def evaluate_fitness(
     df,
     spec: dict,
@@ -103,11 +129,15 @@ def evaluate_fitness(
     min_trades: int = 8,
     target_trades: int = 25,
     costs: CostModel | None = None,
+    parsimony: float = 0.0,
 ) -> dict:
     """
     Fitness robustez-aware (NO retorno in-sample): Sharpe OOS del walk-forward
     NETO de costes, penalizando el sobreajuste (gap Sharpe IS−OOS), el bajo nº de
     operaciones y la rotación excesiva (que en datos reales sangra en comisiones).
+    `parsimony` > 0 añade presión de simplicidad al estilo StrategyQuant: cada
+    condición por encima de 3 resta `parsimony` al fitness (a igual rendimiento,
+    gana la estrategia más simple — menos grados de libertad, menos sobreajuste).
     """
     full = _segment_backtest(df, spec, costs)
     n_trades = full["total_trades"]
@@ -118,8 +148,9 @@ def evaluate_fitness(
     trade_penalty = 0.0 if n_trades >= target_trades else (target_trades - n_trades) / target_trades
     # Penalización suave de rotación excesiva (complementa a los costes ya aplicados)
     turnover_penalty = max(0.0, full["turnover"] - 30.0) * 0.02
+    complexity_penalty = parsimony * max(0, spec_complexity(spec) - 3)
 
-    fitness = mean_oos - 0.5 * overfit_gap - 1.0 * trade_penalty - turnover_penalty
+    fitness = mean_oos - 0.5 * overfit_gap - 1.0 * trade_penalty - turnover_penalty - complexity_penalty
     if n_trades < min_trades or wf["n_folds"] == 0:
         fitness -= 3.0  # estrategias degeneradas (casi sin operar) mueren
 
@@ -134,6 +165,7 @@ def evaluate_fitness(
         "max_drawdown_pct": full["max_drawdown_pct"],
         "turnover": full["turnover"],
         "cost_drag_pct": full["total_commission_pct"],
+        "complexity": spec_complexity(spec),
     }
 
 

@@ -100,3 +100,67 @@ class TestOperators:
             spec = random_spec(rng)
             mutated = ga.mutate(spec, rng)
             assert validate_spec(mutated)
+
+
+class TestStrategyQuantGrade:
+    """Capacidades de grado StrategyQuant: islas, hipermutación, hall of fame
+    y telemetría por generación (on_generation)."""
+
+    @pytest.mark.unit
+    def test_island_model_runs_and_reports(self):
+        cfg = ga.GAConfig(population_size=30, generations=10, seed=3,
+                          islands=3, migration_every=3, migration_k=2)
+        res = ga.evolve(_known_signal_fitness, cfg)
+        assert res["islands"] == 3
+        # La historia registra el mejor de CADA isla en cada generación
+        assert all(len(h["island_best"]) == 3 for h in res["history"])
+        # Elitismo global: el mejor sigue sin empeorar
+        best = [h["best"] for h in res["history"]]
+        assert all(b2 >= b1 for b1, b2 in zip(best, best[1:]))
+        assert best[-1] > best[0]
+
+    @pytest.mark.unit
+    def test_island_model_deterministic(self):
+        cfg = ga.GAConfig(population_size=24, generations=6, seed=11, islands=2)
+        a = ga.evolve(_known_signal_fitness, cfg)
+        b = ga.evolve(_known_signal_fitness, cfg)
+        assert a["best"]["hash"] == b["best"]["hash"]
+        assert [h["best"] for h in a["history"]] == [h["best"] for h in b["history"]]
+
+    @pytest.mark.unit
+    def test_hall_of_fame_holds_best_ever(self):
+        cfg = ga.GAConfig(population_size=24, generations=8, seed=5, hof_size=10)
+        res = ga.evolve(_known_signal_fitness, cfg)
+        hof = res["hall_of_fame"]
+        assert 0 < len(hof) <= 10
+        # Ordenado desc y sin duplicados
+        fits = [h["fitness"] for h in hof]
+        assert fits == sorted(fits, reverse=True)
+        assert len({h["hash"] for h in hof}) == len(hof)
+        # El campeón del HoF es al menos tan bueno como el mejor de la población final
+        assert hof[0]["fitness"] >= res["population"][0]["fitness"]
+
+    @pytest.mark.unit
+    def test_hypermutation_kicks_in_on_stagnation(self):
+        # Fitness constante: no hay mejora posible ⇒ estancamiento garantizado
+        cfg = ga.GAConfig(population_size=20, generations=8, seed=2,
+                          stagnation_patience=2, hypermutation_factor=2.0,
+                          mutation_rate=0.3)
+        res = ga.evolve(lambda spec: 1.0, cfg)
+        rates = [h["mutation_rate"] for h in res["history"]]
+        assert rates[0] == pytest.approx(0.3, abs=1e-9)      # arranque normal
+        assert max(rates) == pytest.approx(0.6, abs=1e-9)    # hipermutación ×2
+        assert max(h["stagnation"] for h in res["history"]) >= 2
+
+    @pytest.mark.unit
+    def test_on_generation_telemetry(self):
+        snapshots = []
+        cfg = ga.GAConfig(population_size=20, generations=6, seed=9, islands=2)
+        ga.evolve(_known_signal_fitness, cfg, on_generation=snapshots.append)
+        assert len(snapshots) == 6
+        assert [s["generation"] for s in snapshots] == list(range(6))
+        for s in snapshots:
+            assert s["generations_total"] == 6
+            assert len(s["top"]) > 0
+            assert all({"spec", "hash", "fitness"} <= set(t) for t in s["top"])
+            assert all(validate_spec(t["spec"]) for t in s["top"])

@@ -21,7 +21,9 @@ import {
   type LaunchResponse,
   type SavedStrategy,
   type SignalEvent,
+  type EvolutionProgress,
 } from '@/services/strategyGeneratorService'
+import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
 import PaperTradingPanel from '@/components/generator/PaperTradingPanel'
@@ -39,8 +41,8 @@ const PRESETS: { value: GenPreset; labelKey: string; hint: string }[] = [
   { value: 'thorough', labelKey: 'generator.presetThorough', hint: 'Población 60 · 25 generaciones' },
 ]
 
-const POLL_MS = 3000
-const MAX_POLLS = 140 // ~7 min de techo
+const POLL_MS = 2000   // más rápido: la telemetría en vivo se refresca cada poll
+const MAX_POLLS = 210  // ~7 min de techo
 
 type Phase = 'idle' | 'running' | 'done' | 'error'
 
@@ -64,6 +66,7 @@ export default function StrategyGeneratorPage() {
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [report, setReport] = useState<GenerationReport | null>(null)
+  const [progress, setProgress] = useState<EvolutionProgress | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [elapsed, setElapsed] = useState(0)
 
@@ -103,6 +106,7 @@ export default function StrategyGeneratorPage() {
     stopTimers()
     setPhase('running')
     setReport(null)
+    setProgress(null)
     setErrorMsg('')
     setElapsed(0)
     tickRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000)
@@ -116,6 +120,7 @@ export default function StrategyGeneratorPage() {
         attempts += 1
         try {
           const s = await strategyGeneratorService.getStatus(job_id)
+          if (s.progress) setProgress(s.progress)
           if (s.status === 'SUCCESS') {
             stopTimers()
             if (isGenerationReport(s.result)) {
@@ -290,7 +295,9 @@ export default function StrategyGeneratorPage() {
 
       {/* Estados */}
       {phase === 'idle' && <IdleHint symbol={symbol} />}
-      {phase === 'running' && <RunningState elapsed={elapsed} message={runMsg} preset={preset} />}
+      {phase === 'running' && (
+        <RunningState elapsed={elapsed} message={runMsg} preset={preset} progress={progress} />
+      )}
       {phase === 'error' && (
         <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">{errorMsg}</div>
       )}
@@ -354,25 +361,32 @@ function IdleHint({ symbol }: Readonly<{ symbol: string }>) {
   )
 }
 
-function RunningState({ elapsed, message, preset }: Readonly<{ elapsed: number; message: string; preset: GenPreset }>) {
+function RunningState({ elapsed, message, preset, progress }: Readonly<{
+  elapsed: number; message: string; preset: GenPreset; progress: EvolutionProgress | null
+}>) {
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-10">
-      <div className="flex flex-col items-center gap-4">
-        <div className="relative w-16 h-16">
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+      {/* Cabecera compacta con el spinner */}
+      <div className="flex items-center gap-4 mb-2">
+        <div className="relative w-10 h-10 shrink-0">
           <div className="absolute inset-0 border-2 border-slate-700 rounded-full" />
           <div className="absolute inset-0 border-2 border-transparent border-t-blue-400 border-r-purple-400 rounded-full animate-spin" />
-          <div className="absolute inset-0 flex items-center justify-center text-lg">🧬</div>
+          <div className="absolute inset-0 flex items-center justify-center text-sm">🧬</div>
         </div>
-        <div className="text-center">
-          <p className="text-slate-200 text-sm font-medium">{message}</p>
-          <p className="text-slate-500 text-xs mt-1">
-            Modo {preset} · {elapsed}s transcurridos
-          </p>
-        </div>
-        <div className="w-full max-w-md h-1 bg-slate-700 rounded-full overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse" style={{ width: `${Math.min(95, elapsed * 3)}%` }} />
+        <div className="min-w-0">
+          <p className="text-slate-200 text-sm font-medium truncate">{message}</p>
+          <p className="text-slate-500 text-xs mt-0.5">Modo {preset} · {elapsed}s transcurridos</p>
         </div>
       </div>
+
+      {/* Evolución en vivo: convergencia + curvas de equity de las candidatas */}
+      {progress ? (
+        <EvolutionLiveBoard progress={progress} />
+      ) : (
+        <div className="w-full max-w-md mx-auto h-1 bg-slate-700 rounded-full overflow-hidden mt-4">
+          <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse" style={{ width: `${Math.min(95, elapsed * 3)}%` }} />
+        </div>
+      )}
     </div>
   )
 }

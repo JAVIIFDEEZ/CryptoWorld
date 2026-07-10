@@ -416,6 +416,10 @@ class StrategyGenerateRequestSerializer(serializers.Serializer):
     optimizer = serializers.ChoiceField(
         choices=["single", "nsga"], default="single", required=False,
     )
+    # Semilla reproducible del GA (mismos datos + misma semilla → misma evolución)
+    seed = serializers.IntegerField(
+        min_value=0, max_value=2**31 - 1, required=False, allow_null=True,
+    )
 
 
 class SpecRobustnessRequestSerializer(serializers.Serializer):

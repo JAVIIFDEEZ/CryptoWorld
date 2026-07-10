@@ -353,6 +353,7 @@ def generate_strategies(
     initial_capital: float = 10000.0,
     preset: str = "balanced",
     optimizer: str = "single",
+    seed: int | None = None,
 ) -> dict:
     """
     Genera estrategias por algoritmo genético: evoluciona StrategySpecs con
@@ -361,14 +362,26 @@ def generate_strategies(
     en el tramo de validación final intacto. Persiste el ranking como
     StrategyDefinition.
 
+    Telemetría en vivo: cada generación publica en cache (Redis) un snapshot con
+    la convergencia y las curvas de equity de los mejores candidatos bajo
+    `strategy_gen_progress:<job_id>`; StrategyGenerateStatusView lo sirve al
+    frontend mientras el job corre.
+
     Lanzada con .delay() desde StrategyGenerateLaunchView; el cliente consulta el
     resultado con el job_id (AsyncResult). No reintenta: es costosa y un fallo de
     datos ya se devuelve como payload {"error": ...}.
     """
     try:
+        from django.core.cache import cache as django_cache
         from core.application.use_cases.generate_strategies import (
             GenerateStrategiesUseCase,
         )
+
+        job_id = getattr(self.request, "id", None)
+
+        def publish(snapshot: dict) -> None:
+            if job_id:
+                django_cache.set(f"strategy_gen_progress:{job_id}", snapshot, 3600)
 
         result = GenerateStrategiesUseCase().execute(
             asset_symbol=asset_symbol,
@@ -377,6 +390,8 @@ def generate_strategies(
             initial_capital=initial_capital,
             preset=preset,
             optimizer=optimizer,
+            seed=seed,
+            progress_cb=publish if job_id else None,
         )
         logger.info(
             "generate_strategies: %s → %s finalistas robustos",

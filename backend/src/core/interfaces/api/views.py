@@ -1814,6 +1814,7 @@ class StrategyGenerateLaunchView(APIView):
             initial_capital=v.get("initial_capital", 10000.0),
             preset=v.get("preset", "balanced"),
             optimizer=v.get("optimizer", "single"),
+            seed=v.get("seed"),
         )
         return Response(
             {
@@ -1830,7 +1831,10 @@ class StrategyGenerateStatusView(APIView):
     GET /api/strategies/generate/<job_id>/ — Estado/resultado del generador.
 
     status: PENDING | STARTED | SUCCESS | FAILURE. Con SUCCESS incluye el
-    informe completo con el ranking de finalistas en `result`.
+    informe completo con el ranking de finalistas en `result`. Mientras corre,
+    `progress` trae la telemetría en vivo de la evolución (convergencia por
+    generación + curvas de equity de los mejores candidatos + fase de gating),
+    publicada en cache por la tarea.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1845,6 +1849,10 @@ class StrategyGenerateStatusView(APIView):
             payload["result"] = res.result
         elif res.failed():
             payload["error"] = "El generador de estrategias falló durante la ejecución."
+        else:
+            progress = cache.get(f"strategy_gen_progress:{job_id}")
+            if progress is not None:
+                payload["progress"] = progress
 
         return Response(payload, status=status.HTTP_200_OK)
 

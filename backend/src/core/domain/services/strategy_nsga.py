@@ -102,7 +102,11 @@ def crowding_distance(front: list[int], objs: list[tuple]) -> dict[int, float]:
     return dist
 
 
-def evolve_nsga(objectives_fn: Callable[[dict], tuple], config: NSGAConfig | None = None) -> dict:
+def evolve_nsga(
+    objectives_fn: Callable[[dict], tuple],
+    config: NSGAConfig | None = None,
+    on_generation: Callable[[dict], None] | None = None,
+) -> dict:
     """
     Evoluciona la población con NSGA-II y devuelve la frontera de Pareto.
 
@@ -160,6 +164,25 @@ def evolve_nsga(objectives_fn: Callable[[dict], tuple], config: NSGAConfig | Non
             "n_pareto": len(fronts[0]) if fronts else 0,
             "best_per_objective": [round(max(o[k] for o in objs), 4) for k in range(n_obj)] if objs else [],
         })
+
+        if on_generation is not None:
+            # El primer objetivo (Sharpe OOS) hace de "fitness" en la telemetría;
+            # el frente 0 ordenado por él aporta los candidatos visualizables.
+            front0 = sorted(fronts[0], key=lambda i: objs[i][0], reverse=True) if fronts else []
+            on_generation({
+                "generation": gen,
+                "generations_total": cfg.generations,
+                "best": round(max((o[0] for o in objs), default=0.0), 4),
+                "mean": round(float(np.mean([o[0] for o in objs])), 4) if objs else 0.0,
+                "diversity": len({spec_hash(s) for s in pop}),
+                "island_best": [],
+                "mutation_rate": cfg.mutation_rate,
+                "stagnation": 0,
+                "hypermutation": False,
+                "top": [{"spec": pop[i], "hash": spec_hash(pop[i]),
+                         "fitness": round(objs[i][0], 4)} for i in front0[:8]],
+                "evaluations": len(cache),
+            })
 
         if gen == cfg.generations - 1:
             break

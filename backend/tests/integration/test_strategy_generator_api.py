@@ -50,13 +50,14 @@ def fast_generator(monkeypatch):
     )
     real = gs.generate_strategies
 
-    def small(df, interval="1d", config=None, initial_capital=10000.0):
+    def small(df, interval="1d", config=None, initial_capital=10000.0, progress_cb=None):
         cfg = gs.GenerationConfig(
             holdout_fraction=0.2, top_k=3, max_gating_attempts=5,
             ga=GAConfig(population_size=18, generations=5, seed=7),
             gating=GatingThresholds(wf_splits=3, pbo_neighbors=6, mc_sims=120, min_trades=8),
         )
-        return real(df, interval=interval, config=cfg, initial_capital=initial_capital)
+        return real(df, interval=interval, config=cfg, initial_capital=initial_capital,
+                    progress_cb=progress_cb)
 
     monkeypatch.setattr(gs, "generate_strategies", small)
 
@@ -183,3 +184,52 @@ class TestPresets:
         assert fast.ga.generations < thorough.ga.generations
         # preset desconocido cae al balanceado
         assert config_for_preset("xxx").ga.population_size == config_for_preset("balanced").ga.population_size
+
+
+class TestLiveProgressApi:
+    """Telemetría en vivo: el endpoint de estado sirve el snapshot de progreso
+    publicado en cache mientras el job no ha terminado."""
+
+    @pytest.mark.integration
+    def test_status_returns_progress_while_running(self, authenticated_client):
+        from django.core.cache import cache as django_cache
+
+        job_id = "test-live-progress-job"
+        snapshot = {
+            "phase": "evolving", "generation": 3, "generations_total": 15,
+            "best": 0.42, "mean": 0.1, "diversity": 30,
+            "history": [{"generation": g, "best": 0.1 * g, "mean": 0.05 * g,
+                         "diversity": 30} for g in range(4)],
+            "top": [{"hash": "abc123", "description": "RSI<30 → RSI>70",
+                     "fitness": 0.42, "equity": [1.0, 1.02, 1.05],
+                     "total_return_pct": 5.0, "max_drawdown_pct": -2.0,
+                     "n_trades": 14}],
+        }
+        django_cache.set(f"strategy_gen_progress:{job_id}", snapshot, 60)
+        try:
+            resp = authenticated_client.get(f"/api/strategies/generate/{job_id}/")
+            assert resp.status_code == 200
+            assert resp.data["status"] == "PENDING"       # job desconocido = aún corre
+            assert resp.data["progress"]["phase"] == "evolving"
+            assert resp.data["progress"]["top"][0]["equity"] == [1.0, 1.02, 1.05]
+            assert len(resp.data["progress"]["history"]) == 4
+        finally:
+            django_cache.delete(f"strategy_gen_progress:{job_id}")
+
+    @pytest.mark.integration
+    def test_launch_accepts_reproducible_seed(self, authenticated_client, celery_eager, fast_generator):
+        resp = authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "interval": "1d", "preset": "fast", "seed": 1234},
+            format="json",
+        )
+        assert resp.status_code == 202
+
+    @pytest.mark.integration
+    def test_launch_rejects_invalid_seed(self, authenticated_client):
+        resp = authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "seed": -5},
+            format="json",
+        )
+        assert resp.status_code == 400

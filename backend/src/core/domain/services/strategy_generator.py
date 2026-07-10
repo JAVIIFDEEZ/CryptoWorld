@@ -54,6 +54,13 @@ class GAConfig:
     seed_fraction: float = 0.25   # fracción de la población inicial sembrada con clásicas
     random_injection: int = 2     # specs aleatorios inyectados cada generación (diversidad)
     seed: int = 42
+    # ── Grado StrategyQuant ─────────────────────────────────────────
+    islands: int = 1              # subpoblaciones aisladas (modelo de islas)
+    migration_every: int = 4      # cada cuántas generaciones migran los elites
+    migration_k: int = 2          # nº de elites que migran al anillo siguiente
+    stagnation_patience: int = 0  # gens sin mejora antes de hipermutar (0 = off)
+    hypermutation_factor: float = 2.0  # multiplicador de mutación bajo estancamiento
+    hof_size: int = 16            # hall of fame: mejores-de-siempre únicos
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -255,7 +262,39 @@ def _dedup(pop: list[dict], target: int, rng: np.random.Generator) -> list[dict]
 # Bucle evolutivo
 # ═══════════════════════════════════════════════════════════════════
 
-def evolve(fitness_fn: Callable[[dict], float], config: GAConfig | None = None) -> dict:
+def _reproduce_island(
+    ordered: list[dict],
+    fitnesses: list[float],
+    target: int,
+    elitism: int,
+    injection: int,
+    mutation_rate: float,
+    cfg: GAConfig,
+    rng: np.random.Generator,
+) -> list[dict]:
+    """Una generación de reproducción dentro de una isla: elitismo + inyección
+    de diversidad + torneo → cruce → mutación (con la tasa vigente, que puede
+    estar hipermutada por estancamiento)."""
+    next_pop: list[dict] = [copy.deepcopy(s) for s in ordered[:elitism]]
+    next_pop.extend(random_spec(rng) for _ in range(injection))
+    while len(next_pop) < target:
+        parent = _tournament(ordered, fitnesses, cfg.tournament_size, rng)
+        if rng.random() < cfg.crossover_rate:
+            other = _tournament(ordered, fitnesses, cfg.tournament_size, rng)
+            child = crossover(parent, other, rng)
+        else:
+            child = copy.deepcopy(parent)
+        if rng.random() < mutation_rate:
+            child = mutate(child, rng)
+        next_pop.append(child)
+    return _dedup(next_pop, target, rng)
+
+
+def evolve(
+    fitness_fn: Callable[[dict], float],
+    config: GAConfig | None = None,
+    on_generation: Callable[[dict], None] | None = None,
+) -> dict:
     """
     Evoluciona la población y devuelve el resultado ordenado por fitness.
 
@@ -264,12 +303,32 @@ def evolve(fitness_fn: Callable[[dict], float], config: GAConfig | None = None) 
     un walk-forward completo). El elitismo garantiza que el mejor fitness sea
     monótonamente no decreciente entre generaciones.
 
+    Grado StrategyQuant:
+      · Modelo de islas: la población se reparte en `islands` subpoblaciones que
+        evolucionan aisladas; cada `migration_every` generaciones los
+        `migration_k` mejores de cada isla migran a la siguiente (anillo),
+        preservando diversidad sin perder convergencia.
+      · Hipermutación adaptativa: si el mejor global no mejora durante
+        `stagnation_patience` generaciones, la tasa de mutación se multiplica por
+        `hypermutation_factor` hasta que vuelva a mejorar (escape de óptimos
+        locales; 0 = desactivado).
+      · Hall of fame: los `hof_size` mejores specs ÚNICOS vistos en CUALQUIER
+        generación, aunque luego se pierdan de la población.
+
+    `on_generation(snapshot)`: callback opcional invocado al puntuar cada
+    generación con {generation, generations_total, best, mean, diversity,
+    island_best, mutation_rate, stagnation, hypermutation, top, evaluations}
+    — es la fuente de la telemetría en vivo de la UI.
+
     Devuelve:
         {
           "best": {"spec", "fitness", "hash"},
           "population": [{"spec", "fitness", "hash"}, ...]  # ordenada desc
-          "history": [{"generation", "best", "mean", "diversity"}, ...],
+          "hall_of_fame": [{"spec", "fitness", "hash"}, ...],
+          "history": [{"generation", "best", "mean", "diversity",
+                       "island_best", "mutation_rate", "stagnation"}, ...],
           "evaluations": int,  # nº de specs distintos evaluados
+          "islands": int,
         }
     """
     cfg = config or GAConfig()
@@ -282,45 +341,104 @@ def evolve(fitness_fn: Callable[[dict], float], config: GAConfig | None = None) 
             cache[h] = float(fitness_fn(spec))
         return cache[h]
 
-    pop = _initial_population(cfg, rng)
+    n_islands = max(1, min(cfg.islands, cfg.population_size // 6 or 1))
+    initial = _initial_population(cfg, rng)
+    # Reparto round-robin: cada isla arranca con mezcla de semillas y aleatorios.
+    islands: list[list[dict]] = [initial[i::n_islands] for i in range(n_islands)]
+    island_sizes = [len(isl) for isl in islands]
+    elitism_per_island = max(1, cfg.elitism // n_islands)
+    injection_per_island = max(1, cfg.random_injection // n_islands) if cfg.random_injection else 0
+
+    hof: dict[str, dict] = {}      # hash → {"spec","fitness","hash"} mejores-de-siempre
     history: list[dict] = []
+    best_ever = -np.inf
+    stagnation = 0
+    final_pop: list[dict] = []
 
     for gen in range(cfg.generations):
-        scored = sorted(((fit(s), s) for s in pop), key=lambda x: x[0], reverse=True)
-        fitnesses = [f for f, _ in scored]
-        ordered = [s for _, s in scored]
+        # ── Puntuación por isla + actualización del hall of fame ─────
+        scored_islands: list[list[tuple[float, dict]]] = []
+        for isl in islands:
+            scored = sorted(((fit(s), s) for s in isl), key=lambda x: x[0], reverse=True)
+            scored_islands.append(scored)
+            for f, s in scored[: max(2, elitism_per_island)]:
+                h = spec_hash(s)
+                if h not in hof or f > hof[h]["fitness"]:
+                    hof[h] = {"spec": copy.deepcopy(s), "fitness": float(f), "hash": h}
+        if len(hof) > cfg.hof_size:
+            keep = sorted(hof.values(), key=lambda d: d["fitness"], reverse=True)[: cfg.hof_size]
+            hof = {d["hash"]: d for d in keep}
+
+        all_scored = sorted((p for sc in scored_islands for p in sc),
+                            key=lambda x: x[0], reverse=True)
+        fitnesses_all = [f for f, _ in all_scored]
+        gen_best = fitnesses_all[0]
+        island_best = [round(sc[0][0], 4) if sc else 0.0 for sc in scored_islands]
+
+        # ── Estancamiento → hipermutación adaptativa ──────────────────
+        if gen_best > best_ever + 1e-12:
+            best_ever, stagnation = gen_best, 0
+        else:
+            stagnation += 1
+        hyper = cfg.stagnation_patience > 0 and stagnation >= cfg.stagnation_patience
+        mutation_rate = min(0.9, cfg.mutation_rate * (cfg.hypermutation_factor if hyper else 1.0))
 
         history.append({
             "generation": gen,
-            "best": round(fitnesses[0], 4),
-            "mean": round(float(np.mean(fitnesses)), 4),
-            "diversity": len({spec_hash(s) for s in ordered}),
+            "best": round(gen_best, 4),
+            "mean": round(float(np.mean(fitnesses_all)), 4),
+            "diversity": len({spec_hash(s) for _, s in all_scored}),
+            "island_best": island_best,
+            "mutation_rate": round(mutation_rate, 3),
+            "stagnation": stagnation,
         })
 
-        # Última generación: no reproducimos, ya tenemos la población final puntuada.
+        if on_generation is not None:
+            on_generation({
+                "generation": gen,
+                "generations_total": cfg.generations,
+                "best": round(gen_best, 4),
+                "mean": history[-1]["mean"],
+                "diversity": history[-1]["diversity"],
+                "island_best": island_best,
+                "mutation_rate": round(mutation_rate, 3),
+                "stagnation": stagnation,
+                "hypermutation": hyper,
+                "top": [{"spec": s, "hash": spec_hash(s), "fitness": round(f, 4)}
+                        for f, s in all_scored[:8]],
+                "evaluations": len(cache),
+            })
+
+        # Última generación: no reproducimos, ya tenemos la población puntuada.
         if gen == cfg.generations - 1:
-            pop = ordered
+            final_pop = [s for _, s in all_scored]
             break
 
-        # Elitismo + inyección de diversidad
-        next_pop: list[dict] = [copy.deepcopy(s) for s in ordered[:cfg.elitism]]
-        next_pop.extend(random_spec(rng) for _ in range(cfg.random_injection))
+        # ── Reproducción por isla ─────────────────────────────────────
+        islands = [
+            _reproduce_island(
+                [s for _, s in scored], [f for f, _ in scored],
+                island_sizes[i], elitism_per_island, injection_per_island,
+                mutation_rate, cfg, rng,
+            )
+            for i, scored in enumerate(scored_islands)
+        ]
 
-        # Resto por torneo → cruce → mutación
-        while len(next_pop) < cfg.population_size:
-            parent = _tournament(ordered, fitnesses, cfg.tournament_size, rng)
-            if rng.random() < cfg.crossover_rate:
-                other = _tournament(ordered, fitnesses, cfg.tournament_size, rng)
-                child = crossover(parent, other, rng)
-            else:
-                child = copy.deepcopy(parent)
-            if rng.random() < cfg.mutation_rate:
-                child = mutate(child, rng)
-            next_pop.append(child)
+        # ── Migración en anillo entre islas ───────────────────────────
+        if n_islands > 1 and (gen + 1) % cfg.migration_every == 0:
+            migrants = [
+                [copy.deepcopy(s) for _, s in scored_islands[i][: cfg.migration_k]]
+                for i in range(n_islands)
+            ]
+            for i in range(n_islands):
+                dest = (i + 1) % n_islands
+                # Los migrantes reemplazan el final de la isla destino (los peores
+                # tras la reproducción quedan al final por el dedup-refill).
+                islands[dest] = _dedup(
+                    migrants[i] + islands[dest], island_sizes[dest], rng,
+                )
 
-        pop = _dedup(next_pop, cfg.population_size, rng)
-
-    final_scored = sorted(({"fitness": fit(s), "spec": s, "hash": spec_hash(s)} for s in pop),
+    final_scored = sorted(({"fitness": fit(s), "spec": s, "hash": spec_hash(s)} for s in final_pop),
                           key=lambda d: d["fitness"], reverse=True)
     # Deduplicar la población final por hash conservando el orden (mejor primero)
     seen: set[str] = set()
@@ -331,9 +449,15 @@ def evolve(fitness_fn: Callable[[dict], float], config: GAConfig | None = None) 
             item["fitness"] = round(item["fitness"], 4)
             population.append(item)
 
+    hall_of_fame = sorted(hof.values(), key=lambda d: d["fitness"], reverse=True)
+    for item in hall_of_fame:
+        item["fitness"] = round(item["fitness"], 4)
+
     return {
         "best": population[0],
         "population": population,
+        "hall_of_fame": hall_of_fame,
         "history": history,
         "evaluations": len(cache),
+        "islands": n_islands,
     }
