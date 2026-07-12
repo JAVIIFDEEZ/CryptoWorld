@@ -657,3 +657,28 @@ def reoptimize_strategies(self) -> dict:
     except Exception as exc:
         logger.error("reoptimize_strategies error: %s", exc, exc_info=True)
         return {"error": str(exc)}
+
+
+@shared_task(
+    name="core.tasks.fill_strategy_stable",
+    bind=True,
+    max_retries=0,
+)
+def fill_strategy_stable(self) -> dict:
+    """
+    Establo nocturno: genera una campeona validada para los activos que importan
+    (watchlists + top por capitalización) y que NO tienen estrategia validada
+    fresca. Tope de 2 activos por noche: el establo se llena solo en unos días y
+    después la tarea es casi gratuita. Programada por celery beat (diaria 04:00
+    UTC, tras la reoptimización semanal y fuera de horas punta).
+    """
+    try:
+        from core.application.use_cases.reoptimize_strategies import FillStrategyStableUseCase
+
+        result = FillStrategyStableUseCase().execute()
+        logger.info("fill_strategy_stable: %d huecos, %d nuevas para %s",
+                    result["gaps"], result["new_strategies"], result["generated_for"])
+        return result
+    except Exception as exc:
+        logger.error("fill_strategy_stable error: %s", exc, exc_info=True)
+        return {"error": str(exc)}

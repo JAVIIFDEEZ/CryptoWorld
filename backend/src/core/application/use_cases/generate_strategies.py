@@ -37,6 +37,7 @@ from core.domain.services.strategy_evaluation import (
     gate_spec,
     holdout_performance,
     returns_series,
+    walk_forward_matrix,
 )
 from core.domain.services.strategy_generator import GAConfig, evolve
 from core.domain.services.strategy_nsga import NSGAConfig, evolve_nsga
@@ -63,6 +64,7 @@ class GenerationConfig:
     max_restarts: int = 1              # rondas de evolución con semilla fresca hasta llenar el cupo
     refine_neighbors: int = 0          # vecinos jitter para refinar cada finalista (0 = off)
     correlation_threshold: float = 0.7  # |ρ| máx. entre finalistas del libro (decorrelación)
+    cross_check_assets: int = 0        # nº de activos extra donde validar cada finalista (0 = off)
     ga: GAConfig = GAConfig()
     gating: GatingThresholds = GatingThresholds()
 
@@ -81,14 +83,14 @@ _PRESETS = {
     ),
     "balanced": GenerationConfig(
         top_k=5, max_gating_attempts=12, parsimony=0.03,
-        max_restarts=2, refine_neighbors=5,
+        max_restarts=2, refine_neighbors=5, cross_check_assets=3,
         ga=GAConfig(population_size=40, generations=15, elitism=4, random_injection=2,
                     islands=2, migration_every=4, stagnation_patience=4),
         gating=GatingThresholds(wf_splits=4, pbo_neighbors=12, mc_sims=400),
     ),
     "thorough": GenerationConfig(
         top_k=6, max_gating_attempts=18, parsimony=0.03,
-        max_restarts=3, refine_neighbors=8,
+        max_restarts=3, refine_neighbors=8, cross_check_assets=4,
         ga=GAConfig(population_size=60, generations=25, elitism=6, random_injection=3,
                     islands=3, migration_every=4, stagnation_patience=4, hof_size=24),
         gating=GatingThresholds(wf_splits=4, pbo_neighbors=16, mc_sims=800),
@@ -458,6 +460,11 @@ def generate_strategies(
     for rank, f in enumerate(passed, start=1):
         f["rank"] = rank
 
+    # Radiografía de estabilidad temporal del campeón: matriz walk-forward
+    # (Sharpe OOS por tramo bajo distintos troceos, solo zona de evolución).
+    wf_matrix = walk_forward_matrix(df_evo, passed[0]["spec"], ppy=ppy, costs=costs) \
+        if passed else None
+
     # Coordenadas de robustez de CADA candidata evaluada (pase o no el gating):
     # alimentan el grafico 3D "universo de robustez" con la nube completa de
     # puntos, no solo las supervivientes.
@@ -513,6 +520,7 @@ def generate_strategies(
             "refined": refined_count,
             "correlated_dropped": len(corr_dropped),
         },
+        "walk_forward_matrix": wf_matrix,
         "restarts": restart_summaries,
         "correlation_filter": {
             "threshold": cfg.correlation_threshold,
@@ -583,6 +591,14 @@ class GenerateStrategiesUseCase:
         report["data_source"] = result.source
         report["preset"] = preset
 
+        # ── Validación cruzada multi-activo de las finalistas ──────────
+        # Un edge robusto generaliza a otros símbolos; uno sobreajustado solo
+        # funciona donde nació. Evidencia REPORTADA (no recorta el cupo): el
+        # consistency_score acompaña a cada finalista en el ranking y en la
+        # persistencia. La cesta se carga UNA vez y se comparte.
+        if cfg.cross_check_assets > 0 and report.get("ranking"):
+            self._cross_validate(report, symbol, interval, cfg, progress_cb)
+
         if persist:
             report["persisted"] = self._persist(symbol, interval, report)
 
@@ -591,6 +607,52 @@ class GenerateStrategiesUseCase:
             symbol, preset, report["summary"]["passed_gating"], report["summary"]["candidates_gated"],
         )
         return report
+
+    @staticmethod
+    def _cross_validate(report: dict, symbol: str, interval: str,
+                        cfg: GenerationConfig, progress_cb=None) -> None:
+        """Valida cada finalista del ranking en una cesta de otros activos y
+        anota su consistency_score (fracción con Sharpe OOS positivo)."""
+        from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+        from core.application.use_cases.run_spec_robustness import (
+            DEFAULT_CROSS_ASSETS, cross_asset_validation,
+        )
+
+        basket = [s for s in DEFAULT_CROSS_ASSETS if s != symbol][: cfg.cross_check_assets]
+        history = report.get("ga_evolution", {}).get("history", [])
+        dfs = {}
+        for s in basket:
+            try:
+                res = fetch_ohlcv_dataframe(symbol=s, interval=interval, limit=500)
+                dfs[s] = res.df if res is not None and not res.df.empty else None
+            except Exception as exc:  # noqa: BLE001 — un activo sin datos no rompe la validación
+                logger.warning("cross_validate fetch %s/%s: %s", s, interval, exc)
+                dfs[s] = None
+
+        ranking = report["ranking"]
+        for i, f in enumerate(ranking):
+            if progress_cb is not None:
+                progress_cb(_json_safe({
+                    "phase": "cross_validating",
+                    "cross": {"current": i + 1, "total": len(ranking),
+                              "basket": basket, "candidate": f["description"]},
+                    "history": history,
+                }))
+            cross = cross_asset_validation(dfs, f["spec"], interval, cfg.gating.wf_splits)
+            f["cross_asset"] = cross
+            # También en las métricas persistidas (JSON, sin migración).
+            f["gating"]["metrics"]["cross_consistency"] = cross["consistency_score"]
+
+        report["cross_check"] = {
+            "basket": basket,
+            "note": ("Cada finalista se reevalúa (walk-forward OOS) en una cesta de otros "
+                     "activos. consistency_score = fracción con Sharpe OOS positivo: un edge "
+                     "que generaliza es otra liga de robustez. Evidencia informativa: no "
+                     "recorta el cupo del ranking."),
+        }
+        if progress_cb is not None:
+            progress_cb(_json_safe({"phase": "done", "history": history,
+                                    "passed": len(ranking)}))
 
     @staticmethod
     def _persist(symbol: str, interval: str, report: dict) -> list[dict]:

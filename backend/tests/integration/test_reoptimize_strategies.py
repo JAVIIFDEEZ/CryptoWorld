@@ -179,3 +179,86 @@ class TestReoptimize:
         )
         out = ReoptimizeStrategiesUseCase().execute()
         assert out["regenerated"] == 0 and out["new_strategies"] == 0
+
+
+class TestFillStrategyStable:
+    """Establo nocturno: solo genera para los huecos, con tope por pasada."""
+
+    @pytest.mark.integration
+    def test_only_gaps_are_generated_with_cap(self, assets, test_user, monkeypatch):
+        from django.utils import timezone
+        from core.infrastructure.persistence.models import CryptoAsset, UserWatchlist
+        from core.application.use_cases.reoptimize_strategies import (
+            FillStrategyStableUseCase, ReoptimizeStrategiesUseCase,
+        )
+
+        # Universo: BTC/ETH (fixture) + SOL y ADA en watchlist del usuario
+        sol = CryptoAsset.objects.create(symbol="SOL", name="Solana")
+        ada = CryptoAsset.objects.create(symbol="ADA", name="Cardano")
+        for a in (sol, ada):
+            UserWatchlist.objects.create(user=test_user, asset=a)
+
+        # BTC ya está cubierto: estrategia validada FRESCA
+        s = _strategy(assets["BTC"], fitness=1.0, spec_hash="fresh-btc")
+        s.generated_at = timezone.now()
+        s.save(update_fields=["generated_at"])
+
+        called = {}
+        def fake_execute(self, preset="balanced", limit_pairs=12, pairs=None):
+            called["pairs"] = pairs
+            return {"new_strategies": len(pairs or []), "regenerated": len(pairs or []),
+                    "details": [], "pairs": len(pairs or [])}
+        monkeypatch.setattr(ReoptimizeStrategiesUseCase, "execute", fake_execute)
+
+        out = FillStrategyStableUseCase().execute(per_night=2, top_assets=0)
+        # Universo = watchlist {SOL, ADA}; BTC cubierto no cuenta como hueco
+        assert out["gaps"] == 2
+        assert sorted(out["generated_for"]) == ["ADA", "SOL"]
+        assert [p for p in called["pairs"]] == [("ADA", "1d"), ("SOL", "1d")]
+        assert out["new_strategies"] == 2
+
+    @pytest.mark.integration
+    def test_covered_universe_generates_nothing(self, assets, monkeypatch):
+        from django.utils import timezone
+        from core.application.use_cases.reoptimize_strategies import (
+            FillStrategyStableUseCase, ReoptimizeStrategiesUseCase,
+        )
+        # Todo el universo (solo BTC vía top_assets=1... usamos watchlist vacía y
+        # top_assets=0 ⇒ universo vacío) — y con BTC cubierto tampoco genera.
+        s = _strategy(assets["BTC"], fitness=1.0, spec_hash="fresh-btc-2")
+        s.generated_at = timezone.now()
+        s.save(update_fields=["generated_at"])
+
+        def boom(self, **kw):  # noqa: ARG001
+            raise AssertionError("No debería regenerarse nada")
+        monkeypatch.setattr(ReoptimizeStrategiesUseCase, "execute", boom)
+
+        out = FillStrategyStableUseCase().execute(per_night=2, top_assets=0)
+        assert out["gaps"] == 0 and out["new_strategies"] == 0
+
+    @pytest.mark.integration
+    def test_stale_strategy_counts_as_gap(self, assets, monkeypatch):
+        from datetime import timedelta
+        from django.utils import timezone
+        from core.infrastructure.persistence.models import UserWatchlist
+        from core.application.use_cases.reoptimize_strategies import (
+            FillStrategyStableUseCase, ReoptimizeStrategiesUseCase,
+        )
+        # BTC tiene estrategia validada pero RANCIA (45 días) ⇒ es hueco
+        s = _strategy(assets["BTC"], fitness=1.0, spec_hash="stale-btc")
+        s.generated_at = timezone.now() - timedelta(days=45)
+        s.save(update_fields=["generated_at"])
+
+        called = {}
+        def fake_execute(self, preset="balanced", limit_pairs=12, pairs=None):
+            called["pairs"] = pairs
+            return {"new_strategies": 1, "regenerated": 1, "details": [], "pairs": 1}
+        monkeypatch.setattr(ReoptimizeStrategiesUseCase, "execute", fake_execute)
+
+        from core.infrastructure.persistence.models import User
+        u = User.objects.create_user(email="stable@test.com", username="stable", password="x12345678!")
+        UserWatchlist.objects.create(user=u, asset=assets["BTC"])
+
+        out = FillStrategyStableUseCase().execute(per_night=2, stale_days=30, top_assets=0)
+        assert out["gaps"] == 1
+        assert called["pairs"] == [("BTC", "1d")]

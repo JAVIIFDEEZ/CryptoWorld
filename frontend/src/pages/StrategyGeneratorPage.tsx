@@ -24,6 +24,7 @@ import {
   type EvolutionProgress,
 } from '@/services/strategyGeneratorService'
 import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
+import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
 import PaperTradingPanel from '@/components/generator/PaperTradingPanel'
@@ -402,6 +403,11 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
       <SummaryStrip report={report} />
       <PartitionBar report={report} />
 
+      {/* Radiografía de estabilidad temporal del campeón */}
+      {winner && report.walk_forward_matrix && (
+        <WalkForwardMatrixCard matrix={report.walk_forward_matrix} championDesc={winner.description} />
+      )}
+
       <Generator3DPanel
         candidates={report.candidates}
         history={report.ga_evolution.history}
@@ -554,6 +560,20 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
                 title={`Refinada por hill-climb re-validado (+${f.fitness_gain?.toFixed(3)} fitness)`}
               >
                 refinada
+              </span>
+            )}
+            {f.cross_asset && f.cross_asset.n_assets > 0 && (
+              <span
+                className={`ml-2 text-[9px] align-middle px-1.5 py-0.5 rounded-full border font-sans ${
+                  f.cross_asset.consistency_score >= 0.67
+                    ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                    : f.cross_asset.consistency_score >= 0.34
+                      ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                      : 'bg-red-500/15 border-red-500/30 text-red-300'
+                }`}
+                title={`Validación cruzada: Sharpe OOS positivo en ${f.cross_asset.n_positive_oos}/${f.cross_asset.n_assets} mercados extra — ${f.cross_asset.results.filter((r) => r.ok).map((r) => `${r.symbol} ${r.oos_sharpe?.toFixed(2)}`).join(' · ')}`}
+              >
+                {f.cross_asset.n_positive_oos}/{f.cross_asset.n_assets} mercados
               </span>
             )}
           </p>

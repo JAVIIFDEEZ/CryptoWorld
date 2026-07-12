@@ -323,3 +323,70 @@ class TestRefinement:
         # Si hubo finalistas, la fase de refinamiento se anunció en vivo
         if report["summary"]["passed_gating_total"] > 0:
             assert any(s["phase"] == "refining" for s in snapshots)
+
+
+class TestWalkForwardMatrix:
+    """Radiografía de estabilidad temporal del campeón."""
+
+    @pytest.mark.unit
+    def test_matrix_structure_and_stability_score(self):
+        df = _mean_reverting_df(700)
+        out = ev.walk_forward_matrix(df, seed_specs()[0], splits_list=(3, 4, 5))
+        assert [r["n_splits"] for r in out["rows"]] == [3, 4, 5]
+        for r in out["rows"]:
+            assert len(r["folds"]) <= r["n_splits"]
+            assert all(np.isfinite(f) for f in r["folds"])
+        assert out["total_folds"] == sum(len(r["folds"]) for r in out["rows"])
+        assert 0.0 <= out["stability_score"] <= 1.0
+        assert out["positive_folds"] <= out["total_folds"]
+
+    @pytest.mark.unit
+    def test_report_carries_champion_matrix(self):
+        report = generate_strategies(_mean_reverting_df(700), config=_small_config())
+        if report["ranking"]:
+            m = report["walk_forward_matrix"]
+            assert m is not None and m["total_folds"] > 0
+            assert "stability_score" in m
+        else:
+            assert report["walk_forward_matrix"] is None
+
+
+class TestCrossAssetValidation:
+    """Validación cruzada multi-activo de las finalistas (evidencia reportada)."""
+
+    @pytest.mark.unit
+    def test_finalists_gain_cross_asset_scores(self, monkeypatch):
+        from collections import namedtuple
+        from dataclasses import replace
+        from core.application.use_cases.generate_strategies import GenerateStrategiesUseCase
+        from core.application.use_cases import ohlcv_fetcher
+
+        Fetched = namedtuple("Fetched", ["df", "source"])
+        calls: list[str] = []
+
+        def fake_fetch(symbol, interval="1d", limit=730, **kw):
+            calls.append(symbol)
+            # Serie con señal para el activo origen y la cesta por igual
+            return Fetched(_mean_reverting_df(600, seed=hash(symbol) % 1000), "test")
+
+        monkeypatch.setattr(ohlcv_fetcher, "fetch_ohlcv_dataframe", fake_fetch)
+
+        cfg = replace(_small_config(), cross_check_assets=2)
+        snapshots = []
+        report = GenerateStrategiesUseCase().execute(
+            asset_symbol="XTEST", interval="1d", config=cfg, persist=False,
+            progress_cb=snapshots.append,
+        )
+        assert "error" not in report
+        if report["ranking"]:
+            # La cesta se anuncia y cada finalista lleva su consistency_score
+            assert report["cross_check"]["basket"]
+            assert len(report["cross_check"]["basket"]) <= 2
+            for f in report["ranking"]:
+                assert "cross_asset" in f
+                assert 0.0 <= f["cross_asset"]["consistency_score"] <= 1.0
+                assert f["gating"]["metrics"]["cross_consistency"] == \
+                    f["cross_asset"]["consistency_score"]
+            assert any(s.get("phase") == "cross_validating" for s in snapshots)
+            # La cesta se cargó UNA vez por símbolo (además del activo origen)
+            assert len([c for c in calls if c != "XTEST"]) <= 2

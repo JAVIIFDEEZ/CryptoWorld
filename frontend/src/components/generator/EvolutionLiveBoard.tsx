@@ -172,11 +172,13 @@ function CandidateGrid({ top }: Readonly<{ top: EvolutionProgress['top'] }>) {
 export default function EvolutionLiveBoard({ progress }: Readonly<{ progress: EvolutionProgress }>) {
   const isGating = progress.phase === 'gating'
   const isRefining = progress.phase === 'refining'
+  const isCross = progress.phase === 'cross_validating'
   const gen = progress.generation ?? Math.max(0, progress.history.length - 1)
   const total = progress.generations_total ?? progress.history.length
   const islands = progress.island_best?.length ?? 0
   const phaseLabel = isGating ? 'Gating de robustez'
     : isRefining ? 'Refinando finalistas'
+    : isCross ? 'Validación multi-activo'
     : `Generación ${gen + 1}/${total}`
 
   return (
@@ -261,8 +263,29 @@ export default function EvolutionLiveBoard({ progress }: Readonly<{ progress: Ev
         </div>
       )}
 
+      {/* Avance de la validación cruzada multi-activo */}
+      {isCross && progress.cross && (
+        <div>
+          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+            <span>
+              Validando cada finalista en otros mercados: {progress.cross.basket.join(' · ')}
+            </span>
+            <span className="font-mono">{progress.cross.current}/{progress.cross.total}</span>
+          </div>
+          <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-purple-500 to-blue-400 rounded-full transition-all duration-500"
+              style={{ width: `${(progress.cross.current / Math.max(1, progress.cross.total)) * 100}%` }}
+            />
+          </div>
+          {progress.cross.candidate && (
+            <p className="text-[9px] text-slate-500 truncate mt-1">Examinando: {progress.cross.candidate}</p>
+          )}
+        </div>
+      )}
+
       {/* Curvas de equity de las mejores candidatas de la generación */}
-      {!isGating && !isRefining && progress.top && progress.top.length > 0 && (
+      {!isGating && !isRefining && !isCross && progress.top && progress.top.length > 0 && (
         <div>
           <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1.5">
             Mejores candidatas de la generación · equity sobre la zona de evolución (el holdout queda intacto)

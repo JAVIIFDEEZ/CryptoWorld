@@ -92,6 +92,37 @@ def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_
         "oos_returns": oos_returns,
         "oos_trades": oos_trades,
         "n_folds": len(oos_sharpes),
+        "fold_oos_sharpes": [round(float(s), 4) for s in oos_sharpes],
+    }
+
+
+def walk_forward_matrix(df, spec: dict, splits_list=(3, 4, 5, 6),
+                        ppy: float = 365.0, costs: CostModel | None = None) -> dict:
+    """
+    Matriz walk-forward (estilo StrategyQuant): re-ejecuta el walk-forward del
+    spec con DISTINTOS números de particiones y expone el Sharpe OOS de CADA
+    tramo. Una estrategia estable es rentable en la mayoría de celdas sea cual
+    sea el troceo; una frágil solo brilla con una partición concreta (síntoma de
+    ajuste a un periodo). Es la radiografía de estabilidad temporal del campeón.
+    """
+    rows = []
+    for n in splits_list:
+        wf = walk_forward_oos(df, spec, n_splits=int(n), ppy=ppy, costs=costs)
+        rows.append({
+            "n_splits": int(n),
+            "folds": wf["fold_oos_sharpes"],
+            "mean_oos_sharpe": wf["mean_oos_sharpe"],
+            "efficiency": wf["efficiency"],
+        })
+    all_folds = [f for r in rows for f in r["folds"]]
+    positive = sum(1 for f in all_folds if f > 0)
+    return {
+        "rows": rows,
+        "total_folds": len(all_folds),
+        "positive_folds": positive,
+        "stability_score": round(positive / len(all_folds), 3) if all_folds else 0.0,
+        "note": ("Sharpe OOS de cada tramo walk-forward bajo distintos troceos. "
+                 "Estable = mayoría de celdas positivas con cualquier partición."),
     }
 
 

@@ -373,6 +373,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.reoptimize_strategies",
         "schedule": crontab(day_of_week=1, hour=3, minute=0),
     },
+    # Establo nocturno: generar campeonas para activos sin estrategia validada
+    # fresca (watchlists + top por capitalización), 2 por noche (diaria 04:00 UTC)
+    "fill-strategy-stable": {
+        "task": "core.tasks.fill_strategy_stable",
+        "schedule": crontab(hour=4, minute=0),
+    },
     # Vigilar direcciones on-chain de la watchlist y alertar movimientos (cada 30 min)
     "monitor-watched-addresses": {
         "task": "core.tasks.monitor_watched_addresses",

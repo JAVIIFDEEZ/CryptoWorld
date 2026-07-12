@@ -107,6 +107,13 @@ export interface Finalist {
   refined?: boolean
   refined_from?: string
   fitness_gain?: number
+  /** Validación cruzada multi-activo: ¿el edge generaliza a otros símbolos? */
+  cross_asset?: {
+    n_assets: number
+    n_positive_oos: number
+    consistency_score: number
+    results: CrossAssetRow[]
+  }
 }
 
 /** Coordenadas de robustez de una candidata (para el universo 3D). */
@@ -164,6 +171,15 @@ export interface GenerationReport {
     correlated_dropped?: number
   }
   restarts?: { restart: number; seed: number; gated: number; passed_cumulative: number; evaluations_cumulative: number }[]
+  /** Matriz walk-forward del campeón: Sharpe OOS por tramo bajo distintos troceos. */
+  walk_forward_matrix?: {
+    rows: { n_splits: number; folds: number[]; mean_oos_sharpe: number; efficiency: number }[]
+    total_folds: number
+    positive_folds: number
+    stability_score: number
+    note: string
+  } | null
+  cross_check?: { basket: string[]; note: string }
   correlation_filter?: {
     threshold: number
     dropped: { spec_hash: string; description: string; fitness: number; correlated_with: { kept_hash: string; kept_description: string; corr: number } }[]
@@ -192,7 +208,7 @@ export interface EvolutionCandidate {
 }
 
 export interface EvolutionProgress {
-  phase: 'evolving' | 'gating' | 'refining' | 'done'
+  phase: 'evolving' | 'gating' | 'refining' | 'cross_validating' | 'done'
   generation?: number
   generations_total?: number
   /** Ronda de búsqueda hasta objetivo (semilla fresca por ronda). */
@@ -210,6 +226,7 @@ export interface EvolutionProgress {
   top?: EvolutionCandidate[]
   gating?: { current: number; total: number; passed: number; candidate?: string }
   refining?: { current: number; total: number; candidate?: string }
+  cross?: { current: number; total: number; basket: string[]; candidate?: string }
   passed?: number
 }
 

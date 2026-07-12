@@ -113,6 +113,64 @@ class ReoptimizeStrategiesUseCase:
         return created
 
 
+class FillStrategyStableUseCase:
+    """
+    Establo nocturno: mantiene una campeona validada FRESCA para cada activo que
+    importa (watchlists de los usuarios + top por capitalización) sin intervención
+    manual. Cada noche detecta los activos SIN estrategia validada reciente
+    (< `stale_days`) y genera solo para esos, con un tope por pasada — en régimen
+    estacionario casi todo está cubierto y la tarea es barata. Delegando en
+    ReoptimizeStrategiesUseCase hereda dedup por spec_hash y tolerancia a fallos.
+    """
+
+    def execute(self, preset: str = "balanced", interval: str = "1d",
+                per_night: int = 2, stale_days: int = 30, top_assets: int = 8) -> dict:
+        from datetime import timedelta
+        from django.utils import timezone
+        from core.infrastructure.persistence.models import (
+            CryptoAsset, StrategyDefinition, UserWatchlist,
+        )
+
+        # Universo que importa: watchlists de todos los usuarios + top por cap.
+        universe: set[str] = set(
+            UserWatchlist.objects.values_list("asset__symbol", flat=True)
+        )
+        universe.update(
+            CryptoAsset.objects.exclude(market_cap__isnull=True)
+            .order_by("-market_cap").values_list("symbol", flat=True)[:top_assets]
+        )
+        universe.discard(None)
+
+        # Cubierto = tiene una validada fresca; lo demás es hueco del establo.
+        cutoff = timezone.now() - timedelta(days=stale_days)
+        covered = {
+            c.upper() for c in StrategyDefinition.objects
+            .filter(interval=interval, passed_gating=True, status="validated",
+                    generated_at__gte=cutoff, asset__isnull=False)
+            .values_list("asset__symbol", flat=True)
+        }
+        gaps = sorted(s for s in universe if s and s.upper() not in covered)
+        todo = gaps[:per_night]
+
+        result = {
+            "universe": len(universe), "covered": len(universe) - len(gaps),
+            "gaps": len(gaps), "generated_for": todo,
+        }
+        if todo:
+            summary = ReoptimizeStrategiesUseCase().execute(
+                preset=preset, pairs=[(s, interval) for s in todo],
+            )
+            result["new_strategies"] = summary["new_strategies"]
+            result["details"] = summary["details"]
+        else:
+            result["new_strategies"] = 0
+            result["details"] = []
+
+        logger.info("fill_strategy_stable: %d huecos, generadas %d nuevas para %s",
+                    len(gaps), result["new_strategies"], todo or "—")
+        return result
+
+
 class BestStrategiesUseCase:
     """Campeona actual de cada activo: la mejor estrategia validada (por fitness),
     con su rendimiento en holdout y su track record en vivo (paper trading)."""

@@ -80,6 +80,17 @@ describe('EvolutionLiveBoard', () => {
     expect(screen.getByText(/Afinando: RSI\(14\) < 30/)).toBeInTheDocument()
   })
 
+  it('en fase de validación multi-activo muestra la cesta y el avance', () => {
+    const cross: EvolutionProgress = {
+      phase: 'cross_validating', history: HISTORY,
+      cross: { current: 1, total: 3, basket: ['ETH', 'SOL'], candidate: 'RSI(14) < 30' },
+    }
+    render(<EvolutionLiveBoard progress={cross} />)
+    expect(screen.getByText('Validación multi-activo')).toBeInTheDocument()
+    expect(screen.getByText(/ETH · SOL/)).toBeInTheDocument()
+    expect(screen.getByText('1/3')).toBeInTheDocument()
+  })
+
   it('en fase de gating muestra el avance y las aprobadas', () => {
     const gating: EvolutionProgress = {
       phase: 'gating', history: HISTORY,
