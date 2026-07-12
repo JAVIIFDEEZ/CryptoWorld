@@ -819,6 +819,15 @@ function HistoryCard({ s, onStartPaper }: Readonly<{ s: SavedStrategy; onStartPa
       >
         {paperStarted ? '✓ Paper trading activo' : '▶ Seguir en paper trading'}
       </button>
+      <a
+        href={`/strategies/${s.id}/dossier`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Documento de auditoría imprimible: ADN, robustez, estado actual y track record"
+        className="mt-1.5 w-full text-[11px] font-medium rounded-md py-1.5 border border-slate-600 bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors flex items-center justify-center gap-1.5"
+      >
+        📄 Dossier de auditoría
+      </a>
     </div>
   )
 }

@@ -44,7 +44,8 @@ export default function BestStrategiesPanel({ refreshKey = 0 }: Readonly<{ refre
               <th className="py-1.5 pr-3 text-right">Fitness</th>
               <th className="py-1.5 pr-3 text-right">Holdout</th>
               <th className="py-1.5 pr-3 text-right">Sharpe</th>
-              <th className="py-1.5 text-right">En vivo (real)</th>
+              <th className="py-1.5 pr-3 text-right">En vivo (real)</th>
+              <th className="py-1.5 text-right" aria-label="Dossier" />
             </tr>
           </thead>
           <tbody>
@@ -62,7 +63,7 @@ export default function BestStrategiesPanel({ refreshKey = 0 }: Readonly<{ refre
                   {s.holdout_return_pct != null ? `${s.holdout_return_pct >= 0 ? '+' : ''}${s.holdout_return_pct.toFixed(1)}%` : '—'}
                 </td>
                 <td className="py-2 pr-3 text-right font-mono text-slate-300">{s.holdout_sharpe?.toFixed(2) ?? '—'}</td>
-                <td className="py-2 text-right">
+                <td className="py-2 pr-3 text-right">
                   {s.live ? (
                     <span className={`font-mono ${tone(s.live.total_return_pct)}`}>
                       {s.live.total_return_pct >= 0 ? '+' : ''}{s.live.total_return_pct.toFixed(2)}%
@@ -71,6 +72,17 @@ export default function BestStrategiesPanel({ refreshKey = 0 }: Readonly<{ refre
                   ) : (
                     <span className="text-slate-600">sin seguir</span>
                   )}
+                </td>
+                <td className="py-2 text-right">
+                  <a
+                    href={`/strategies/${s.strategy_id}/dossier`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Dossier de auditoría imprimible"
+                    className="text-slate-500 hover:text-slate-200"
+                  >
+                    📄
+                  </a>
                 </td>
               </tr>
             ))}

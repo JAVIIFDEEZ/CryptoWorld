@@ -30,6 +30,7 @@ const AssetDetailPage = lazy(() => import('@/pages/AssetDetailPage'))
 const MarketPage = lazy(() => import('@/pages/MarketPage'))
 const TechnicalAnalysisPage = lazy(() => import('@/pages/TechnicalAnalysisPage'))
 const StrategyGeneratorPage = lazy(() => import('@/pages/StrategyGeneratorPage'))
+const StrategyDossierPage = lazy(() => import('@/pages/StrategyDossierPage'))
 const PortfolioPage = lazy(() => import('@/pages/PortfolioPage'))
 const TradingPage = lazy(() => import('@/pages/TradingPage'))
 const AlertsPage = lazy(() => import('@/pages/AlertsPage'))
@@ -61,6 +62,8 @@ function AppRoutes() {
 
       {/* Rutas protegidas: envueltas en el guard de autenticación */}
       <Route element={<ProtectedRoute />}>
+        {/* Dossier imprimible: protegido pero SIN AppShell (imprime limpio) */}
+        <Route path="/strategies/:id/dossier" element={<StrategyDossierPage />} />
         {/* AppShell persiste entre páginas protegidas */}
         <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />

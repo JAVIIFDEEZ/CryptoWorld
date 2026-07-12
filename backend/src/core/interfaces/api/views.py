@@ -1974,6 +1974,24 @@ class SavedStrategiesListView(APIView):
         return Response({"count": len(items), "results": items}, status=status.HTTP_200_OK)
 
 
+class StrategyDossierView(APIView):
+    """
+    GET /api/strategies/<id>/dossier/ — Dossier de auditoría de una estrategia
+    guardada: identidad + ADN, evidencia de robustez original (gating/holdout),
+    análisis fresco sobre datos actuales (equity + matriz walk-forward) y track
+    record real del usuario. Alimenta el documento imprimible.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, strategy_id: int):
+        from core.application.use_cases.get_strategy_dossier import GetStrategyDossierUseCase
+
+        dossier = GetStrategyDossierUseCase().execute(strategy_id, owner=request.user)
+        if dossier.get("error"):
+            return Response(dossier, status=status.HTTP_404_NOT_FOUND)
+        return Response(dossier, status=status.HTTP_200_OK)
+
+
 class StrategyMonitorView(APIView):
     """
     POST /api/strategies/<id>/monitor/ — Activa o desactiva la monitorización en

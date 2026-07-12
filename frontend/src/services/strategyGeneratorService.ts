@@ -264,6 +264,68 @@ export interface SavedStrategy {
   created_at: string
 }
 
+// ── Dossier de auditoría de una estrategia guardada ────────────────
+
+export interface DossierWfMatrix {
+  rows: { n_splits: number; folds: number[]; mean_oos_sharpe: number; efficiency: number }[]
+  total_folds: number
+  positive_folds: number
+  stability_score: number
+  note: string
+}
+
+export interface StrategyDossier {
+  status: 'OK'
+  identity: {
+    strategy_id: number
+    name: string
+    description: string
+    spec: StrategySpec
+    spec_hash: string
+    asset_symbol: string | null
+    asset_name: string | null
+    interval: string
+    rank: number
+    fitness: number | null
+    status: string
+    is_monitored: boolean
+    last_signal: string
+    last_signal_at: string | null
+    generated_at: string | null
+    created_at: string | null
+  }
+  stored_evidence: {
+    robustness_metrics: (GatingMetrics & { cross_consistency?: number }) | null
+    gating_checks: GatingChecks | null
+    holdout_metrics: HoldoutMetrics | null
+    note: string
+  }
+  fresh_analysis: {
+    available: boolean
+    candles?: number
+    data_source?: string
+    equity?: { equity: number[]; total_return_pct: number; max_drawdown_pct: number; n_trades: number }
+    walk_forward_matrix?: DossierWfMatrix
+    note?: string
+  }
+  track_record: {
+    accounts: {
+      account_id: number
+      started_at: string | null
+      is_active: boolean
+      initial_capital: number
+      equity: number
+      total_return_pct: number | null
+      realized_pnl: number
+      in_position: boolean
+      live_enabled: boolean
+      decayed: boolean
+    }[]
+    note: string
+  }
+  note: string
+}
+
 // ── Análisis profundo de robustez (suite completa + multi-activo) ──
 
 export interface CrossAssetRow {
@@ -493,6 +555,12 @@ export const strategyGeneratorService = {
   async listSaved(params?: { asset_symbol?: string; interval?: string; limit?: number }): Promise<SavedStrategy[]> {
     const { data } = await apiClient.get<{ count: number; results: SavedStrategy[] }>('/strategies/', { params })
     return data.results
+  },
+
+  /** Dossier de auditoría de una estrategia guardada (documento imprimible). */
+  async getDossier(strategyId: number): Promise<StrategyDossier> {
+    const { data } = await apiClient.get<StrategyDossier>(`/strategies/${strategyId}/dossier/`)
+    return data
   },
 
   /** Lanza el análisis profundo de robustez de un spec (suite + multi-activo). */

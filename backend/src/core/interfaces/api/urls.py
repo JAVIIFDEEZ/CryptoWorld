@@ -149,6 +149,11 @@ urlpatterns = [
         name="strategies-signals-recent",
     ),
     path(
+        "strategies/<int:strategy_id>/dossier/",
+        views.StrategyDossierView.as_view(),
+        name="strategies-dossier",
+    ),
+    path(
         "strategies/<int:strategy_id>/monitor/",
         views.StrategyMonitorView.as_view(),
         name="strategies-monitor",
