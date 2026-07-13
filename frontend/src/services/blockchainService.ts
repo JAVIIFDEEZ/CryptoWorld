@@ -398,4 +398,115 @@ export const blockchainService = {
     const { data } = await apiClient.delete(`/blockchain/watchlist/${id}/`)
     return data
   },
+
+  // ── Forense on-chain ─────────────────────────────────────────────
+
+  /** Árbol de flujo saliente de una dirección (sigue el dinero). */
+  traceFlow: async (chain: string, address: string, depth = 2): Promise<FlowTrace> => {
+    const params = new URLSearchParams({ chain, address, depth: String(depth) })
+    const { data } = await apiClient.get(`/blockchain/forensics/flow/?${params}`)
+    return data
+  },
+
+  /** Radiografía de concentración de tenedores de un token. */
+  tokenConcentration: async (chain: string, token: string): Promise<TokenConcentration> => {
+    const params = new URLSearchParams({ chain, token })
+    const { data } = await apiClient.get(`/blockchain/forensics/concentration/?${params}`)
+    return data
+  },
+
+  /** Huella conductual de una dirección (heatmap, arquetipo). */
+  walletFingerprint: async (chain: string, address: string): Promise<WalletFingerprint> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/forensics/fingerprint/?${params}`)
+    return data
+  },
+}
+
+// ── Tipos del submódulo forense ────────────────────────────────────
+
+export interface FlowNode {
+  address: string
+  level: number
+  value_in?: number
+  tx_count?: number
+  share?: number
+  revisited?: boolean
+  fan_out: number
+  total_out: number
+  children: FlowNode[]
+}
+
+export interface FlowPattern {
+  type: 'fan_out' | 'peel_chain'
+  address: string
+  counterparties?: number
+  depth?: number
+  note: string
+}
+
+export interface FlowTrace {
+  status?: 'OK'
+  error?: string
+  chain: string
+  address: string
+  depth: number
+  nodes_fetched: number
+  tree: FlowNode
+  patterns: FlowPattern[]
+  note?: string
+}
+
+export interface ConcentrationTopHolder {
+  address: string
+  value: number
+  share_pct: number
+  is_contract: boolean
+}
+
+export interface TokenConcentration {
+  status?: 'OK'
+  error?: string
+  chain: string
+  token: string
+  token_name: string | null
+  token_symbol: string | null
+  concentration: {
+    available: boolean
+    sample_size?: number
+    holders_count_total?: number | null
+    top10_share_pct?: number
+    top50_share_pct?: number
+    gini?: number | null
+    hhi?: number
+    contract_share_pct?: number
+    top_holders?: ConcentrationTopHolder[]
+    verdict?: 'CRÍTICA' | 'ALTA' | 'MODERADA' | 'DISTRIBUIDA'
+    verdict_note?: string
+    note?: string
+  }
+}
+
+export interface WalletFingerprint {
+  status?: 'OK'
+  error?: string
+  chain: string
+  address: string
+  fingerprint: {
+    available: boolean
+    sample_txs?: number
+    span_days?: number
+    days_since_last?: number
+    txs_per_week?: number
+    in_count?: number
+    out_count?: number
+    unique_counterparties?: number
+    diversity?: number
+    median_gap_hours?: number | null
+    burstiness?: number | null
+    heatmap?: number[][]
+    archetype?: string
+    traits?: string[]
+    note?: string
+  }
 }

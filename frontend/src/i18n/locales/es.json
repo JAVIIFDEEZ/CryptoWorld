@@ -76,7 +76,8 @@
     "tabNetwork": "Red y gas",
     "tabWhales": "Movimientos",
     "tabWallets": "Wallets",
-    "tabMarket": "Mercado on-chain"
+    "tabMarket": "Mercado on-chain",
+    "tabForensics": "Forense"
   },
   "market": {
     "title": "Mercado",

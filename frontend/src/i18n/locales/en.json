@@ -76,7 +76,8 @@
     "tabNetwork": "Network & gas",
     "tabWhales": "Movements",
     "tabWallets": "Wallets",
-    "tabMarket": "On-chain market"
+    "tabMarket": "On-chain market",
+    "tabForensics": "Forensics"
   },
   "market": {
     "title": "Market",

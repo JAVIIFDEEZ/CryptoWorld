@@ -125,6 +125,17 @@ class BlockscoutClient:
             return data.get("items", []) or []
         return data if isinstance(data, list) else []
 
+    def get_token_holders(self, chain: str, token: str, pages: int = 1) -> list[dict[str, Any]]:
+        """GET /api/v2/tokens/{token}/holders — mayores tenedores de un token
+        (para la radiografía de concentración)."""
+        return self._paginated_items(chain, f"/api/v2/tokens/{token}/holders", pages=pages)
+
+    def get_token_info(self, chain: str, token: str) -> dict[str, Any]:
+        """GET /api/v2/tokens/{token} — metadatos del token (nombre, símbolo,
+        decimales, nº total de tenedores, supply)."""
+        data = self._get(chain, f"/api/v2/tokens/{token}")
+        return data if isinstance(data, dict) else {}
+
     def get_chain_stats(self, chain: str) -> dict[str, Any]:
         """GET /api/v2/stats — salud de la red: precios de gas (Gwei), utilización,
         tiempo de bloque, precio del nativo y totales."""

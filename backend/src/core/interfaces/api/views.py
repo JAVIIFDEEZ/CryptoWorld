@@ -1230,6 +1230,63 @@ class ChainHealthView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class OnChainFlowTraceView(APIView):
+    """
+    GET /api/blockchain/forensics/flow/?chain=ethereum&address=0x..&depth=2 —
+    Árbol de flujo saliente de valor nativo desde una dirección (sigue el dinero),
+    con detección de patrones (fan-out, peel chain).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_forensics import TraceFlowUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        try:
+            depth = int(request.query_params.get("depth", 2))
+        except (TypeError, ValueError):
+            depth = 2
+        result = TraceFlowUseCase().execute(chain, address, depth=depth)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainConcentrationView(APIView):
+    """
+    GET /api/blockchain/forensics/concentration/?chain=ethereum&token=0x.. —
+    Radiografía de concentración de tenedores de un token (Gini, HHI, cuotas top-N).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_forensics import TokenConcentrationUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        token = (request.query_params.get("token") or "").strip()
+        result = TokenConcentrationUseCase().execute(chain, token)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainFingerprintView(APIView):
+    """
+    GET /api/blockchain/forensics/fingerprint/?chain=ethereum&address=0x.. —
+    Huella conductual de una dirección: heatmap hora×día, cadencia, diversidad de
+    contrapartes y arquetipo.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_forensics import WalletFingerprintUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = WalletFingerprintUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
 class WhaleMovementsView(APIView):
     """
     GET /api/blockchain/movements/?chain=ethereum&min_usd=100000&limit=25 — Mayores

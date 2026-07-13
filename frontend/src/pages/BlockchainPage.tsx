@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import MultiChainComparePanel from '@/components/blockchain/MultiChainComparePanel'
 import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
 import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
+import ForensicsPanel from '@/components/blockchain/ForensicsPanel'
 import WhaleMovementsPanel from '@/components/blockchain/WhaleMovementsPanel'
 import OnChainPressurePanel from '@/components/blockchain/OnChainPressurePanel'
 import SmartMoneyPanel from '@/components/blockchain/SmartMoneyPanel'
@@ -135,13 +136,14 @@ function fmtValue(v: number): string {
 
 // ────────────────────────── Página principal ─────────────────────
 
-type BlockchainView = 'network' | 'whales' | 'wallets' | 'market'
+type BlockchainView = 'network' | 'whales' | 'wallets' | 'forensics' | 'market'
 
 // Las etiquetas son claves i18n (se traducen en render).
 const BLOCKCHAIN_TABS: { key: BlockchainView; label: string; icon: string }[] = [
   { key: 'network', label: 'blockchain.tabNetwork', icon: '⛽' },
   { key: 'whales', label: 'blockchain.tabWhales', icon: '🐋' },
   { key: 'wallets', label: 'blockchain.tabWallets', icon: '🔍' },
+  { key: 'forensics', label: 'blockchain.tabForensics', icon: '🕵️' },
   { key: 'market', label: 'blockchain.tabMarket', icon: '📊' },
 ]
 
@@ -299,6 +301,9 @@ export default function BlockchainPage() {
             <WatchlistPanel />
           </>
         )}
+
+        {/* ── Forense on-chain: flujos, concentración, huella conductual ── */}
+        {view === 'forensics' && <ForensicsPanel />}
 
         {/* ── Mercado on-chain: comparador + estadísticas por cadena ── */}
         {view === 'market' && (
