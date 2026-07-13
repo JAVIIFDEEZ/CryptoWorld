@@ -1974,6 +1974,35 @@ class SavedStrategiesListView(APIView):
         return Response({"count": len(items), "results": items}, status=status.HTTP_200_OK)
 
 
+class StrategyCompareView(APIView):
+    """
+    GET /api/strategies/compare/?ids=1,2,3 — Comparador cara a cara de 2-4
+    estrategias guardadas: evidencia almacenada, re-ejecución fresca (equity
+    normalizada), correlación entre sus retornos y veredictos por dimensión.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.compare_strategies import (
+            MAX_IDS, MIN_IDS, CompareStrategiesUseCase,
+        )
+
+        raw = (request.query_params.get("ids") or "").strip()
+        try:
+            ids = [int(x) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            ids = []
+        if not (MIN_IDS <= len(set(ids)) <= MAX_IDS):
+            return Response(
+                {"error": f"Indica entre {MIN_IDS} y {MAX_IDS} ids separados por comas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result = CompareStrategiesUseCase().execute(ids)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class StrategyDossierView(APIView):
     """
     GET /api/strategies/<id>/dossier/ — Dossier de auditoría de una estrategia

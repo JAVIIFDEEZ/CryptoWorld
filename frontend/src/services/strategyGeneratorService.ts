@@ -326,6 +326,53 @@ export interface StrategyDossier {
   note: string
 }
 
+// ── Comparador cara a cara de estrategias guardadas ─────────────────
+
+export interface CompareItem {
+  strategy_id: number
+  label: string
+  asset_symbol: string | null
+  interval: string
+  description: string
+  spec_hash: string
+  generated_at: string | null
+  stored: {
+    fitness: number | null
+    sharpe: number | null
+    mean_oos_sharpe: number | null
+    pbo: number | null
+    wf_efficiency: number | null
+    n_trades: number | null
+    max_drawdown_pct: number | null
+    cross_consistency: number | null
+    holdout_return_pct: number | null
+    holdout_sharpe: number | null
+  }
+  fresh: {
+    available: boolean
+    candles?: number
+    data_source?: string
+    equity?: number[]
+    window_return_pct?: number | null
+    oos_sharpe?: number | null
+    wf_efficiency?: number | null
+  }
+}
+
+export interface StrategyComparison {
+  status: 'OK'
+  items: CompareItem[]
+  correlation: { labels: string[]; matrix: (number | null)[][]; common_days: number } | null
+  verdicts: {
+    best_fitness: string | null
+    best_holdout: string | null
+    best_fresh: string | null
+    best_generalization: string | null
+    most_diversifying_pair: { a: string; b: string; corr: number } | null
+  }
+  note: string
+}
+
 // ── Análisis profundo de robustez (suite completa + multi-activo) ──
 
 export interface CrossAssetRow {
@@ -560,6 +607,14 @@ export const strategyGeneratorService = {
   /** Dossier de auditoría de una estrategia guardada (documento imprimible). */
   async getDossier(strategyId: number): Promise<StrategyDossier> {
     const { data } = await apiClient.get<StrategyDossier>(`/strategies/${strategyId}/dossier/`)
+    return data
+  },
+
+  /** Comparador cara a cara de 2-4 estrategias guardadas. */
+  async compare(ids: number[]): Promise<StrategyComparison> {
+    const { data } = await apiClient.get<StrategyComparison>('/strategies/compare/', {
+      params: { ids: ids.join(',') },
+    })
     return data
   },
 

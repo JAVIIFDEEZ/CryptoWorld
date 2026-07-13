@@ -20,19 +20,60 @@ _MAX_STRATEGIES = 6
 _MIN_COMMON_DAYS = 5
 
 
+def run_strategy_on_recent(strat, symbol: str, interval: str,
+                           limit: int = _OHLCV_LIMIT) -> dict | None:
+    """
+    Re-ejecuta una estrategia guardada sobre datos RECIENTES con costes
+    realistas y devuelve su curva de equity y sus retornos diarios (comparables
+    entre marcos distintos). None si no hay datos suficientes o falla.
+    Compartido por la cartera de campeonas y el comparador cara a cara.
+    """
+    from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+    from core.domain.services.backtest_execution import simulate
+    from core.domain.services.portfolio_analysis import daily_returns_from_equity
+    from core.domain.services.strategy_evaluation import DEFAULT_COSTS
+    from core.domain.services.strategy_spec import compile_signals, spec_risk, spec_sizing
+
+    try:
+        res = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
+        if res is None or res.df.empty or len(res.df) < 60:
+            return None
+        df = res.df
+        signals = compile_signals(df, strat.spec)
+        sim = simulate(
+            close=df["close"].to_numpy(dtype=float),
+            high=df["high"].to_numpy(dtype=float),
+            low=df["low"].to_numpy(dtype=float),
+            signals=signals,
+            costs=DEFAULT_COSTS,
+            risk=spec_risk(strat.spec),
+            sizing=spec_sizing(strat.spec),
+        )
+    except Exception as exc:  # noqa: BLE001 — una estrategia rota no tumba el análisis
+        logger.warning("run_strategy_on_recent %s/%s: %s", symbol, interval, exc)
+        return None
+
+    equity = sim.get("equity_curve") or []
+    rets = daily_returns_from_equity(df["timestamp"].astype("int64").tolist(), equity)
+    if not rets:
+        return None
+    return {
+        "df": df,
+        "data_source": res.source,
+        "equity": equity,
+        "returns": rets,
+        "window_return_pct": round((equity[-1] / equity[0] - 1.0) * 100.0, 2) if equity else None,
+    }
+
+
 class StrategyPortfolioUseCase:
     """Análisis de correlación y equity conjunta de las campeonas."""
 
     def execute(self, top_n: int = 5) -> dict:
-        from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
         from core.application.use_cases.reoptimize_strategies import BestStrategiesUseCase
-        from core.domain.services.backtest_execution import simulate
         from core.domain.services.portfolio_analysis import (
-            align_returns, avg_pairwise_correlation, correlation_matrix,
-            daily_returns_from_equity, portfolio_stats,
+            align_returns, avg_pairwise_correlation, correlation_matrix, portfolio_stats,
         )
-        from core.domain.services.strategy_evaluation import DEFAULT_COSTS
-        from core.domain.services.strategy_spec import compile_signals, spec_risk, spec_sizing
         from core.infrastructure.persistence.models import StrategyDefinition
 
         top_n = min(max(int(top_n), 2), _MAX_STRATEGIES)
@@ -48,32 +89,10 @@ class StrategyPortfolioUseCase:
             if strat is None:
                 continue
             label = f"{champ['asset_symbol']} {champ['interval']}"
-            try:
-                res = fetch_ohlcv_dataframe(
-                    symbol=champ["asset_symbol"], interval=champ["interval"], limit=_OHLCV_LIMIT,
-                )
-                if res is None or res.df.empty or len(res.df) < 60:
-                    continue
-                df = res.df
-                signals = compile_signals(df, strat.spec)
-                sim = simulate(
-                    close=df["close"].to_numpy(dtype=float),
-                    high=df["high"].to_numpy(dtype=float),
-                    low=df["low"].to_numpy(dtype=float),
-                    signals=signals,
-                    costs=DEFAULT_COSTS,
-                    risk=spec_risk(strat.spec),
-                    sizing=spec_sizing(strat.spec),
-                )
-            except Exception as exc:  # noqa: BLE001 — una estrategia rota no tumba la cartera
-                logger.warning("portfolio: %s falló: %s", label, exc)
+            run = run_strategy_on_recent(strat, champ["asset_symbol"], champ["interval"])
+            if run is None:
                 continue
-
-            equity = sim.get("equity_curve") or []
-            rets = daily_returns_from_equity(df["timestamp"].astype("int64").tolist(), equity)
-            if not rets:
-                continue
-            series[label] = rets
+            series[label] = run["returns"]
             members.append({
                 "strategy_id": strat.id,
                 "label": label,
@@ -81,7 +100,7 @@ class StrategyPortfolioUseCase:
                 "asset_symbol": champ["asset_symbol"],
                 "interval": champ["interval"],
                 "fitness": champ.get("fitness"),
-                "window_return_pct": round((equity[-1] / equity[0] - 1.0) * 100.0, 2) if equity else None,
+                "window_return_pct": run["window_return_pct"],
             })
 
         if len(series) < 2:

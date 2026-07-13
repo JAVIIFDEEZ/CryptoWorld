@@ -25,6 +25,7 @@ import {
 } from '@/services/strategyGeneratorService'
 import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
 import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
+import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
 import PaperTradingPanel from '@/components/generator/PaperTradingPanel'
@@ -699,15 +700,58 @@ function RejectedList({ report }: Readonly<{ report: GenerationReport }>) {
 }
 
 function HistoryStrip({ items, onStartPaper }: Readonly<{ items: SavedStrategy[]; onStartPaper: () => void }>) {
+  // Selección para el comparador cara a cara (máx. 4)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [comparing, setComparing] = useState(false)
+
+  function toggleSelect(id: number) {
+    setComparing(false)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else if (next.size < 4) next.add(id)
+      return next
+    })
+  }
+
   if (!items.length) {
     return <div className="px-4 pb-4 text-xs text-slate-500">Aún no hay estrategias guardadas para este activo.</div>
   }
   return (
     <div className="px-4 pb-4 border-t border-slate-700/50 pt-3">
-      <p className="text-[10px] uppercase text-slate-500 mb-2">Estrategias robustas guardadas · actívalas para recibir su señal o síguelas en paper trading</p>
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {items.map((s) => <HistoryCard key={s.id} s={s} onStartPaper={onStartPaper} />)}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <p className="text-[10px] uppercase text-slate-500">Estrategias robustas guardadas · actívalas para recibir su señal o síguelas en paper trading</p>
+        {selected.size >= 2 && !comparing && (
+          <button
+            onClick={() => setComparing(true)}
+            className="text-[11px] px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium"
+          >
+            ⚖ Comparar seleccionadas ({selected.size})
+          </button>
+        )}
+        {selected.size === 1 && (
+          <span className="text-[10px] text-slate-500">Marca al menos 2 para comparar</span>
+        )}
       </div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {items.map((s) => (
+          <HistoryCard
+            key={s.id}
+            s={s}
+            onStartPaper={onStartPaper}
+            selected={selected.has(s.id)}
+            onToggleSelect={() => toggleSelect(s.id)}
+          />
+        ))}
+      </div>
+      {comparing && selected.size >= 2 && (
+        <div className="mt-3">
+          <StrategyComparePanel
+            ids={[...selected]}
+            onClose={() => setComparing(false)}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -744,7 +788,12 @@ function SignalFeed({ events }: Readonly<{ events: SignalEvent[] }>) {
   )
 }
 
-function HistoryCard({ s, onStartPaper }: Readonly<{ s: SavedStrategy; onStartPaper: () => void }>) {
+function HistoryCard({ s, onStartPaper, selected, onToggleSelect }: Readonly<{
+  s: SavedStrategy
+  onStartPaper: () => void
+  selected?: boolean
+  onToggleSelect?: () => void
+}>) {
   const [monitored, setMonitored] = useState(s.is_monitored)
   const [signal, setSignal] = useState<string>(s.last_signal || 'HOLD')
   const [busy, setBusy] = useState(false)
@@ -780,9 +829,22 @@ function HistoryCard({ s, onStartPaper }: Readonly<{ s: SavedStrategy; onStartPa
   }
 
   return (
-    <div className="shrink-0 w-64 bg-slate-900/60 rounded-lg border border-slate-700/60 p-3">
+    <div className={`shrink-0 w-64 bg-slate-900/60 rounded-lg border p-3 transition-colors ${
+      selected ? 'border-blue-500/60 ring-1 ring-blue-500/30' : 'border-slate-700/60'
+    }`}>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] text-emerald-300 font-semibold">#{s.rank} · {s.asset_symbol}</span>
+        <label className="flex items-center gap-1.5 cursor-pointer" title="Seleccionar para comparar (máx. 4)">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={onToggleSelect}
+              className="w-3 h-3 accent-blue-500"
+              aria-label={`Comparar ${s.asset_symbol} #${s.rank}`}
+            />
+          )}
+          <span className="text-[10px] text-emerald-300 font-semibold">#{s.rank} · {s.asset_symbol}</span>
+        </label>
         <button onClick={refreshSignal} disabled={busy} title="Recalcular señal actual"
           className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[signal] ?? SIGNAL_STYLE.HOLD}`}>
           {signal}

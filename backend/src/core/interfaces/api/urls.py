@@ -149,6 +149,11 @@ urlpatterns = [
         name="strategies-signals-recent",
     ),
     path(
+        "strategies/compare/",
+        views.StrategyCompareView.as_view(),
+        name="strategies-compare",
+    ),
+    path(
         "strategies/<int:strategy_id>/dossier/",
         views.StrategyDossierView.as_view(),
         name="strategies-dossier",
