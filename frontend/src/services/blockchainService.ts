@@ -442,6 +442,42 @@ export const blockchainService = {
     const { data } = await apiClient.get(`/blockchain/forensics/entity/?${params}`)
     return data
   },
+
+  /** Due diligence de un token: riesgo de rug/honeypot a nivel de contrato. */
+  tokenSafety: async (chain: string, token: string): Promise<TokenSafety> => {
+    const params = new URLSearchParams({ chain, token })
+    const { data } = await apiClient.get(`/blockchain/forensics/token-safety/?${params}`)
+    return data
+  },
+}
+
+// ── Tipos de seguridad de token ────────────────────────────────────
+
+export interface SafetyFlag {
+  category: string
+  weight: number
+  label: string
+  detail: string
+  source?: string
+}
+
+export interface TokenSafety {
+  status?: 'OK'
+  error?: string
+  chain: string
+  token: string
+  token_name: string | null
+  token_symbol: string | null
+  score: number
+  verdict: 'PELIGROSO' | 'RIESGO ALTO' | 'PRECAUCIÓN' | 'RAZONABLE'
+  verified: boolean
+  ownership_renounced: boolean
+  is_proxy: boolean
+  owner: string | null
+  flags: SafetyFlag[]
+  green_flags: string[]
+  top10_concentration_pct: number | null
+  note: string
 }
 
 // ── Tipos de riesgo / aprobaciones / entidad ───────────────────────

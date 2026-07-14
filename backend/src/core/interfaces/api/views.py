@@ -1266,6 +1266,24 @@ class OnChainApprovalsView(APIView):
         return Response(result, status=code)
 
 
+class OnChainTokenSafetyView(APIView):
+    """
+    GET /api/blockchain/forensics/token-safety/?chain=ethereum&token=0x.. —
+    Due diligence de un token: riesgo de rug/honeypot a nivel de contrato
+    (verificación, proxy, poderes del propietario) + concentración de tenedores.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import TokenSafetyUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        token = (request.query_params.get("token") or "").strip()
+        result = TokenSafetyUseCase().execute(chain, token)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
 class OnChainEntityGraphView(APIView):
     """
     GET /api/blockchain/forensics/entity/?chain=ethereum&address=0x.. — Grafo de

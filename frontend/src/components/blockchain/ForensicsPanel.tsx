@@ -11,12 +11,13 @@ import { useState } from 'react'
 import {
   blockchainService,
   type FlowTrace, type FlowNode, type TokenConcentration, type WalletFingerprint,
-  type AddressRisk, type ApprovalsResult, type EntityGraph,
+  type AddressRisk, type ApprovalsResult, type EntityGraph, type TokenSafety,
 } from '@/services/blockchainService'
 
 const CHAINS = ['ethereum', 'base', 'optimism', 'arbitrum', 'gnosis']
 const TOOLS = [
   { key: 'risk', label: 'Riesgo de dirección', icon: '🛡️', hint: 'Puntuación 0-100 por exposición y patrones' },
+  { key: 'token', label: 'Seguridad de token', icon: '🔬', hint: 'Due diligence: rug/honeypot a nivel de contrato' },
   { key: 'approvals', label: 'Aprobaciones', icon: '⚠️', hint: 'Allowances ERC-20 peligrosas' },
   { key: 'entity', label: 'Grafo de entidad', icon: '🕸️', hint: 'Direcciones que se mueven juntas' },
   { key: 'flow', label: 'Rastreo de flujos', icon: '💸', hint: 'Sigue el dinero: árbol de salidas + patrones' },
@@ -61,6 +62,7 @@ export default function ForensicsPanel() {
       </div>
 
       {tool === 'risk' && <RiskScore chain={chain} />}
+      {tool === 'token' && <TokenSafetyView chain={chain} />}
       {tool === 'approvals' && <Approvals chain={chain} />}
       {tool === 'entity' && <EntityGraphView chain={chain} />}
       {tool === 'flow' && <FlowTracer chain={chain} />}
@@ -272,6 +274,100 @@ function Heatmap({ grid }: Readonly<{ grid: number[][] }>) {
         </tbody>
       </table>
     </div>
+  )
+}
+
+// ── Seguridad de token (due diligence) ──────────────────────────────
+
+const SAFETY_STYLE: Record<string, { cls: string; bar: string }> = {
+  'PELIGROSO': { cls: 'text-red-300', bar: 'bg-red-500' },
+  'RIESGO ALTO': { cls: 'text-amber-300', bar: 'bg-amber-500' },
+  'PRECAUCIÓN': { cls: 'text-yellow-300', bar: 'bg-yellow-500' },
+  'RAZONABLE': { cls: 'text-emerald-300', bar: 'bg-emerald-500' },
+}
+
+function TokenSafetyView({ chain }: Readonly<{ chain: string }>) {
+  const [data, setData] = useState<TokenSafety | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function run(token: string) {
+    setLoading(true); setError(''); setData(null)
+    try {
+      const res = await blockchainService.tokenSafety(chain, token)
+      if (res.error) setError(res.error)
+      else setData(res)
+    } catch { setError('No se pudo analizar el token.') } finally { setLoading(false) }
+  }
+
+  const style = data ? SAFETY_STYLE[data.verdict] : undefined
+  return (
+    <div className="space-y-3">
+      <AddressBar placeholder="Contrato del token ERC-20 (0x…)" onRun={run} loading={loading} />
+      <p className="text-[10px] text-slate-500">Due diligence a nivel de contrato: verificación, proxy actualizable, poderes del propietario (mint/pausa/lista negra/fees) y concentración. Señala CAPACIDADES de abuso, no que se hayan usado.</p>
+      {error && <ErrorNote msg={error} />}
+      {data && (
+        <div className="bg-slate-900/60 rounded-lg border border-slate-700/60 p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="text-sm font-semibold text-white">
+              {data.token_name} <span className="text-slate-500 font-mono">{data.token_symbol}</span>
+            </h4>
+            <span className={`text-sm font-bold ${style?.cls}`}>{data.verdict}</span>
+          </div>
+          {/* Barra de riesgo 0-100 */}
+          <div>
+            <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
+              <span>Riesgo</span><span className="font-mono">{data.score}/100</span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div className={`h-full ${style?.bar}`} style={{ width: `${data.score}%` }} />
+            </div>
+          </div>
+          {/* Estado del contrato */}
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            <StatusPill ok={data.verified} label={data.verified ? 'Verificado' : 'Sin verificar'} invert={!data.verified} />
+            <StatusPill ok={!data.is_proxy} label={data.is_proxy ? 'Proxy actualizable' : 'No proxy'} invert={data.is_proxy} />
+            <StatusPill ok={data.ownership_renounced} label={data.ownership_renounced ? 'Propiedad renunciada' : 'Propietario activo'} invert={!data.ownership_renounced} />
+          </div>
+          {/* Banderas rojas */}
+          {data.flags.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase text-red-400/70">Banderas rojas</p>
+              {data.flags.map((f, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px]">
+                  <span className="text-red-400 mt-0.5">▲</span>
+                  <span><span className="text-slate-200 font-medium">{f.label}.</span> <span className="text-slate-400">{f.detail}</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Señales verdes */}
+          {data.green_flags.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase text-emerald-400/70">A favor</p>
+              {data.green_flags.map((g, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px] text-slate-400">
+                  <span className="text-emerald-400 mt-0.5">✓</span>{g}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[9px] text-slate-600">{data.note}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatusPill({ ok, label, invert }: Readonly<{ ok: boolean; label: string; invert?: boolean }>) {
+  const good = invert ? false : ok
+  return (
+    <span className={`px-2 py-0.5 rounded-full border ${
+      good ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+           : 'bg-red-500/10 border-red-500/30 text-red-300'
+    }`}>
+      {good ? '✓' : '✗'} {label}
+    </span>
   )
 }
 

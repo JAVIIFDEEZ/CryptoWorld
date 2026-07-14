@@ -170,6 +170,80 @@ class ApprovalsUseCase:
         return spender, amount
 
 
+class TokenSafetyUseCase:
+    """Due diligence de un token ERC-20: riesgo de rug/honeypot a nivel de contrato."""
+
+    def __init__(self, client=None):
+        self._client = client or BlockscoutClient()
+
+    def execute(self, chain: str, token: str) -> dict:
+        if not is_valid_address(token):
+            return {"error": "Dirección de token EVM no válida."}
+        from django.core.cache import cache
+
+        key = f"token_safety:{chain}:{token.lower()}"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        from core.domain.services import token_safety, onchain_forensics
+
+        try:
+            contract = self._client.get_smart_contract(chain, token)
+            info = self._client.get_token_info(chain, token)
+        except BlockscoutClientError as exc:
+            return {"error": str(exc)}
+
+        normalized = {
+            "is_verified": bool(contract.get("is_verified")),
+            "is_proxy": bool(contract.get("proxy_type") or contract.get("implementations")
+                             or contract.get("minimal_proxy_address_hash")),
+            "owner": self._extract_owner(contract),
+            "abi": contract.get("abi"),
+            "source_code": contract.get("source_code"),
+            "name": info.get("name") or contract.get("name"),
+            "symbol": info.get("symbol"),
+        }
+
+        # Concentración de tenedores (refuerza el riesgo): degrada si no hay datos.
+        concentration = None
+        try:
+            decimals = int(_to_float((info or {}).get("decimals"), 18))
+            raw_holders = self._client.get_token_holders(chain, token, pages=1)
+            holders = [{
+                "address": (h.get("address") or {}).get("hash"),
+                "value": _to_float(h.get("value")) / (10 ** decimals if decimals >= 0 else 1),
+                "is_contract": bool((h.get("address") or {}).get("is_contract")),
+            } for h in raw_holders or []]
+            concentration = onchain_forensics.holder_concentration(holders)
+        except BlockscoutClientError as exc:
+            logger.warning("token_safety holders %s: %s", token, exc)
+
+        safety = token_safety.analyze_token_safety(normalized, concentration)
+        result = {
+            "status": "OK", "chain": chain, "token": token.lower(),
+            "token_name": normalized["name"], "token_symbol": normalized["symbol"],
+            **safety,
+        }
+        cache.set(key, result, _CACHE_TTL)
+        return result
+
+    @staticmethod
+    def _extract_owner(contract: dict) -> str | None:
+        """Intenta leer el propietario de las variables constantes del contrato
+        (Blockscout expone algunas). None si no se encuentra."""
+        for var in (contract.get("constructor_args") or []):
+            pass  # los args del constructor no son fiables para el owner actual
+        # Heurística: algunas instancias exponen 'owner_address' o similar.
+        for field in ("owner_address_hash", "owner"):
+            val = contract.get(field)
+            if isinstance(val, str) and val.startswith("0x"):
+                return val
+            if isinstance(val, dict) and val.get("hash"):
+                return val["hash"]
+        return None
+
+
 class EntityGraphUseCase:
     """Grafo de entidad: agrupa direcciones que se mueven junto a la raíz."""
 

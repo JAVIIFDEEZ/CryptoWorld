@@ -60,6 +60,27 @@ describe('ForensicsPanel', () => {
     expect(screen.getByText(/1 contraparte de riesgo/)).toBeInTheDocument()
   })
 
+  it('muestra el veredicto de seguridad de token con banderas', async () => {
+    vi.spyOn(blockchainService, 'tokenSafety').mockResolvedValue({
+      status: 'OK', chain: 'ethereum', token: '0x' + 'c'.repeat(40),
+      token_name: 'Rug Token', token_symbol: 'RUG', score: 78, verdict: 'PELIGROSO',
+      verified: true, ownership_renounced: false, is_proxy: true, owner: '0xowner',
+      flags: [{ category: 'mint', weight: 22, label: 'Emisión (mint)', detail: 'El propietario puede crear tokens.' }],
+      green_flags: ['Código fuente verificado y auditable.'],
+      top10_concentration_pct: 80, note: 'heurístico',
+    })
+    render(<ForensicsPanel />)
+    fireEvent.click(screen.getByText('Seguridad de token'))
+    fireEvent.change(screen.getByPlaceholderText(/Contrato del token/), {
+      target: { value: '0x' + 'c'.repeat(40) },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Analizar' }))
+    await waitFor(() => expect(screen.getByText('PELIGROSO')).toBeInTheDocument())
+    expect(screen.getByText('RUG')).toBeInTheDocument()
+    expect(screen.getByText(/Emisión \(mint\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Proxy actualizable/)).toBeInTheDocument()
+  })
+
   it('muestra el veredicto de concentración y los tenedores', async () => {
     vi.spyOn(blockchainService, 'tokenConcentration').mockResolvedValue(CONC)
     render(<ForensicsPanel />)

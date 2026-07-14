@@ -136,6 +136,16 @@ class BlockscoutClient:
         data = self._get(chain, f"/api/v2/tokens/{token}")
         return data if isinstance(data, dict) else {}
 
+    def get_smart_contract(self, chain: str, address: str) -> dict[str, Any]:
+        """GET /api/v2/smart-contracts/{address} — código verificado, ABI, si es
+        proxy y su implementación (para el análisis de seguridad de tokens).
+        Devuelve {} si el contrato no está verificado (404)."""
+        try:
+            data = self._get(chain, f"/api/v2/smart-contracts/{address}")
+        except BlockscoutClientError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
     def get_chain_stats(self, chain: str) -> dict[str, Any]:
         """GET /api/v2/stats — salud de la red: precios de gas (Gwei), utilización,
         tiempo de bloque, precio del nativo y totales."""

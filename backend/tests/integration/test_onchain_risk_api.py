@@ -128,3 +128,57 @@ class TestApi:
     def test_risk_validates_address(self, authenticated_client, db):
         resp = authenticated_client.get("/api/blockchain/forensics/risk/", {"address": "bad"})
         assert resp.status_code == 400
+
+
+class TestTokenSafety:
+
+    @pytest.mark.integration
+    def test_dangerous_token_flagged(self, db):
+        from django.core.cache import cache
+        from core.application.use_cases.get_onchain_risk import TokenSafetyUseCase
+        cache.clear()
+
+        class ContractClient:
+            def get_smart_contract(self, chain, token):
+                return {"is_verified": True, "owner_address_hash": "0xowner",
+                        "abi": [{"type": "function", "name": "mint"},
+                                {"type": "function", "name": "setBlacklist"}]}
+            def get_token_info(self, chain, token):
+                return {"name": "Rug", "symbol": "RUG", "decimals": "18"}
+            def get_token_holders(self, chain, token, pages=1):
+                return [{"address": {"hash": "0xw"}, "value": str(950 * 10**18)}] + \
+                       [{"address": {"hash": f"0x{i}"}, "value": str(1 * 10**18)} for i in range(60)]
+
+        out = TokenSafetyUseCase(client=ContractClient()).execute("ethereum", "0x" + "c" * 40)
+        assert out["status"] == "OK"
+        assert out["token_symbol"] == "RUG"
+        assert out["verdict"] in ("PELIGROSO", "RIESGO ALTO")
+        cats = {f["category"] for f in out["flags"]}
+        assert "mint" in cats and "concentration" in cats
+
+    @pytest.mark.integration
+    def test_unverified_token(self, db):
+        from django.core.cache import cache
+        from core.application.use_cases.get_onchain_risk import TokenSafetyUseCase
+        cache.clear()
+
+        class EmptyClient:
+            def get_smart_contract(self, chain, token):
+                return {}          # no verificado
+            def get_token_info(self, chain, token):
+                return {"name": "X", "symbol": "X", "decimals": "18"}
+            def get_token_holders(self, chain, token, pages=1):
+                return []
+
+        out = TokenSafetyUseCase(client=EmptyClient()).execute("ethereum", "0x" + "c" * 40)
+        assert out["verified"] is False
+        assert any(f["category"] == "unverified" for f in out["flags"])
+
+    @pytest.mark.integration
+    def test_token_safety_requires_auth(self, api_client):
+        assert api_client.get("/api/blockchain/forensics/token-safety/").status_code == 401
+
+    @pytest.mark.integration
+    def test_token_safety_validates(self, authenticated_client, db):
+        resp = authenticated_client.get("/api/blockchain/forensics/token-safety/", {"token": "bad"})
+        assert resp.status_code == 400

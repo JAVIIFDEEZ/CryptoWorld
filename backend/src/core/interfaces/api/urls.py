@@ -215,6 +215,7 @@ urlpatterns = [
     path("blockchain/forensics/risk/", views.OnChainRiskScoreView.as_view(), name="blockchain-forensics-risk"),
     path("blockchain/forensics/approvals/", views.OnChainApprovalsView.as_view(), name="blockchain-forensics-approvals"),
     path("blockchain/forensics/entity/", views.OnChainEntityGraphView.as_view(), name="blockchain-forensics-entity"),
+    path("blockchain/forensics/token-safety/", views.OnChainTokenSafetyView.as_view(), name="blockchain-forensics-token-safety"),
     path("blockchain/pressure/", views.OnChainPressureView.as_view(), name="blockchain-pressure"),
     path("blockchain/smartmoney/", views.SmartMoneyView.as_view(), name="blockchain-smartmoney"),
     path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
