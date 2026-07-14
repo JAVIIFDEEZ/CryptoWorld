@@ -8,10 +8,17 @@
  */
 
 import { useState } from 'react'
-import { blockchainService, type FlowTrace, type FlowNode, type TokenConcentration, type WalletFingerprint } from '@/services/blockchainService'
+import {
+  blockchainService,
+  type FlowTrace, type FlowNode, type TokenConcentration, type WalletFingerprint,
+  type AddressRisk, type ApprovalsResult, type EntityGraph,
+} from '@/services/blockchainService'
 
 const CHAINS = ['ethereum', 'base', 'optimism', 'arbitrum', 'gnosis']
 const TOOLS = [
+  { key: 'risk', label: 'Riesgo de dirección', icon: '🛡️', hint: 'Puntuación 0-100 por exposición y patrones' },
+  { key: 'approvals', label: 'Aprobaciones', icon: '⚠️', hint: 'Allowances ERC-20 peligrosas' },
+  { key: 'entity', label: 'Grafo de entidad', icon: '🕸️', hint: 'Direcciones que se mueven juntas' },
   { key: 'flow', label: 'Rastreo de flujos', icon: '💸', hint: 'Sigue el dinero: árbol de salidas + patrones' },
   { key: 'concentration', label: 'Concentración', icon: '🎯', hint: 'Reparto de un token entre tenedores' },
   { key: 'fingerprint', label: 'Huella conductual', icon: '🫆', hint: 'Cómo se comporta una dirección' },
@@ -24,7 +31,7 @@ function short(a: string): string {
 }
 
 export default function ForensicsPanel() {
-  const [tool, setTool] = useState<Tool>('flow')
+  const [tool, setTool] = useState<Tool>('risk')
   const [chain, setChain] = useState('ethereum')
 
   return (
@@ -53,6 +60,9 @@ export default function ForensicsPanel() {
         </select>
       </div>
 
+      {tool === 'risk' && <RiskScore chain={chain} />}
+      {tool === 'approvals' && <Approvals chain={chain} />}
+      {tool === 'entity' && <EntityGraphView chain={chain} />}
       {tool === 'flow' && <FlowTracer chain={chain} />}
       {tool === 'concentration' && <Concentration chain={chain} />}
       {tool === 'fingerprint' && <Fingerprint chain={chain} />}
@@ -261,6 +271,199 @@ function Heatmap({ grid }: Readonly<{ grid: number[][] }>) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ── 4. Puntuación de riesgo ─────────────────────────────────────────
+
+const RISK_BAND: Record<string, { cls: string; ring: string }> = {
+  'SEVERO': { cls: 'text-red-300', ring: 'text-red-500' },
+  'ALTO': { cls: 'text-amber-300', ring: 'text-amber-500' },
+  'MEDIO': { cls: 'text-yellow-300', ring: 'text-yellow-500' },
+  'BAJO': { cls: 'text-emerald-300', ring: 'text-emerald-500' },
+}
+
+function RiskGauge({ score, band }: Readonly<{ score: number; band: string }>) {
+  const R = 40, C = 2 * Math.PI * R
+  const dash = (score / 100) * C
+  const color = RISK_BAND[band]?.ring ?? 'text-slate-500'
+  return (
+    <div className="relative w-28 h-28 shrink-0">
+      <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+        <circle cx="50" cy="50" r={R} fill="none" stroke="#1e293b" strokeWidth="8" />
+        <circle cx="50" cy="50" r={R} fill="none" strokeWidth="8" strokeLinecap="round"
+                className={color} stroke="currentColor"
+                strokeDasharray={`${dash} ${C}`} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`text-2xl font-bold font-mono ${RISK_BAND[band]?.cls}`}>{score}</span>
+        <span className="text-[9px] text-slate-500">/ 100</span>
+      </div>
+    </div>
+  )
+}
+
+function RiskScore({ chain }: Readonly<{ chain: string }>) {
+  const [data, setData] = useState<AddressRisk | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function run(address: string) {
+    setLoading(true); setError(''); setData(null)
+    try {
+      const res = await blockchainService.addressRisk(chain, address)
+      if (res.error) setError(res.error)
+      else setData(res)
+    } catch { setError('No se pudo puntuar la dirección.') } finally { setLoading(false) }
+  }
+
+  return (
+    <div className="space-y-3">
+      <AddressBar placeholder="Dirección a evaluar (0x…)" onRun={run} loading={loading} />
+      <p className="text-[10px] text-slate-500">Combina exposición a etiquetas de sanciones/mixers/scams (propia y de contrapartes) con patrones on-chain. Heurístico, no atribución de identidad.</p>
+      {error && <ErrorNote msg={error} />}
+      {data && (
+        <div className="bg-slate-900/60 rounded-lg border border-slate-700/60 p-4">
+          <div className="flex items-center gap-4 mb-3">
+            <RiskGauge score={data.score} band={data.band} />
+            <div>
+              <p className={`text-lg font-bold ${RISK_BAND[data.band]?.cls}`}>Riesgo {data.band}</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {data.flagged_counterparties} contraparte(s) señaladas · {data.counterparties_analyzed} analizadas
+              </p>
+              {data.self_labels && data.self_labels.length > 0 && (
+                <p className="text-[10px] text-slate-500 mt-1">Etiquetas: {data.self_labels.join(', ')}</p>
+              )}
+            </div>
+          </div>
+          {data.factors.length > 0 ? (
+            <ul className="space-y-1">
+              {data.factors.map((f, i) => (
+                <li key={i} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-8 text-right font-mono text-slate-400">+{f.weight}</span>
+                  <span className="text-slate-300">{f.detail}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-emerald-400/80">Sin factores de riesgo detectados en la muestra.</p>
+          )}
+          <p className="text-[9px] text-slate-600 mt-2">{data.note}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 5. Aprobaciones ERC-20 ──────────────────────────────────────────
+
+const APPROVAL_STYLE: Record<string, string> = {
+  'SEVERO': 'bg-red-500/15 border-red-500/40 text-red-300',
+  'ALTO': 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+  'MEDIO': 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300',
+  'BAJO': 'bg-slate-700/40 border-slate-600 text-slate-400',
+}
+
+function Approvals({ chain }: Readonly<{ chain: string }>) {
+  const [data, setData] = useState<ApprovalsResult | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function run(address: string) {
+    setLoading(true); setError(''); setData(null)
+    try {
+      const res = await blockchainService.approvals(chain, address)
+      if (res.error) setError(res.error)
+      else setData(res)
+    } catch { setError('No se pudieron leer las aprobaciones.') } finally { setLoading(false) }
+  }
+
+  return (
+    <div className="space-y-3">
+      <AddressBar placeholder="Dirección de la wallet (0x…)" onRun={run} loading={loading} />
+      <p className="text-[10px] text-slate-500">Aprobaciones ERC-20 activas. Las ilimitadas a contratos sin verificar son el principal vector de drenaje: revócalas si no las usas.</p>
+      {error && <ErrorNote msg={error} />}
+      {data && (
+        <div className="bg-slate-900/60 rounded-lg border border-slate-700/60 p-4 space-y-2">
+          <div className="flex items-center gap-3 text-[11px] flex-wrap">
+            <span className="text-slate-300">{data.total} aprobación(es) activas</span>
+            {data.unlimited > 0 && <span className="text-amber-300">· {data.unlimited} ilimitadas</span>}
+            <span className={`ml-auto px-2 py-0.5 rounded-full border text-[10px] ${APPROVAL_STYLE[data.worst] ?? APPROVAL_STYLE.BAJO}`}>
+              Peor: {data.worst}
+            </span>
+          </div>
+          {data.approvals.length === 0 ? (
+            <p className="text-xs text-emerald-400/80">Sin aprobaciones activas: la wallet no ha delegado gasto de tokens.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {data.approvals.slice(0, 12).map((a, i) => (
+                <div key={i} className="flex items-center gap-2 text-[11px] py-1 border-b border-slate-700/40">
+                  <span className={`px-1.5 py-0.5 rounded border text-[9px] font-medium ${APPROVAL_STYLE[a.risk]}`}>{a.risk}</span>
+                  <span className="font-mono text-slate-200">{a.token_symbol}</span>
+                  <span className="text-slate-500">→ {short(a.spender)}</span>
+                  {a.is_unlimited && <span className="text-[9px] text-amber-400">∞</span>}
+                  {!a.spender_verified && <span className="text-[9px] text-red-400" title="Contrato sin verificar">⚠ sin verificar</span>}
+                  <span className="ml-auto text-[10px] text-slate-500 truncate max-w-[40%]" title={a.reason}>{a.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[9px] text-slate-600">{data.note}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 6. Grafo de entidad ─────────────────────────────────────────────
+
+function EntityGraphView({ chain }: Readonly<{ chain: string }>) {
+  const [data, setData] = useState<EntityGraph | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function run(address: string) {
+    setLoading(true); setError(''); setData(null)
+    try {
+      const res = await blockchainService.entityGraph(chain, address)
+      if (res.error) setError(res.error)
+      else setData(res)
+    } catch { setError('No se pudo construir el grafo.') } finally { setLoading(false) }
+  }
+
+  const maxStrength = data ? Math.max(...data.nodes.map((n) => n.strength), 1) : 1
+  return (
+    <div className="space-y-3">
+      <AddressBar placeholder="Dirección raíz (0x…)" onRun={run} loading={loading} />
+      <p className="text-[10px] text-slate-500">Agrupa direcciones fuertemente conectadas a la raíz por co-movimiento (nº de transferencias). Sugiere control común, no lo prueba.</p>
+      {error && <ErrorNote msg={error} />}
+      {data && (
+        <div className="bg-slate-900/60 rounded-lg border border-slate-700/60 p-4 space-y-3">
+          <div className="flex items-center gap-3 text-[11px] flex-wrap">
+            <span className="px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300">
+              Entidad probable: {data.entity_size} direcciones
+            </span>
+            <span className="text-slate-500">{data.nodes.length} nodos · {data.neighbors_scanned} vecinos escaneados · {data.components} grupos</span>
+          </div>
+          <div className="space-y-1">
+            {data.nodes.slice(0, 14).map((n) => (
+              <div key={n.address} className={`flex items-center gap-2 text-[11px] px-2 py-1 rounded ${n.in_entity ? 'bg-blue-500/5' : ''}`}>
+                <span className={`font-mono w-32 ${n.is_root ? 'text-white font-bold' : 'text-slate-300'}`}>
+                  {n.is_root ? '★ ' : ''}{short(n.address)}
+                </span>
+                <div className="flex-1 h-2 bg-slate-800 rounded overflow-hidden">
+                  <div className={`h-full ${n.in_entity ? 'bg-blue-500/60' : 'bg-slate-600/50'}`}
+                       style={{ width: `${(n.strength / maxStrength) * 100}%` }} />
+                </div>
+                <span className="text-slate-500 w-16 text-right font-mono">{n.degree} conex.</span>
+                {n.in_entity && !n.is_root && <span className="text-[9px] text-blue-400">entidad</span>}
+              </div>
+            ))}
+          </div>
+          <p className="text-[9px] text-slate-600">{data.note}</p>
+        </div>
+      )}
     </div>
   )
 }

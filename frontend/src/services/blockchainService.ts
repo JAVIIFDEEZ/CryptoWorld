@@ -421,6 +421,97 @@ export const blockchainService = {
     const { data } = await apiClient.get(`/blockchain/forensics/fingerprint/?${params}`)
     return data
   },
+
+  /** Puntuación de riesgo 0-100 de una dirección. */
+  addressRisk: async (chain: string, address: string): Promise<AddressRisk> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/forensics/risk/?${params}`)
+    return data
+  },
+
+  /** Aprobaciones ERC-20 vivas de una dirección y su peligrosidad. */
+  approvals: async (chain: string, address: string): Promise<ApprovalsResult> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/forensics/approvals/?${params}`)
+    return data
+  },
+
+  /** Grafo de entidad: direcciones que se mueven junto a la raíz. */
+  entityGraph: async (chain: string, address: string): Promise<EntityGraph> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/forensics/entity/?${params}`)
+    return data
+  },
+}
+
+// ── Tipos de riesgo / aprobaciones / entidad ───────────────────────
+
+export interface RiskFactor {
+  kind: string
+  category: string
+  weight: number
+  detail: string
+}
+
+export interface AddressRisk {
+  status?: 'OK'
+  error?: string
+  chain: string
+  address: string
+  score: number
+  band: 'SEVERO' | 'ALTO' | 'MEDIO' | 'BAJO'
+  factors: RiskFactor[]
+  flagged_counterparties: number
+  counterparties_analyzed?: number
+  self_labels?: string[]
+  note: string
+}
+
+export interface Approval {
+  token: string
+  token_symbol: string
+  spender: string
+  spender_label: string | null
+  spender_verified: boolean
+  is_unlimited: boolean
+  amount: number | null
+  risk: 'SEVERO' | 'ALTO' | 'MEDIO' | 'BAJO'
+  reason: string
+}
+
+export interface ApprovalsResult {
+  status?: 'OK'
+  error?: string
+  chain: string
+  address: string
+  approvals: Approval[]
+  total: number
+  unlimited: number
+  counts: Record<string, number>
+  worst: string
+  note: string
+}
+
+export interface EntityNode {
+  address: string
+  degree: number
+  strength: number
+  in_entity: boolean
+  is_root: boolean
+}
+
+export interface EntityGraph {
+  status?: 'OK'
+  error?: string
+  chain: string
+  root: string
+  nodes: EntityNode[]
+  edges: { a: string; b: string; weight: number }[]
+  entity: string[]
+  entity_size: number
+  components: number
+  neighbors_scanned?: number
+  note: string
 }
 
 // ── Tipos del submódulo forense ────────────────────────────────────

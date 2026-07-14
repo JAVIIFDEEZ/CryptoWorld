@@ -1230,6 +1230,59 @@ class ChainHealthView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class OnChainRiskScoreView(APIView):
+    """
+    GET /api/blockchain/forensics/risk/?chain=ethereum&address=0x.. — Puntuación
+    de riesgo 0-100 de una dirección (exposición a etiquetas de sanciones/mixers/
+    scams + patrones on-chain), con desglose de factores.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import AddressRiskUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = AddressRiskUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainApprovalsView(APIView):
+    """
+    GET /api/blockchain/forensics/approvals/?chain=ethereum&address=0x.. —
+    Aprobaciones ERC-20 vivas de una dirección y su peligrosidad (ilimitadas a
+    contratos sin verificar = vector de drenaje).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import ApprovalsUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = ApprovalsUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainEntityGraphView(APIView):
+    """
+    GET /api/blockchain/forensics/entity/?chain=ethereum&address=0x.. — Grafo de
+    entidad: agrupa direcciones que se mueven junto a la raíz (co-movimiento).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import EntityGraphUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = EntityGraphUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
 class OnChainFlowTraceView(APIView):
     """
     GET /api/blockchain/forensics/flow/?chain=ethereum&address=0x..&depth=2 —

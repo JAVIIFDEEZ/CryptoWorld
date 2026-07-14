@@ -24,8 +24,10 @@ const CONC: TokenConcentration = {
 describe('ForensicsPanel', () => {
   beforeEach(() => { vi.restoreAllMocks() })
 
-  it('arranca en el rastreador de flujos y cambia de herramienta', () => {
+  it('arranca en riesgo de dirección y cambia entre herramientas', () => {
     render(<ForensicsPanel />)
+    expect(screen.getByPlaceholderText(/Dirección a evaluar/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Rastreo de flujos'))
     expect(screen.getByPlaceholderText(/Dirección de origen/)).toBeInTheDocument()
     fireEvent.click(screen.getByText('Concentración'))
     expect(screen.getByPlaceholderText(/Contrato del token/)).toBeInTheDocument()
@@ -35,10 +37,27 @@ describe('ForensicsPanel', () => {
     render(<ForensicsPanel />)
     const btn = screen.getByRole('button', { name: 'Analizar' })
     expect(btn).toBeDisabled()
-    fireEvent.change(screen.getByPlaceholderText(/Dirección de origen/), {
+    fireEvent.change(screen.getByPlaceholderText(/Dirección a evaluar/), {
       target: { value: '0x' + 'a'.repeat(40) },
     })
     expect(btn).not.toBeDisabled()
+  })
+
+  it('muestra la puntuación de riesgo con su banda y factores', async () => {
+    vi.spyOn(blockchainService, 'addressRisk').mockResolvedValue({
+      status: 'OK', chain: 'ethereum', address: '0x' + 'a'.repeat(40),
+      score: 52, band: 'ALTO', flagged_counterparties: 1, counterparties_analyzed: 3,
+      self_labels: [], note: 'heurístico',
+      factors: [{ kind: 'counterparty', category: 'scam', weight: 32, detail: '1 contraparte de riesgo (scam).' }],
+    })
+    render(<ForensicsPanel />)
+    fireEvent.change(screen.getByPlaceholderText(/Dirección a evaluar/), {
+      target: { value: '0x' + 'a'.repeat(40) },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Analizar' }))
+    await waitFor(() => expect(screen.getByText('Riesgo ALTO')).toBeInTheDocument())
+    expect(screen.getByText('52')).toBeInTheDocument()
+    expect(screen.getByText(/1 contraparte de riesgo/)).toBeInTheDocument()
   })
 
   it('muestra el veredicto de concentración y los tenedores', async () => {
