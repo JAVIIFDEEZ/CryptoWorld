@@ -182,3 +182,58 @@ class TestTokenSafety:
     def test_token_safety_validates(self, authenticated_client, db):
         resp = authenticated_client.get("/api/blockchain/forensics/token-safety/", {"token": "bad"})
         assert resp.status_code == 400
+
+
+class TestWashTrading:
+
+    @pytest.mark.integration
+    def test_detects_round_trip_wash(self, db):
+        from django.core.cache import cache
+        from core.application.use_cases.get_onchain_risk import WashTradingUseCase
+        cache.clear()
+
+        def transfer(frm, to):
+            return {"from": {"hash": frm}, "to": {"hash": to},
+                    "total": {"value": str(100 * 10**18)}, "timestamp": "2023-11-14T12:00:00Z"}
+
+        class WashClient:
+            def get_token_info(self, chain, token):
+                return {"name": "Pump", "symbol": "PUMP", "decimals": "18"}
+            def get_token_transfers(self, chain, token, pages=2):
+                out = []
+                for _ in range(8):
+                    out.append(transfer("0xa", "0xb"))
+                    out.append(transfer("0xb", "0xa"))
+                return out
+
+        out = WashTradingUseCase(client=WashClient()).execute("ethereum", "0x" + "c" * 40)
+        assert out["status"] == "OK"
+        assert out["token_symbol"] == "PUMP"
+        assert out["verdict"] == "MANIPULADO"
+        assert out["round_trip_ratio"] > 0.9
+
+    @pytest.mark.integration
+    def test_organic_token_clean(self, db):
+        from django.core.cache import cache
+        from core.application.use_cases.get_onchain_risk import WashTradingUseCase
+        cache.clear()
+
+        class OrganicClient:
+            def get_token_info(self, chain, token):
+                return {"name": "Real", "symbol": "REAL", "decimals": "18"}
+            def get_token_transfers(self, chain, token, pages=2):
+                return [{"from": {"hash": f"0xs{i}"}, "to": {"hash": f"0xd{i}"},
+                         "total": {"value": str(50 * 10**18)}, "timestamp": "2023-11-14T12:00:00Z"}
+                        for i in range(20)]
+
+        out = WashTradingUseCase(client=OrganicClient()).execute("ethereum", "0x" + "c" * 40)
+        assert out["verdict"] == "ORGÁNICO"
+
+    @pytest.mark.integration
+    def test_wash_requires_auth(self, api_client):
+        assert api_client.get("/api/blockchain/forensics/wash-trading/").status_code == 401
+
+    @pytest.mark.integration
+    def test_wash_validates(self, authenticated_client, db):
+        resp = authenticated_client.get("/api/blockchain/forensics/wash-trading/", {"token": "bad"})
+        assert resp.status_code == 400

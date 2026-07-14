@@ -449,6 +449,82 @@ export const blockchainService = {
     const { data } = await apiClient.get(`/blockchain/forensics/token-safety/?${params}`)
     return data
   },
+
+  /** Dossier forense unificado de una dirección (informe imprimible). */
+  addressDossier: async (chain: string, address: string): Promise<AddressDossier> => {
+    const params = new URLSearchParams({ chain, address })
+    const { data } = await apiClient.get(`/blockchain/forensics/dossier/?${params}`)
+    return data
+  },
+
+  /** Detección de wash trading (volumen artificial) en un token. */
+  washTrading: async (chain: string, token: string): Promise<WashTrading> => {
+    const params = new URLSearchParams({ chain, token })
+    const { data } = await apiClient.get(`/blockchain/forensics/wash-trading/?${params}`)
+    return data
+  },
+}
+
+// ── Tipos de wash trading ──────────────────────────────────────────
+
+export interface WashPair {
+  a: string
+  b: string
+  volume_ab: number
+  volume_ba: number
+  round_trip_volume: number
+  transfers: number
+  share_pct: number
+}
+
+export interface WashTrading {
+  status?: 'OK'
+  error?: string
+  chain: string
+  token: string
+  token_name: string | null
+  token_symbol: string | null
+  available: boolean
+  wash_score?: number
+  verdict?: 'MANIPULADO' | 'SOSPECHOSO' | 'DUDOSO' | 'ORGÁNICO'
+  total_transfers?: number
+  unique_addresses?: number
+  round_trip_ratio?: number
+  round_trip_volume_pct?: number
+  top5_pair_share_pct?: number
+  self_transfers?: number
+  suspicious_pairs?: WashPair[]
+  note?: string
+}
+
+// ── Tipos del dossier forense ──────────────────────────────────────
+
+export interface DossierFinding {
+  severity: 'high' | 'medium' | 'info'
+  text: string
+}
+
+export interface AddressDossier {
+  status?: 'OK'
+  error?: string
+  chain: string
+  address: string
+  verdict: {
+    overall_score: number
+    band: 'CRÍTICO' | 'ELEVADO' | 'MODERADO' | 'LIMPIO'
+    headline: string
+    risk_band: string | null
+    worst_approval: string
+    key_findings: DossierFinding[]
+  }
+  sections: {
+    risk: AddressRisk & { available?: boolean }
+    fingerprint: WalletFingerprint & { available?: boolean }
+    approvals: ApprovalsResult & { available?: boolean }
+    entity: EntityGraph & { available?: boolean }
+    flow: FlowTrace & { available?: boolean }
+  }
+  note: string
 }
 
 // ── Tipos de seguridad de token ────────────────────────────────────

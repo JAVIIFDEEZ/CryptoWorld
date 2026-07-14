@@ -12,12 +12,15 @@ import {
   blockchainService,
   type FlowTrace, type FlowNode, type TokenConcentration, type WalletFingerprint,
   type AddressRisk, type ApprovalsResult, type EntityGraph, type TokenSafety,
+  type WashTrading,
 } from '@/services/blockchainService'
 
 const CHAINS = ['ethereum', 'base', 'optimism', 'arbitrum', 'gnosis']
 const TOOLS = [
+  { key: 'dossier', label: 'Dossier forense', icon: '📄', hint: 'Informe unificado imprimible de una dirección' },
   { key: 'risk', label: 'Riesgo de dirección', icon: '🛡️', hint: 'Puntuación 0-100 por exposición y patrones' },
   { key: 'token', label: 'Seguridad de token', icon: '🔬', hint: 'Due diligence: rug/honeypot a nivel de contrato' },
+  { key: 'wash', label: 'Wash trading', icon: '🔁', hint: 'Volumen artificial (round-trips)' },
   { key: 'approvals', label: 'Aprobaciones', icon: '⚠️', hint: 'Allowances ERC-20 peligrosas' },
   { key: 'entity', label: 'Grafo de entidad', icon: '🕸️', hint: 'Direcciones que se mueven juntas' },
   { key: 'flow', label: 'Rastreo de flujos', icon: '💸', hint: 'Sigue el dinero: árbol de salidas + patrones' },
@@ -32,7 +35,7 @@ function short(a: string): string {
 }
 
 export default function ForensicsPanel() {
-  const [tool, setTool] = useState<Tool>('risk')
+  const [tool, setTool] = useState<Tool>('dossier')
   const [chain, setChain] = useState('ethereum')
 
   return (
@@ -61,8 +64,10 @@ export default function ForensicsPanel() {
         </select>
       </div>
 
+      {tool === 'dossier' && <DossierLauncher chain={chain} />}
       {tool === 'risk' && <RiskScore chain={chain} />}
       {tool === 'token' && <TokenSafetyView chain={chain} />}
+      {tool === 'wash' && <WashTradingView chain={chain} />}
       {tool === 'approvals' && <Approvals chain={chain} />}
       {tool === 'entity' && <EntityGraphView chain={chain} />}
       {tool === 'flow' && <FlowTracer chain={chain} />}
@@ -277,6 +282,28 @@ function Heatmap({ grid }: Readonly<{ grid: number[][] }>) {
   )
 }
 
+// ── Dossier forense (informe unificado imprimible) ──────────────────
+
+function DossierLauncher({ chain }: Readonly<{ chain: string }>) {
+  function open(address: string) {
+    window.open(`/blockchain/address/${chain}/${address}/dossier`, '_blank', 'noopener,noreferrer')
+  }
+  return (
+    <div className="space-y-3">
+      <AddressBar placeholder="Dirección para el informe (0x…)" onRun={open} loading={false} />
+      <div className="bg-slate-900/60 rounded-lg border border-slate-700/60 p-4">
+        <p className="text-sm text-slate-300 mb-2">📄 Informe forense unificado</p>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Genera un documento de auditoría imprimible (PDF) que reúne las cinco herramientas de dirección
+          —puntuación de riesgo, huella conductual, aprobaciones ERC-20 vivas, entidad probable y patrones de flujo—
+          con un veredicto global y los hallazgos clave. Se abre en una pestaña nueva; agrega varios análisis, así que
+          tarda unos segundos.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 // ── Seguridad de token (due diligence) ──────────────────────────────
 
 const SAFETY_STYLE: Record<string, { cls: string; bar: string }> = {
@@ -368,6 +395,85 @@ function StatusPill({ ok, label, invert }: Readonly<{ ok: boolean; label: string
     }`}>
       {good ? '✓' : '✗'} {label}
     </span>
+  )
+}
+
+// ── Wash trading (volumen artificial) ───────────────────────────────
+
+const WASH_STYLE: Record<string, { cls: string; bar: string }> = {
+  'MANIPULADO': { cls: 'text-red-300', bar: 'bg-red-500' },
+  'SOSPECHOSO': { cls: 'text-amber-300', bar: 'bg-amber-500' },
+  'DUDOSO': { cls: 'text-yellow-300', bar: 'bg-yellow-500' },
+  'ORGÁNICO': { cls: 'text-emerald-300', bar: 'bg-emerald-500' },
+}
+
+function WashTradingView({ chain }: Readonly<{ chain: string }>) {
+  const [data, setData] = useState<WashTrading | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function run(token: string) {
+    setLoading(true); setError(''); setData(null)
+    try {
+      const res = await blockchainService.washTrading(chain, token)
+      if (res.error) setError(res.error)
+      else setData(res)
+    } catch { setError('No se pudo analizar el token.') } finally { setLoading(false) }
+  }
+
+  const style = data?.verdict ? WASH_STYLE[data.verdict] : undefined
+  return (
+    <div className="space-y-3">
+      <AddressBar placeholder="Contrato del token ERC-20 (0x…)" onRun={run} loading={loading} />
+      <p className="text-[10px] text-slate-500">Detecta volumen inflado por transferencias circulares (ida y vuelta entre las mismas direcciones): la firma del wash trading. Señala patrones, no prueba intención.</p>
+      {error && <ErrorNote msg={error} />}
+      {data && (data.available ? (
+        <div className="bg-slate-900/60 rounded-lg border border-slate-700/60 p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h4 className="text-sm font-semibold text-white">
+              {data.token_name} <span className="text-slate-500 font-mono">{data.token_symbol}</span>
+            </h4>
+            <span className={`text-sm font-bold ${style?.cls}`}>{data.verdict}</span>
+          </div>
+          <div>
+            <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
+              <span>Índice de wash</span><span className="font-mono">{data.wash_score}/100</span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div className={`h-full ${style?.bar}`} style={{ width: `${data.wash_score}%` }} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+            {[
+              ['Round-trip', `${data.round_trip_volume_pct}%`],
+              ['Top-5 pares', `${data.top5_pair_share_pct}%`],
+              ['Transfers', data.total_transfers],
+              ['Direcciones', data.unique_addresses],
+            ].map(([label, value]) => (
+              <div key={label} className="bg-slate-800/60 rounded-lg p-2">
+                <p className="text-base font-bold font-mono text-white">{value}</p>
+                <p className="text-[9px] text-slate-500">{label}</p>
+              </div>
+            ))}
+          </div>
+          {data.suspicious_pairs && data.suspicious_pairs.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase text-slate-500">Pares con round-trip</p>
+              {data.suspicious_pairs.slice(0, 6).map((p, i) => (
+                <div key={i} className="flex items-center gap-2 text-[11px]">
+                  <span className="font-mono text-slate-300">{short(p.a)} ⇄ {short(p.b)}</span>
+                  <span className="text-slate-500">{p.transfers} tx</span>
+                  <span className="ml-auto font-mono text-amber-300">{p.share_pct}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[9px] text-slate-600">{data.note}</p>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500">{data.note ?? 'Datos insuficientes.'}</p>
+      ))}
+    </div>
   )
 }
 

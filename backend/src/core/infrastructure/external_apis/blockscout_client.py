@@ -130,6 +130,11 @@ class BlockscoutClient:
         (para la radiografía de concentración)."""
         return self._paginated_items(chain, f"/api/v2/tokens/{token}/holders", pages=pages)
 
+    def get_token_transfers(self, chain: str, token: str, pages: int = 2) -> list[dict[str, Any]]:
+        """GET /api/v2/tokens/{token}/transfers — transferencias recientes de un
+        token (para la detección de wash trading)."""
+        return self._paginated_items(chain, f"/api/v2/tokens/{token}/transfers", pages=pages)
+
     def get_token_info(self, chain: str, token: str) -> dict[str, Any]:
         """GET /api/v2/tokens/{token} — metadatos del token (nombre, símbolo,
         decimales, nº total de tenedores, supply)."""

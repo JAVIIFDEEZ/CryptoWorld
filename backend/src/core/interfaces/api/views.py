@@ -1266,6 +1266,42 @@ class OnChainApprovalsView(APIView):
         return Response(result, status=code)
 
 
+class OnChainWashTradingView(APIView):
+    """
+    GET /api/blockchain/forensics/wash-trading/?chain=ethereum&token=0x.. —
+    Detección de wash trading (volumen artificial): round-trips entre las mismas
+    direcciones, concentración de volumen y pares sospechosos.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import WashTradingUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        token = (request.query_params.get("token") or "").strip()
+        result = WashTradingUseCase().execute(chain, token)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainAddressDossierView(APIView):
+    """
+    GET /api/blockchain/forensics/dossier/?chain=ethereum&address=0x.. — Dossier
+    forense unificado de una dirección: riesgo, conducta, aprobaciones, entidad y
+    flujos con un veredicto global. Alimenta el informe imprimible.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_address_dossier import AddressDossierUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = AddressDossierUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
 class OnChainTokenSafetyView(APIView):
     """
     GET /api/blockchain/forensics/token-safety/?chain=ethereum&token=0x.. —

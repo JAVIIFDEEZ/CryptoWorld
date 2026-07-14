@@ -244,6 +244,51 @@ class TokenSafetyUseCase:
         return None
 
 
+class WashTradingUseCase:
+    """Detección de wash trading (volumen artificial) en un token."""
+
+    def __init__(self, client=None):
+        self._client = client or BlockscoutClient()
+
+    def execute(self, chain: str, token: str) -> dict:
+        if not is_valid_address(token):
+            return {"error": "Dirección de token EVM no válida."}
+        from django.core.cache import cache
+
+        key = f"wash_trading:{chain}:{token.lower()}"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        from core.domain.services import wash_trading
+
+        try:
+            info = self._client.get_token_info(chain, token)
+            raw = self._client.get_token_transfers(chain, token, pages=2)
+        except BlockscoutClientError as exc:
+            return {"error": str(exc)}
+
+        decimals = int(_to_float((info or {}).get("decimals"), 18))
+        scale = 10 ** decimals if decimals >= 0 else 1
+        transfers = []
+        for tr in raw or []:
+            frm = ((tr.get("from") or {}).get("hash") or "").lower()
+            to = ((tr.get("to") or {}).get("hash") or "").lower()
+            total = tr.get("total") or {}
+            value = _to_float(total.get("value") if isinstance(total, dict) else tr.get("value"))
+            if frm and to:
+                transfers.append({"from": frm, "to": to, "value": value / scale,
+                                  "timestamp": tr.get("timestamp")})
+
+        result = {
+            "status": "OK", "chain": chain, "token": token.lower(),
+            "token_name": (info or {}).get("name"), "token_symbol": (info or {}).get("symbol"),
+            **wash_trading.detect_wash_trading(transfers),
+        }
+        cache.set(key, result, _CACHE_TTL)
+        return result
+
+
 class EntityGraphUseCase:
     """Grafo de entidad: agrupa direcciones que se mueven junto a la raíz."""
 

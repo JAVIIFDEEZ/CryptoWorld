@@ -24,8 +24,10 @@ const CONC: TokenConcentration = {
 describe('ForensicsPanel', () => {
   beforeEach(() => { vi.restoreAllMocks() })
 
-  it('arranca en riesgo de dirección y cambia entre herramientas', () => {
+  it('arranca en el dossier y cambia entre herramientas', () => {
     render(<ForensicsPanel />)
+    expect(screen.getByPlaceholderText(/Dirección para el informe/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Riesgo de dirección'))
     expect(screen.getByPlaceholderText(/Dirección a evaluar/)).toBeInTheDocument()
     fireEvent.click(screen.getByText('Rastreo de flujos'))
     expect(screen.getByPlaceholderText(/Dirección de origen/)).toBeInTheDocument()
@@ -35,6 +37,7 @@ describe('ForensicsPanel', () => {
 
   it('deshabilita Analizar hasta que la dirección es válida', () => {
     render(<ForensicsPanel />)
+    fireEvent.click(screen.getByText('Riesgo de dirección'))
     const btn = screen.getByRole('button', { name: 'Analizar' })
     expect(btn).toBeDisabled()
     fireEvent.change(screen.getByPlaceholderText(/Dirección a evaluar/), {
@@ -51,6 +54,7 @@ describe('ForensicsPanel', () => {
       factors: [{ kind: 'counterparty', category: 'scam', weight: 32, detail: '1 contraparte de riesgo (scam).' }],
     })
     render(<ForensicsPanel />)
+    fireEvent.click(screen.getByText('Riesgo de dirección'))
     fireEvent.change(screen.getByPlaceholderText(/Dirección a evaluar/), {
       target: { value: '0x' + 'a'.repeat(40) },
     })
@@ -79,6 +83,27 @@ describe('ForensicsPanel', () => {
     expect(screen.getByText('RUG')).toBeInTheDocument()
     expect(screen.getByText(/Emisión \(mint\)/)).toBeInTheDocument()
     expect(screen.getByText(/Proxy actualizable/)).toBeInTheDocument()
+  })
+
+  it('muestra el veredicto de wash trading con pares round-trip', async () => {
+    vi.spyOn(blockchainService, 'washTrading').mockResolvedValue({
+      status: 'OK', chain: 'ethereum', token: '0x' + 'c'.repeat(40),
+      token_name: 'Pump', token_symbol: 'PUMP', available: true,
+      wash_score: 88, verdict: 'MANIPULADO', total_transfers: 40, unique_addresses: 4,
+      round_trip_ratio: 0.92, round_trip_volume_pct: 92, top5_pair_share_pct: 95, self_transfers: 0,
+      suspicious_pairs: [{ a: '0x' + 'a'.repeat(40), b: '0x' + 'b'.repeat(40),
+        volume_ab: 100, volume_ba: 100, round_trip_volume: 200, transfers: 16, share_pct: 50 }],
+      note: 'heurístico',
+    })
+    render(<ForensicsPanel />)
+    fireEvent.click(screen.getByText('Wash trading'))
+    fireEvent.change(screen.getByPlaceholderText(/Contrato del token/), {
+      target: { value: '0x' + 'c'.repeat(40) },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Analizar' }))
+    await waitFor(() => expect(screen.getByText('MANIPULADO')).toBeInTheDocument())
+    expect(screen.getByText('88/100')).toBeInTheDocument()
+    expect(screen.getByText('92%')).toBeInTheDocument()
   })
 
   it('muestra el veredicto de concentración y los tenedores', async () => {
