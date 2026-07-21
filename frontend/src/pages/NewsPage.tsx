@@ -5,10 +5,14 @@
  * Fuente: CryptoCompare News API (a través del backend).
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy } from 'react'
 import { useTranslation } from 'react-i18next'
-import { newsService, type NewsItem } from '../services/newsService'
+import { newsService, type NewsItem, type NewsGlobe } from '../services/newsService'
 import EmptyState from '../components/ui/EmptyState'
+import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
+import GeoNews2D from '@/components/news/GeoNews2D'
+import { CATEGORY_COLORS, CATEGORY_NAMES } from '@/components/news/NewsGlobe3D'
+const NewsGlobe3D = lazy(() => import('@/components/news/NewsGlobe3D'))
 
 const IconNews = () => (
   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -214,10 +218,16 @@ export default function NewsPage() {
   const { t } = useTranslation()
   const [allItems, setAllItems] = useState<NewsItem[]>([])
   const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY)
+  const [globe, setGlobe] = useState<NewsGlobe | null>(null)
+  const [globeRegion, setGlobeRegion] = useState<string | null>(null)
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    newsService.getNewsGlobe().then((g) => { if (!g.error) setGlobe(g) }).catch(() => { /* sin globo */ })
+  }, [])
   const [activeSentiment, setActiveSentiment] = useState<Sentiment>('')
 
   const fetchNews = useCallback(async () => {
@@ -261,7 +271,52 @@ export default function NewsPage() {
         <h1 className="text-2xl font-bold text-white">{t('news.title')}</h1>
         <p className="text-slate-400 text-sm mt-1">
           {t('news.source')}
-          {!loading && allItems.length > 0 && (
+    
+      {/* Globo terráqueo: noticias importantes por región del mundo */}
+      {globe && globe.markers.length > 0 && (
+        <div className="space-y-3">
+          <Viz3DSwitch
+            title="Globo de noticias"
+            hint={`Eventos por región: tipos de interés, conflictos, salidas a bolsa, regulación… · ${globe.located} localizadas · ${globe.unlocated} globales`}
+            threeD={<NewsGlobe3D markers={globe.markers} selected={globeRegion} onSelect={(r) => setGlobeRegion(globeRegion === r ? null : r)} />}
+            twoD={<GeoNews2D markers={globe.markers} selected={globeRegion} onSelect={(r) => setGlobeRegion(globeRegion === r ? null : r)} />}
+          />
+          {globeRegion && (() => {
+            const m = globe.markers.find((x) => x.region === globeRegion)
+            if (!m) return null
+            return (
+              <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: CATEGORY_COLORS[m.top_category] ?? '#94a3b8' }} />
+                  <h4 className="text-sm font-semibold text-white">{m.name}</h4>
+                  <span className="text-[10px] text-slate-500">{m.count} noticias</span>
+                  <button onClick={() => setGlobeRegion(null)} className="ml-auto text-slate-500 hover:text-white text-xs">×</button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {Object.entries(m.categories).map(([cat, n]) => (
+                    <span key={cat} className="text-[10px] px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">
+                      <span style={{ color: CATEGORY_COLORS[cat] ?? '#94a3b8' }}>●</span> {CATEGORY_NAMES[cat] ?? cat}: {n}
+                    </span>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  {m.items.map((it) => (
+                    <a key={it.url + it.title} href={it.url} target="_blank" rel="noopener noreferrer"
+                       className="block text-xs text-slate-300 hover:text-blue-300 transition-colors truncate">
+                      <span className="text-[9px] font-bold uppercase mr-1.5" style={{ color: CATEGORY_COLORS[it.category] ?? '#94a3b8' }}>
+                        {CATEGORY_NAMES[it.category] ?? it.category}
+                      </span>
+                      {it.title}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {!loading && allItems.length > 0 && (
             <span className="ml-2 text-slate-500">{t('news.articles', { count: allItems.length })}</span>
           )}
           {source && <span className="ml-1 text-slate-600">({source})</span>}

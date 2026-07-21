@@ -8,7 +8,7 @@
 
 import apiClient from './api'
 
-export type NotificationKind = 'signal' | 'whale' | 'prediction' | 'price' | 'pressure' | 'live'
+export type NotificationKind = 'signal' | 'whale' | 'prediction' | 'price' | 'pressure' | 'live' | 'confluence'
 
 export interface NotificationItem {
   id: string

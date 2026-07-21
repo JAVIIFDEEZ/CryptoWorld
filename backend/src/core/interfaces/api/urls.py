@@ -95,9 +95,11 @@ urlpatterns = [
     path("analysis/signals/", views.SignalsDashboardView.as_view(), name="analysis-signals"),
     path("analysis/mtf/", views.MtfConfluenceView.as_view(), name="analysis-mtf"),
     path("analysis/levels/", views.PriceStructureView.as_view(), name="analysis-levels"),
+    path("analysis/quant/", views.QuantSnapshotView.as_view(), name="analysis-quant"),
     path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
     path("analysis/predictions/", views.PredictionTrackRecordView.as_view(), name="analysis-predictions"),
     path("analysis/predictions/monitoring/", views.PredictionMonitoringView.as_view(), name="analysis-predictions-monitoring"),
+    path("analysis/confluence/", views.ConfluenceView.as_view(), name="analysis-confluence"),
     path("analysis/patterns/", views.DetectPatternsView.as_view(), name="analysis-patterns"),
     path("analysis/backtest/", views.RunBacktestView.as_view(), name="analysis-backtest"),
     path(
@@ -205,6 +207,8 @@ urlpatterns = [
     path("blockchain/metrics/", views.BlockchainMetricsView.as_view(), name="blockchain-metrics"),
     path("blockchain/multichain/", views.MultiChainStatsView.as_view(), name="blockchain-multichain"),
     path("blockchain/wallet/", views.WalletOverviewView.as_view(), name="blockchain-wallet"),
+    path("blockchain/pulse/", views.OnChainMarketPulseView.as_view(), name="blockchain-pulse"),
+    path("blockchain/wallet/dossier/", views.WalletDossierView.as_view(), name="blockchain-wallet-dossier"),
     path("blockchain/wallet/chains/", views.WalletChainsView.as_view(), name="blockchain-wallet-chains"),
     path("blockchain/wallet/history/", views.WalletBalanceHistoryView.as_view(), name="blockchain-wallet-history"),
     path("blockchain/health/", views.ChainHealthView.as_view(), name="blockchain-health"),
@@ -223,6 +227,7 @@ urlpatterns = [
     path("blockchain/watchlist/", views.AddressWatchlistView.as_view(), name="blockchain-watchlist"),
     path("blockchain/watchlist/<int:watch_id>/", views.AddressWatchlistItemView.as_view(), name="blockchain-watchlist-item"),
     # ── Trading real multi-exchange (ccxt, manual, testnet por defecto) ──
+    path("trading/risk-policy/", views.LiveRiskPolicyView.as_view(), name="trading-risk-policy"),
     path("trading/connections/", views.TradingConnectionsView.as_view(), name="trading-connections"),
     path("trading/connections/<int:connection_id>/", views.TradingConnectionDetailView.as_view(), name="trading-connection-detail"),
     path("trading/connections/<int:connection_id>/balance/", views.TradingBalanceView.as_view(), name="trading-balance"),
@@ -232,6 +237,11 @@ urlpatterns = [
     path("notifications/", views.NotificationsView.as_view(), name="notifications"),
     path("notifications/seen/", views.NotificationsSeenView.as_view(), name="notifications-seen"),
     path("news/", views.NewsFeedView.as_view(), name="news-feed"),
+    path("push/public-key/", views.PushPublicKeyView.as_view(), name="push-public-key"),
+    path("push/subscribe/", views.PushSubscriptionView.as_view(), name="push-subscribe"),
+    path("news/globe/", views.NewsGlobeView.as_view(), name="news-globe"),
+    path("market/history/", views.OhlcvCoverageView.as_view(), name="market-history"),
+    path("market/history/backfill/", views.OhlcvBackfillView.as_view(), name="market-history-backfill"),
 
     # ── Admin ───────────────────────────────────────────────────────
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),
@@ -244,11 +254,13 @@ urlpatterns = [
     path("admin/market/sync/", admin_views.AdminMarketSyncView.as_view(), name="admin-market-sync"),
 
     # ── Portfolio ────────────────────────────────────────────────────
+    path("portfolio/risk/", views.PortfolioRiskView.as_view(), name="portfolio-risk"),
     path("portfolio/", views.PortfolioView.as_view(), name="portfolio-summary"),
     path("portfolio/trades/", views.TradeListView.as_view(), name="portfolio-trades"),
     path("portfolio/trades/<int:trade_id>/", views.TradeDetailView.as_view(), name="portfolio-trade-detail"),
 
     # ── Portfolio — Posiciones explícitas ────────────────────────────
+    path("portfolio/export/", views.PortfolioExportView.as_view(), name="portfolio-export"),
     path("portfolio/positions/", views.PositionListView.as_view(), name="position-list"),
     path("portfolio/positions/<int:position_id>/", views.PositionDetailView.as_view(), name="position-detail"),
     path("portfolio/positions/<int:position_id>/add/", views.PositionAddView.as_view(), name="position-add"),

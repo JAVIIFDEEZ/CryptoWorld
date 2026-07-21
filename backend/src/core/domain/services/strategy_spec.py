@@ -2,11 +2,15 @@
 strategy_spec.py — Representación componible de estrategias (Módulo 0).
 
 Una estrategia es un StrategySpec: bloques de condiciones de entrada y de
-salida sobre los indicadores existentes (RSI, MACD, Bollinger, SMA/EMA, Stoch
-RSI, CCI, ADX, Williams %R) con sus operadores (cruce, umbral) y rangos de
-parámetros. El compilador traduce un spec a un array de señales (1/-1/0) que
-el motor de backtest existente (backtest_signals) puede ejecutar — de modo que
-el generador genético produce estrategias NUEVAS sin tocar el motor ni la
+salida sobre el catálogo de indicadores (osciladores: RSI, StochRSI, Stoch,
+CCI, Williams %R, ADX, MFI, CMF, ROC, ATR%, Aroon, TRIX, ratio de volumen;
+series de precio: SMA/EMA/WMA/Hull/KAMA, Bollinger, MACD, Ichimoku, PSAR,
+canales Donchian/Keltner y retrocesos de Fibonacci) con CUATRO tipos de
+condición al estilo de los generadores profesionales (StrategyQuant y afines):
+umbral, cruce, estado (A por encima/debajo de B) y pendiente (al alza/baja en
+n velas). El compilador traduce un spec a un array de señales (1/-1/0) que el
+motor de backtest existente (backtest_signals) puede ejecutar — de modo que el
+generador genético produce estrategias NUEVAS sin tocar el motor ni la
 matemática de robustez.
 
 Esquema de un spec (JSON-serializable, así se persiste tal cual):
@@ -91,6 +95,91 @@ def _vol_ratio(df, p):
     sma = vol.rolling(int(p["window"])).mean()
     return (vol / sma.replace(0, np.nan)).values
 
+def _stoch(df, p):
+    return ta_lib.momentum.StochasticOscillator(df["high"], df["low"], df["close"], window=int(p["window"])).stoch().values
+
+def _roc(df, p):
+    # Rate of Change (%): momentum puro a n velas.
+    return ta_lib.momentum.ROCIndicator(df["close"], window=int(p["window"])).roc().values
+
+def _atr_pct(df, p):
+    # ATR normalizado por el precio (%): filtro de volatilidad comparable entre activos.
+    atr = ta_lib.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=int(p["window"])).average_true_range()
+    return (atr / df["close"] * 100.0).values
+
+def _aroon_osc(df, p):
+    # Oscilador de Aroon (-100..100): fuerza y dirección de la tendencia reciente.
+    return ta_lib.trend.AroonIndicator(high=df["high"], low=df["low"], window=int(p["window"])).aroon_indicator().values
+
+def _trix(df, p):
+    # TRIX (%): pendiente de una EMA triple — momentum suavizado con poco ruido.
+    return ta_lib.trend.TRIXIndicator(df["close"], window=int(p["window"])).trix().values
+
+def _wma(df, p):
+    return ta_lib.trend.WMAIndicator(df["close"], window=int(p["window"])).wma().values
+
+def _hma(df, p):
+    # Hull MA: WMA(2·WMA(n/2) − WMA(n), √n) — media rápida con poco retardo.
+    n = int(p["window"])
+    half = max(2, n // 2)
+    sqrt_n = max(2, int(round(math.sqrt(n))))
+    wma_half = ta_lib.trend.WMAIndicator(df["close"], window=half).wma()
+    wma_full = ta_lib.trend.WMAIndicator(df["close"], window=n).wma()
+    raw = 2.0 * wma_half - wma_full
+    return ta_lib.trend.WMAIndicator(raw, window=sqrt_n).wma().values
+
+def _kama(df, p):
+    # Kaufman Adaptive MA: rápida en tendencia, lenta en rango.
+    return ta_lib.momentum.KAMAIndicator(df["close"], window=int(p["window"])).kama().values
+
+def _ichi_conv(df, p):
+    # Línea de conversión Ichimoku (tenkan-sen): (max+min)/2 de w velas.
+    return ta_lib.trend.IchimokuIndicator(df["high"], df["low"], window1=int(p["window"]), window2=26).ichimoku_conversion_line().values
+
+def _ichi_base(df, p):
+    # Línea base Ichimoku (kijun-sen): (max+min)/2 de w velas (más lenta).
+    return ta_lib.trend.IchimokuIndicator(df["high"], df["low"], window1=9, window2=int(p["window"])).ichimoku_base_line().values
+
+def _psar(df, p):
+    # Parabolic SAR: nivel de stop-and-reverse que sigue a la tendencia.
+    # PSARIndicator de `ta` corrompe la longitud con índices no reseteados
+    # (los tramos del walk-forward llegan como slices): índice limpio SIEMPRE.
+    high = df["high"].reset_index(drop=True)
+    low = df["low"].reset_index(drop=True)
+    close = df["close"].reset_index(drop=True)
+    return ta_lib.trend.PSARIndicator(high, low, close, step=float(p["step"]), max_step=float(p["max_step"])).psar().values
+
+def _shift1(arr: np.ndarray) -> np.ndarray:
+    """Serie desplazada 1 vela: canales construidos con máx/mín que INCLUYEN la
+    vela actual no pueden 'cruzarse' con el cierre de esa misma vela; comparar
+    contra el canal de la vela anterior sí define una ruptura real (y causal)."""
+    out = np.empty_like(arr)
+    out[0] = np.nan
+    out[1:] = arr[:-1]
+    return out
+
+def _donch_upper(df, p):
+    return _shift1(ta_lib.volatility.DonchianChannel(df["high"], df["low"], df["close"], window=int(p["window"])).donchian_channel_hband().values)
+
+def _donch_lower(df, p):
+    return _shift1(ta_lib.volatility.DonchianChannel(df["high"], df["low"], df["close"], window=int(p["window"])).donchian_channel_lband().values)
+
+def _kelt_upper(df, p):
+    return ta_lib.volatility.KeltnerChannel(df["high"], df["low"], df["close"], window=int(p["window"])).keltner_channel_hband().values
+
+def _kelt_lower(df, p):
+    return ta_lib.volatility.KeltnerChannel(df["high"], df["low"], df["close"], window=int(p["window"])).keltner_channel_lband().values
+
+def _fib_retr(df, p):
+    # Retroceso de Fibonacci sobre el swing de las últimas `window` velas:
+    # nivel = máximo − ratio·(máximo − mínimo). Con ratio 0.382/0.5/0.618 cubre
+    # los niveles clásicos; desplazado 1 vela para que la ruptura sea causal.
+    w = int(p["window"])
+    hi = df["high"].rolling(w).max()
+    lo = df["low"].rolling(w).min()
+    level = hi - float(p["ratio"]) * (hi - lo)
+    return _shift1(level.values)
+
 
 # Osciladores: se comparan contra un umbral numérico.
 OSCILLATORS: dict[str, dict] = {
@@ -103,22 +192,45 @@ OSCILLATORS: dict[str, dict] = {
     "MFI": {"compute": _mfi, "params": {"window": ("int", 10, 21)}, "threshold": (15.0, 85.0)},
     "CMF": {"compute": _cmf, "params": {"window": ("int", 14, 30)}, "threshold": (-0.3, 0.3)},
     "VOLRATIO": {"compute": _vol_ratio, "params": {"window": ("int", 10, 30)}, "threshold": (0.7, 2.5)},
+    # Momentum y régimen clásicos (estilo StrategyQuant).
+    "STOCH": {"compute": _stoch, "params": {"window": ("int", 10, 21)}, "threshold": (10.0, 90.0)},
+    "ROC": {"compute": _roc, "params": {"window": ("int", 5, 30)}, "threshold": (-10.0, 10.0)},
+    "ATR_PCT": {"compute": _atr_pct, "params": {"window": ("int", 7, 30)}, "threshold": (0.5, 8.0)},
+    "AROON": {"compute": _aroon_osc, "params": {"window": ("int", 14, 30)}, "threshold": (-80.0, 80.0)},
+    "TRIX": {"compute": _trix, "params": {"window": ("int", 9, 20)}, "threshold": (-0.3, 0.3)},
 }
 
-# Tipo precio: se cruzan entre sí (o contra el precio).
+# Tipo precio: se cruzan entre sí (o contra el precio) y se comparan como estado.
 PRICE_LIKE: dict[str, dict] = {
     "PRICE": {"compute": _price, "params": {}},
-    "SMA": {"compute": _sma, "params": {"window": ("int", 5, 100)}},
-    "EMA": {"compute": _ema, "params": {"window": ("int", 5, 100)}},
+    "SMA": {"compute": _sma, "params": {"window": ("int", 5, 200)}},
+    "EMA": {"compute": _ema, "params": {"window": ("int", 5, 200)}},
+    "WMA": {"compute": _wma, "params": {"window": ("int", 5, 100)}},
+    "HMA": {"compute": _hma, "params": {"window": ("int", 8, 80)}},
+    "KAMA": {"compute": _kama, "params": {"window": ("int", 8, 30)}},
     "BB_UPPER": {"compute": _bb_upper, "params": {"window": ("int", 10, 40), "dev": ("float", 1.5, 3.0)}},
     "BB_LOWER": {"compute": _bb_lower, "params": {"window": ("int", 10, 40), "dev": ("float", 1.5, 3.0)}},
     "MACD_LINE": {"compute": _macd_line, "params": {"fast": ("int", 8, 16), "slow": ("int", 20, 34), "signal": ("int", 6, 12)}},
     "MACD_SIGNAL": {"compute": _macd_signal, "params": {"fast": ("int", 8, 16), "slow": ("int", 20, 34), "signal": ("int", 6, 12)}},
+    # Canales y niveles (rupturas y soportes dinámicos).
+    "ICHI_CONV": {"compute": _ichi_conv, "params": {"window": ("int", 7, 12)}},
+    "ICHI_BASE": {"compute": _ichi_base, "params": {"window": ("int", 20, 34)}},
+    "PSAR": {"compute": _psar, "params": {"step": ("float", 0.01, 0.05), "max_step": ("float", 0.1, 0.3)}},
+    "DONCH_UPPER": {"compute": _donch_upper, "params": {"window": ("int", 10, 60)}},
+    "DONCH_LOWER": {"compute": _donch_lower, "params": {"window": ("int", 10, 60)}},
+    "KELT_UPPER": {"compute": _kelt_upper, "params": {"window": ("int", 10, 40)}},
+    "KELT_LOWER": {"compute": _kelt_lower, "params": {"window": ("int", 10, 40)}},
+    # Retroceso de Fibonacci del swing reciente (ratio 0.38–0.62 evolucionable,
+    # cubre los niveles clásicos 0.382/0.5/0.618 con redondeo a 2 decimales).
+    "FIB_RETR": {"compute": _fib_retr, "params": {"window": ("int", 30, 120), "ratio": ("float", 0.38, 0.62)}},
 }
 
 _ALL = {**OSCILLATORS, **PRICE_LIKE}
 THRESHOLD_OPS = ("gt", "lt")
 CROSS_OPS = ("cross_above", "cross_below")
+COMPARE_OPS = ("above", "below")   # estado persistente: A por encima/debajo de B
+SLOPE_OPS = ("rising", "falling")  # pendiente: la serie sube/baja vs hace n velas
+SLOPE_BARS_RANGE = (2, 10)
 COMBINES = ("AND", "OR")
 _MAX_CONDITIONS = 3
 
@@ -162,9 +274,46 @@ def _random_cross_condition(rng: np.random.Generator) -> dict:
     }
 
 
+def _random_compare_condition(rng: np.random.Generator) -> dict:
+    """Condición de ESTADO: A por encima/debajo de B mientras dure (no solo en el
+    cruce). Permite filtros como «precio > SMA(200)» — el clásico filtro de
+    tendencia de los generadores profesionales."""
+    names = list(PRICE_LIKE.keys())
+    a = str(rng.choice(names))
+    b = str(rng.choice([x for x in names if x != a]))
+    return {
+        "type": "compare",
+        "a": {"indicator": a, "params": _sample_params(PRICE_LIKE[a]["params"], rng)},
+        "b": {"indicator": b, "params": _sample_params(PRICE_LIKE[b]["params"], rng)},
+        "op": str(rng.choice(COMPARE_OPS)),
+    }
+
+
+def _random_slope_condition(rng: np.random.Generator) -> dict:
+    """Condición de PENDIENTE: la serie sube/baja respecto a hace n velas
+    (momentum estructural de cualquier indicador, no solo del precio)."""
+    name = str(rng.choice(list(_ALL.keys())))
+    lo, hi = SLOPE_BARS_RANGE
+    return {
+        "type": "slope",
+        "indicator": name,
+        "params": _sample_params(_ALL[name]["params"], rng),
+        "op": str(rng.choice(SLOPE_OPS)),
+        "bars": int(rng.integers(lo, hi + 1)),
+    }
+
+
 def random_condition(rng: np.random.Generator) -> dict:
-    """Condición aleatoria legal (umbral o cruce, equiprobables)."""
-    return _random_threshold_condition(rng) if rng.random() < 0.5 else _random_cross_condition(rng)
+    """Condición aleatoria legal. Mezcla de los 4 tipos con pesos que favorecen
+    los tipos más expresivos (umbral y estado) sin abandonar cruces/pendientes."""
+    roll = rng.random()
+    if roll < 0.35:
+        return _random_threshold_condition(rng)
+    if roll < 0.60:
+        return _random_cross_condition(rng)
+    if roll < 0.85:
+        return _random_compare_condition(rng)
+    return _random_slope_condition(rng)
 
 
 def _random_block(rng: np.random.Generator) -> dict:
@@ -175,11 +324,14 @@ def _random_block(rng: np.random.Generator) -> dict:
     }
 
 
-# Rangos de la gestión de riesgo (fracciones): stop-loss, take-profit, trailing.
+# Rangos de la gestión de riesgo: stops en fracciones, salida por tiempo en
+# velas y stop por volatilidad en múltiplos de ATR (estilo StrategyQuant).
 RISK_RANGES = {
     "stop_loss_pct": (0.02, 0.15),
     "take_profit_pct": (0.03, 0.30),
     "trailing_stop_pct": (0.03, 0.20),
+    "max_bars": (5, 60),
+    "atr_stop_mult": (1.5, 4.0),
 }
 
 
@@ -187,19 +339,26 @@ def _random_risk(rng: np.random.Generator) -> dict | None:
     """Bloque de riesgo aleatorio (o None). Combina stop-loss/take-profit o
     trailing, para que el GA pueda evolucionar gestión de riesgo, no solo señales."""
     roll = rng.random()
-    if roll < 0.4:
+    if roll < 0.35:
         return None  # sin gestión de riesgo
     risk: dict = {}
-    if roll < 0.7:  # stop-loss (+ a veces take-profit)
+    if roll < 0.6:  # stop-loss (+ a veces take-profit)
         lo, hi = RISK_RANGES["stop_loss_pct"]
         risk["stop_loss_pct"] = round(float(rng.uniform(lo, hi)), 3)
         if rng.random() < 0.6:
             lo, hi = RISK_RANGES["take_profit_pct"]
             risk["take_profit_pct"] = round(float(rng.uniform(lo, hi)), 3)
-    else:  # trailing-stop
+    elif roll < 0.8:  # trailing-stop
         lo, hi = RISK_RANGES["trailing_stop_pct"]
         risk["trailing_stop_pct"] = round(float(rng.uniform(lo, hi)), 3)
-    return risk
+    else:  # stop por volatilidad (múltiplos de ATR en la entrada)
+        lo, hi = RISK_RANGES["atr_stop_mult"]
+        risk["atr_stop_mult"] = round(float(rng.uniform(lo, hi)), 2)
+    # Salida por tiempo: componible con cualquiera de los stops (o sola).
+    if rng.random() < 0.3:
+        lo, hi = RISK_RANGES["max_bars"]
+        risk["max_bars"] = int(rng.integers(int(lo), int(hi) + 1))
+    return risk or None
 
 
 # Rangos del dimensionamiento de posición.
@@ -275,8 +434,9 @@ def _validate_condition(c: dict) -> bool:
         lo, hi = OSCILLATORS[ind]["threshold"]
         thr = c.get("threshold")
         return isinstance(thr, (int, float)) and lo - 1e-9 <= thr <= hi + 1e-9
-    if c.get("type") == "cross":
-        if c.get("op") not in CROSS_OPS:
+    if c.get("type") in ("cross", "compare"):
+        ops = CROSS_OPS if c["type"] == "cross" else COMPARE_OPS
+        if c.get("op") not in ops:
             return False
         for side in ("a", "b"):
             leg = c.get(side, {})
@@ -285,6 +445,15 @@ def _validate_condition(c: dict) -> bool:
             if not _validate_params(leg["indicator"], leg.get("params", {})):
                 return False
         return c["a"]["indicator"] != c["b"]["indicator"] or c["a"]["params"] != c["b"]["params"]
+    if c.get("type") == "slope":
+        ind = c.get("indicator")
+        if ind not in _ALL or c.get("op") not in SLOPE_OPS:
+            return False
+        if not _validate_params(ind, c.get("params", {})):
+            return False
+        bars = c.get("bars")
+        lo, hi = SLOPE_BARS_RANGE
+        return isinstance(bars, int) and lo <= bars <= hi
     return False
 
 
@@ -359,6 +528,8 @@ def spec_risk(spec: dict):
         stop_loss_pct=risk.get("stop_loss_pct"),
         take_profit_pct=risk.get("take_profit_pct"),
         trailing_stop_pct=risk.get("trailing_stop_pct"),
+        max_bars=int(risk["max_bars"]) if risk.get("max_bars") is not None else None,
+        atr_stop_mult=risk.get("atr_stop_mult"),
     )
 
 
@@ -397,10 +568,28 @@ def _condition_bool(df: pd.DataFrame, c: dict, cache: dict) -> np.ndarray:
         s = _series(df, c["indicator"], c["params"], cache)
         # Comparaciones con NaN dan False en numpy (el warm-up no dispara señal)
         return s > c["threshold"] if c["op"] == "gt" else s < c["threshold"]
-    # cruce: solo en la vela del cruce (i-1 al lado opuesto, i al lado nuevo)
+
+    if c["type"] == "slope":
+        # Pendiente: la serie sube/baja respecto a hace `bars` velas (estado).
+        s = _series(df, c["indicator"], c["params"], cache)
+        bars = int(c["bars"])
+        prev = np.full_like(s, np.nan)
+        prev[bars:] = s[:-bars]
+        with np.errstate(invalid="ignore"):
+            sb = s > prev if c["op"] == "rising" else s < prev
+        return np.where(np.isnan(s) | np.isnan(prev), False, sb)
+
     a = _series(df, c["a"]["indicator"], c["a"]["params"], cache)
     b = _series(df, c["b"]["indicator"], c["b"]["params"], cache)
     diff = a - b
+
+    if c["type"] == "compare":
+        # Estado persistente: True mientras A esté por encima/debajo de B.
+        with np.errstate(invalid="ignore"):
+            cmp_ = diff > 0 if c["op"] == "above" else diff < 0
+        return np.where(np.isnan(diff), False, cmp_)
+
+    # cruce: solo en la vela del cruce (i-1 al lado opuesto, i al lado nuevo)
     prev = np.empty_like(diff)
     prev[0] = np.nan
     prev[1:] = diff[:-1]
@@ -500,6 +689,12 @@ def _describe_condition(c: dict) -> str:
     if c["type"] == "threshold":
         sym = ">" if c["op"] == "gt" else "<"
         return f"{_describe_indicator(c)} {sym} {c['threshold']}"
+    if c["type"] == "slope":
+        verb = "al alza" if c["op"] == "rising" else "a la baja"
+        return f"{_describe_indicator(c)} {verb} en {c['bars']} velas"
+    if c["type"] == "compare":
+        rel = "POR ENCIMA de" if c["op"] == "above" else "POR DEBAJO de"
+        return f"{_describe_indicator(c['a'])} {rel} {_describe_indicator(c['b'])}"
     arrow = "cruza arriba" if c["op"] == "cross_above" else "cruza abajo"
     return f"{_describe_indicator(c['a'])} {arrow} {_describe_indicator(c['b'])}"
 
@@ -514,6 +709,10 @@ def _describe_risk(risk: dict | None) -> str:
         parts.append(f"TP {round(risk['take_profit_pct'] * 100, 1)}%")
     if risk.get("trailing_stop_pct") is not None:
         parts.append(f"trailing {round(risk['trailing_stop_pct'] * 100, 1)}%")
+    if risk.get("atr_stop_mult") is not None:
+        parts.append(f"stop {risk['atr_stop_mult']}×ATR")
+    if risk.get("max_bars") is not None:
+        parts.append(f"máx {int(risk['max_bars'])} velas")
     return f" [{' · '.join(parts)}]" if parts else ""
 
 
@@ -541,10 +740,12 @@ def max_warmup(spec: dict) -> int:
     longest = 1
     def scan(c):
         nonlocal longest
-        legs = [c] if c["type"] == "threshold" else [c["a"], c["b"]]
+        legs = [c] if c["type"] in ("threshold", "slope") else [c["a"], c["b"]]
         for leg in legs:
             for v in leg["params"].values():
                 longest = max(longest, int(v))
+        if c["type"] == "slope":
+            longest = max(longest, int(c["bars"]))
     for side in ("entry", "exit"):
         for c in spec[side]["conditions"]:
             scan(c)
@@ -576,19 +777,31 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
     out = copy.deepcopy(spec)
     for side in ("entry", "exit"):
         for c in out[side]["conditions"]:
-            if c["type"] == "threshold":
+            if c["type"] in ("threshold", "slope"):
                 for k, v in c["params"].items():
                     c["params"][k] = _jitter_value(c["indicator"], k, v, rng)
-            else:
+            else:  # cross / compare: dos patas de tipo precio
                 for leg in (c["a"], c["b"]):
                     for k, v in leg["params"].items():
                         leg["params"][k] = _jitter_value(leg["indicator"], k, v, rng)
+                # Si el jitter igualó ambas patas (p. ej. SMA(38) vs SMA(38)),
+                # separar la pata B un paso para mantener la condición legal.
+                if c["a"]["indicator"] == c["b"]["indicator"] and c["a"]["params"] == c["b"]["params"]:
+                    for k, v in c["b"]["params"].items():
+                        kind, lo, hi = _ALL[c["b"]["indicator"]]["params"][k]
+                        if kind == "int":
+                            c["b"]["params"][k] = int(v + 1) if v + 1 <= hi else int(v - 1)
+                        else:
+                            step = round((hi - lo) * 0.05, 2)
+                            c["b"]["params"][k] = round(v + step, 2) if v + step <= hi else round(v - step, 2)
+                        break
     # Perturbar también la gestión de riesgo (±10% del rango)
     if out.get("risk"):
         for name, value in out["risk"].items():
             lo, hi = RISK_RANGES[name]
             span = (hi - lo) * 0.1
-            out["risk"][name] = round(float(min(hi, max(lo, value + rng.uniform(-span, span)))), 3)
+            nv = float(min(hi, max(lo, value + rng.uniform(-span, span))))
+            out["risk"][name] = int(round(nv)) if name == "max_bars" else round(nv, 3)
     # Perturbar el dimensionamiento de posición
     sizing = out.get("sizing")
     if sizing and sizing.get("mode") == "fraction":
@@ -651,5 +864,23 @@ def seed_specs() -> list[dict]:
             "exit": {"combine": "AND", "conditions": [
                 {"type": "cross", "a": {"indicator": "PRICE", "params": {}},
                  "b": {"indicator": "BB_UPPER", "params": {"window": 20, "dev": 2.0}}, "op": "cross_above"}]},
+        },
+        {  # Ruptura de Donchian con filtro de tendencia (estilo turtle)
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "cross", "a": {"indicator": "PRICE", "params": {}},
+                 "b": {"indicator": "DONCH_UPPER", "params": {"window": 20}}, "op": "cross_above"},
+                {"type": "compare", "a": {"indicator": "PRICE", "params": {}},
+                 "b": {"indicator": "SMA", "params": {"window": 100}}, "op": "above"}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "cross", "a": {"indicator": "PRICE", "params": {}},
+                 "b": {"indicator": "DONCH_LOWER", "params": {"window": 10}}, "op": "cross_below"}]},
+        },
+        {  # Pullback en tendencia: RSI barato con el precio sobre su SMA(150)
+            "entry": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "lt", "threshold": 40.0},
+                {"type": "compare", "a": {"indicator": "PRICE", "params": {}},
+                 "b": {"indicator": "SMA", "params": {"window": 150}}, "op": "above"}]},
+            "exit": {"combine": "AND", "conditions": [
+                {"type": "threshold", "indicator": "RSI", "params": {"window": 14}, "op": "gt", "threshold": 65.0}]},
         },
     ]

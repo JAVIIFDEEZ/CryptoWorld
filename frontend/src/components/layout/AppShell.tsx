@@ -7,6 +7,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth, type AuthUser } from '@/hooks/useAuth'
 import TickerBar from '@/components/market/TickerBar'
 import CommandPalette from '@/components/layout/CommandPalette'
+import OnboardingTour from '@/components/layout/OnboardingTour'
 import NotificationBell from '@/components/layout/NotificationBell'
 import { useTheme, type Theme } from '@/hooks/useTheme'
 import { useTranslation } from 'react-i18next'
@@ -133,6 +134,16 @@ function AccountMenu({ onLogout }: { onLogout: () => void }) {
             </svg>
             {t('nav.security2fa')}
           </button>
+          <button
+            role="menuitem"
+            onClick={() => { setOpen(false); window.dispatchEvent(new Event('cw:onboarding')) }}
+            className={itemClasses}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Guía de inicio
+          </button>
           {user?.isAdmin && (
             <button role="menuitem" onClick={() => go('/admin')} className={itemClasses}>
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -235,6 +246,13 @@ const IconNews = () => (
   </svg>
 )
 
+const IconLearn = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+  </svg>
+)
+
 type NavSection = {
   label: string
   items: { path: string; label: string; shortLabel: string; icon: JSX.Element; exact?: boolean }[]
@@ -274,6 +292,7 @@ const navSections: NavSection[] = [
     label: 'nav.sections.information',
     items: [
       { path: '/news', label: 'nav.news', shortLabel: 'News', icon: <IconNews /> },
+      { path: '/learn', label: 'nav.learn', shortLabel: 'Learn', icon: <IconLearn /> },
     ],
   },
 ]
@@ -299,6 +318,9 @@ function AppShell() {
 
       {/* Paleta de comandos global (⌘K / Ctrl+K) */}
       <CommandPalette />
+
+      {/* Tour de bienvenida (una vez; re-lanzable con el evento cw:onboarding) */}
+      <OnboardingTour />
 
       {mobileMenuOpen && (
         <button

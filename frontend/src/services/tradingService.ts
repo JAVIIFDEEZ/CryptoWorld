@@ -60,7 +60,25 @@ export interface PlaceOrderResult {
   error?: string
 }
 
+export interface LiveRiskPolicy {
+  daily_loss_limit_usd: number | null
+  max_concentration_pct?: number | null
+  realized_today_usd?: number
+}
+
 export const tradingService = {
+  /** Política de riesgo OMS: límite de pérdida diaria y de concentración. */
+  getRiskPolicy: async (): Promise<LiveRiskPolicy> => {
+    const { data } = await apiClient.get<LiveRiskPolicy>('/trading/risk-policy/')
+    return data
+  },
+
+  /** Actualiza los campos indicados de la política (solo se envían los presentes). */
+  setRiskPolicy: async (patch: Partial<Pick<LiveRiskPolicy, 'daily_loss_limit_usd' | 'max_concentration_pct'>>): Promise<LiveRiskPolicy> => {
+    const { data } = await apiClient.put<LiveRiskPolicy>('/trading/risk-policy/', patch)
+    return data
+  },
+
   /** Conexiones del usuario (sin credenciales). */
   async listConnections(): Promise<ExchangeConnection[]> {
     const { data } = await apiClient.get<{ count: number; results: ExchangeConnection[] }>('/trading/connections/')

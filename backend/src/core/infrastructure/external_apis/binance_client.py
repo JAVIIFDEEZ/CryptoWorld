@@ -94,6 +94,7 @@ class BinancePublicClient:
         symbol: str,
         interval: str,
         limit: int = 500,
+        end_time_ms: int | None = None,
     ) -> list[list]:
         """
         GET /api/v3/klines — Velas OHLCV históricas.
@@ -116,11 +117,16 @@ class BinancePublicClient:
                 f"Opciones: {sorted(VALID_INTERVALS)}"
             )
 
-        return self._get("/api/v3/klines", params={
+        params = {
             "symbol": symbol.upper(),
             "interval": interval,
             "limit": min(limit, 1000),
-        })
+        }
+        # endTime permite paginar hacia atrás (backfill del histórico propio):
+        # velas con open_time ≤ endTime, las `limit` más recientes de ese rango.
+        if end_time_ms is not None:
+            params["endTime"] = int(end_time_ms)
+        return self._get("/api/v3/klines", params=params)
 
     def get_ticker_24hr(
         self,

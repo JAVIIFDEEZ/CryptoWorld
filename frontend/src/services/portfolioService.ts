@@ -131,7 +131,60 @@ export interface AddToPositionPayload {
   notes?: string
 }
 
+export interface PortfolioRiskExposure {
+  symbol: string
+  net_usd: number
+  by_book: { manual: number; paper: number; live: number }
+  in_var: boolean
+}
+
+export interface PortfolioRisk {
+  status: 'OK' | 'EMPTY'
+  exposures: PortfolioRiskExposure[]
+  gross_usd: number
+  net_usd: number
+  long_usd?: number
+  short_usd?: number
+  top_concentration_pct?: number
+  var?: {
+    status: 'OK' | 'INSUFICIENTE'
+    days: number
+    var95_usd?: number
+    cvar95_usd?: number
+    var99_usd?: number
+    cvar99_usd?: number
+    worst_day_usd?: number
+    note?: string
+  }
+  var_symbols_excluded?: string[]
+  stress?: { window_days: number; impact_usd: number; shocks_pct: Record<string, number>; symbols_covered: number; symbols_total: number }[]
+  history_days?: number
+  note?: string
+}
+
 export const portfolioService = {
+  /** Riesgo agregado del libro completo: exposición firmada, VaR/CVaR y stress. */
+  /** Descarga un informe CSV (positions | risk) del usuario. */
+  downloadReport: async (type: 'positions' | 'risk'): Promise<void> => {
+    const resp = await apiClient.get('/portfolio/export/', {
+      params: { type }, responseType: 'blob',
+    })
+    const url = window.URL.createObjectURL(resp.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    a.download = `cryptoworld_${type}_${stamp}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+  },
+
+  getRisk: async (): Promise<PortfolioRisk> => {
+    const { data } = await apiClient.get<PortfolioRisk>('/portfolio/risk/')
+    return data
+  },
+
   /** Obtener el precio actual de un activo por símbolo (null si no está en el catálogo) */
   getAssetPrice: async (symbol: string): Promise<number | null> => {
     try {

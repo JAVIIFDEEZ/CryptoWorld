@@ -40,14 +40,24 @@ class CostModel:
 
 @dataclass(frozen=True)
 class RiskModel:
-    """Gestión de riesgo por operación (fracciones: 0.05 = 5%)."""
+    """Gestión de riesgo por operación (fracciones: 0.05 = 5%).
+
+    max_bars: salida por tiempo — cierra la posición tras N velas (las
+    estrategias de ruptura profesionales limitan la vida del trade).
+    atr_stop_mult: stop a múltiplos del ATR medido EN LA BARRA DE ENTRADA —
+    stop adaptado a la volatilidad del momento, no un % fijo."""
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     trailing_stop_pct: float | None = None
+    max_bars: int | None = None
+    atr_stop_mult: float | None = None
 
     @property
     def active(self) -> bool:
-        return any(v is not None for v in (self.stop_loss_pct, self.take_profit_pct, self.trailing_stop_pct))
+        return any(v is not None for v in (
+            self.stop_loss_pct, self.take_profit_pct, self.trailing_stop_pct,
+            self.max_bars, self.atr_stop_mult,
+        ))
 
 
 @dataclass(frozen=True)
@@ -94,6 +104,7 @@ def simulate(
     costs: CostModel | None = None,
     risk: RiskModel | None = None,
     sizing: SizingModel | None = None,
+    atr: np.ndarray | None = None,
 ) -> dict:
     """
     Simula la estrategia long-only sobre arrays de precio y señales. Con sizing
@@ -114,6 +125,7 @@ def simulate(
     entry_idx = 0
     entry_capital = 0.0
     high_water = 0.0
+    entry_atr = None            # ATR en la barra de entrada (para atr_stop_mult)
 
     trades: list[dict] = []
     equity_curve = [float(initial_capital)]
@@ -123,7 +135,7 @@ def simulate(
 
     def do_buy(i: int) -> None:
         nonlocal capital, position, in_trade, entry_price, entry_idx, entry_capital, high_water
-        nonlocal total_commission, gross_traded
+        nonlocal total_commission, gross_traded, entry_atr
         notional = _position_notional(capital, sizing, risk)   # equity == capital (flat)
         fee = notional * cr
         invested = notional - fee
@@ -133,6 +145,7 @@ def simulate(
         entry_idx = i
         entry_capital = notional
         high_water = float(close[i])
+        entry_atr = float(atr[i]) if atr is not None and np.isfinite(atr[i]) and atr[i] > 0 else None
         capital -= notional               # el resto queda en liquidez (sizing parcial)
         in_trade = True
         total_commission += fee
@@ -172,8 +185,12 @@ def simulate(
             # Stop vinculante = el más alto entre stop fijo y trailing
             sl_price = entry_price * (1.0 - risk.stop_loss_pct) if risk.stop_loss_pct is not None else None
             trail_price = high_water * (1.0 - risk.trailing_stop_pct) if risk.trailing_stop_pct is not None else None
+            # Stop por volatilidad: entry − mult·ATR(entrada), si el spec lo define.
+            atr_price = (entry_price - risk.atr_stop_mult * entry_atr
+                         if risk.atr_stop_mult is not None and entry_atr else None)
             stop_price, stop_reason = None, "stop_loss"
-            for price, reason in ((sl_price, "stop_loss"), (trail_price, "trailing_stop")):
+            for price, reason in ((sl_price, "stop_loss"), (trail_price, "trailing_stop"),
+                                  (atr_price, "atr_stop")):
                 if price is not None and (stop_price is None or price > stop_price):
                     stop_price, stop_reason = price, reason
             tp_price = entry_price * (1.0 + risk.take_profit_pct) if risk.take_profit_pct is not None else None
@@ -185,6 +202,11 @@ def simulate(
             elif tp_price is not None and hi >= tp_price:
                 do_sell(i, tp_price, "take_profit")
                 exited = True
+
+        # ── 1b) Salida por tiempo: la posición ha agotado su vida máxima ──
+        if not exited and in_trade and use_risk and risk.max_bars is not None and i - entry_idx >= risk.max_bars:
+            do_sell(i, float(close[i]), "time_exit")
+            exited = True
 
         # ── 2) Acciones por señal (si no se salió por riesgo en esta vela) ──
         if not exited:

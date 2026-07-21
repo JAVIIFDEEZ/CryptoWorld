@@ -165,6 +165,9 @@ export default function TradingPage() {
         </p>
       </header>
 
+      {/* OMS: límite de pérdida diaria de la ejecución real */}
+      <RiskPolicyCard />
+
       {/* Conexiones */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
@@ -388,5 +391,97 @@ export default function TradingPage() {
         onCancel={() => setConfirmOpen(false)}
       />
     </section>
+  )
+}
+
+
+function RiskPolicyCard() {
+  const [limit, setLimit] = useState<string>('')
+  const [conc, setConc] = useState<string>('')
+  const [current, setCurrent] = useState<number | null>(null)
+  const [today, setToday] = useState<number>(0)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    tradingService.getRiskPolicy()
+      .then((p) => {
+        setCurrent(p.daily_loss_limit_usd)
+        setLimit(p.daily_loss_limit_usd != null ? String(p.daily_loss_limit_usd) : '')
+        setConc(p.max_concentration_pct != null ? String(p.max_concentration_pct) : '')
+        setToday(p.realized_today_usd ?? 0)
+      })
+      .catch(() => { /* sin política */ })
+  }, [])
+
+  async function save() {
+    setSaving(true)
+    try {
+      const lv = limit.trim() === '' ? null : Number.parseFloat(limit)
+      const cv = conc.trim() === '' ? null : Number.parseFloat(conc)
+      const p = await tradingService.setRiskPolicy({
+        daily_loss_limit_usd: Number.isFinite(lv as number) ? (lv as number) : null,
+        max_concentration_pct: Number.isFinite(cv as number) ? (cv as number) : null,
+      })
+      setCurrent(p.daily_loss_limit_usd)
+      setLimit(p.daily_loss_limit_usd != null ? String(p.daily_loss_limit_usd) : '')
+      setConc(p.max_concentration_pct != null ? String(p.max_concentration_pct) : '')
+    } catch { /* se muestra el estado anterior */ }
+    finally { setSaving(false) }
+  }
+
+  const breached = current != null && today <= -current
+  return (
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex-1 min-w-[220px]">
+          <h2 className="text-sm font-semibold text-white">🛡 Controles de riesgo (OMS)</h2>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Ambos bloquean nuevas COMPRAS en real; las ventas nunca se bloquean. Vacío = sin límite.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] text-slate-500 uppercase">P&L realizado hoy</p>
+          <p className={`text-sm font-bold font-mono ${today < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+            {today >= 0 ? '+' : ''}{today.toLocaleString(undefined, { maximumFractionDigits: 2 })} $
+          </p>
+        </div>
+      </div>
+      <div className="flex items-end gap-4 flex-wrap mt-3">
+        <label className="text-[11px] text-slate-400">
+          <span className="block mb-1">Pérdida diaria máx.</span>
+          <span className="flex items-center gap-1">
+            <input
+              type="number" min={10} step={10} value={limit}
+              onChange={(e) => setLimit(e.target.value)} placeholder="p. ej. 100"
+              className="w-28 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="text-xs text-slate-500">USD/día</span>
+          </span>
+        </label>
+        <label className="text-[11px] text-slate-400">
+          <span className="block mb-1">Concentración máx. por activo</span>
+          <span className="flex items-center gap-1">
+            <input
+              type="number" min={5} max={100} step={5} value={conc}
+              onChange={(e) => setConc(e.target.value)} placeholder="p. ej. 30"
+              className="w-24 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="text-xs text-slate-500">% del libro</span>
+          </span>
+        </label>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="text-xs px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors disabled:opacity-50"
+        >
+          {saving ? 'Guardando…' : 'Guardar'}
+        </button>
+      </div>
+      {breached && (
+        <p className="text-[11px] text-amber-300 mt-2">
+          ⚠ Límite de pérdida alcanzado hoy: las compras en real están bloqueadas hasta mañana.
+        </p>
+      )}
+    </div>
   )
 }

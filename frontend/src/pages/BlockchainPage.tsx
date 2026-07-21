@@ -26,6 +26,7 @@ import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
 import ForensicsPanel from '@/components/blockchain/ForensicsPanel'
 import WhaleMovementsPanel from '@/components/blockchain/WhaleMovementsPanel'
 import OnChainPressurePanel from '@/components/blockchain/OnChainPressurePanel'
+import MarketPulsePanel from '@/components/blockchain/MarketPulsePanel'
 import SmartMoneyPanel from '@/components/blockchain/SmartMoneyPanel'
 import WatchlistPanel from '@/components/blockchain/WatchlistPanel'
 
@@ -305,9 +306,10 @@ export default function BlockchainPage() {
         {/* ── Forense on-chain: flujos, concentración, huella conductual ── */}
         {view === 'forensics' && <ForensicsPanel />}
 
-        {/* ── Mercado on-chain: comparador + estadísticas por cadena ── */}
+        {/* ── Mercado on-chain: pulso agregado + comparador por cadena ── */}
         {view === 'market' && (
           <>
+        <MarketPulsePanel />
         {/* ── Selector de chain ── */}
         <div className="flex flex-wrap gap-2 mb-6">
           {MULTICHAIN_SYMBOLS.map(s => (

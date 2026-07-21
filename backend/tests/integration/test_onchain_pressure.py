@@ -219,3 +219,32 @@ class TestPressureSignals:
         out = DetectPressureSignalUseCase().execute(chains=("ethereum",))
         assert out["created"] == 0
         assert OnChainSignalEvent.objects.count() == 0
+
+
+class TestWatchedCrossAlert:
+    """El escáner alerta cuando una dirección vigilada aparece en un movimiento nuevo."""
+
+    @pytest.mark.integration
+    def test_new_movement_of_watched_address_creates_alert(self, db, test_user, monkeypatch):
+        from core.infrastructure.persistence.models import AddressAlert, WatchedAddress
+
+        WatchedAddress.objects.create(
+            owner=test_user, chain="ethereum", address="0xW1", native_symbol="ETH",
+        )
+        sent = []
+        monkeypatch.setattr(
+            "core.interfaces.ws.broadcast.broadcast_notification",
+            lambda user_id, data: sent.append((user_id, data)) or True,
+        )
+        out = ScanWhaleMovementsUseCase(whales_uc=_FakeWhales()).execute(chains=("ethereum",))
+        assert out["watched_alerts"] == 1
+        alert = AddressAlert.objects.get()
+        assert alert.owner_id == test_user.id
+        assert alert.direction == "decrease"          # 0xW1 es el ORIGEN del envío
+        assert alert.value_usd == 1_600_000.0
+        assert sent == [(test_user.id, {"kind": "whale"})]
+
+        # Re-escanear los mismos movimientos NO duplica la alerta (solo filas nuevas)
+        out2 = ScanWhaleMovementsUseCase(whales_uc=_FakeWhales()).execute(chains=("ethereum",))
+        assert out2["watched_alerts"] == 0
+        assert AddressAlert.objects.count() == 1

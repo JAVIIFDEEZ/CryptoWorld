@@ -71,12 +71,37 @@ def fetch_ohlcv_dataframe(
     coingecko = coingecko_client or CoinGeckoClient()
     repo = asset_repo or DjangoCryptoAssetRepository()
 
+    # ── 0. Almacén histórico propio ─────────────────────────────
+    # Solo para peticiones HISTÓRICAS (limit ≥ 300: generador, backtests,
+    # robustez): reproducible, sin latencia externa y capaz de superar las
+    # 1000 velas por llamada de los exchanges. Las rutas en vivo (señales,
+    # paper) siguen yendo a remoto porque usan la vela en formación, que el
+    # almacén deliberadamente no guarda. Best-effort: nunca rompe la cadena.
+    if limit >= 300:
+        try:
+            from core.application.use_cases import ohlcv_store
+            if ohlcv_store.store_is_fresh(symbol, interval, limit):
+                df = ohlcv_store.load_dataframe(symbol, interval, limit)
+                if len(df) >= min(limit, 30):
+                    return OhlcvFetchResult(df=df, source="store")
+        except Exception:  # noqa: BLE001 — sin BD (tests puros) se sigue con remoto
+            pass
+
+    def _persist(df: pd.DataFrame, source: str) -> None:
+        """Acumulación oportunista: todo lo que se trae de fuera se guarda."""
+        try:
+            from core.application.use_cases import ohlcv_store
+            ohlcv_store.persist_candles(symbol, interval, df, source=source)
+        except Exception:  # noqa: BLE001 — persistir nunca rompe un análisis
+            pass
+
     # ── 1. Binance ──────────────────────────────────────────────
     binance_symbol = f"{symbol}{_QUOTE_CURRENCY}"
     try:
         raw = binance.get_klines(symbol=binance_symbol, interval=interval, limit=limit)
         df = _binance_klines_to_df(raw)
         if not df.empty:
+            _persist(df, "binance")
             return OhlcvFetchResult(df=df, source="binance")
         logger.warning("Binance devolvió 0 velas para %s.", binance_symbol)
     except BinanceClientError as exc:
@@ -91,6 +116,7 @@ def fetch_ohlcv_dataframe(
                 "KuCoin sirvió %d velas para %s.",
                 len(df), binance_symbol,
             )
+            _persist(df, "kucoin")
             return OhlcvFetchResult(df=df, source="kucoin")
     except KuCoinClientError as exc:
         logger.info("KuCoin no tiene %s (%s). Probando CoinGecko...", binance_symbol, exc)

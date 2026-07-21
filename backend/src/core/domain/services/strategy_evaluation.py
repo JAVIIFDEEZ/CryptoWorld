@@ -84,7 +84,13 @@ def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_
 
     mean_is = float(np.mean(is_sharpes)) if is_sharpes else 0.0
     mean_oos = float(np.mean(oos_sharpes)) if oos_sharpes else 0.0
-    efficiency = (mean_oos / mean_is) if mean_is > 1e-9 else 0.0
+    if mean_is > 1e-9:
+        efficiency = mean_oos / mean_is
+    else:
+        # Sharpe IS ≤ 0: el cociente no tiene sentido. Si aun así el OOS es
+        # positivo, la estrategia GENERALIZA (no hay sobreajuste que medir):
+        # eficiencia 1.0. Antes se forzaba a 0 y el gating la mataba injustamente.
+        efficiency = 1.0 if mean_oos > 0 else 0.0
     return {
         "mean_is_sharpe": round(mean_is, 4),
         "mean_oos_sharpe": round(mean_oos, 4),

@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getAccessToken } from '@/services/api'
+import { pushService } from '@/services/pushService'
 import { wsStreamUrl } from '@/hooks/usePriceStream'
 import {
   notificationsService,
@@ -20,7 +21,7 @@ import {
 } from '@/services/notificationsService'
 
 const KIND_ICON: Record<NotificationKind, string> = {
-  signal: '📈', whale: '🐋', prediction: '🔮', price: '🔔', pressure: '⚖', live: '⛔',
+  signal: '📈', whale: '🐋', prediction: '🔮', price: '🔔', pressure: '⚖', live: '⛔', confluence: '🎯',
 }
 
 function ago(ts: string): string {
@@ -29,6 +30,40 @@ function ago(ts: string): string {
   if (d < 3600) return `${Math.floor(d / 60)}m`
   if (d < 86400) return `${Math.floor(d / 3600)}h`
   return `${Math.floor(d / 86400)}d`
+}
+
+function PushToggle() {
+  const [state, setState] = useState<'off' | 'on' | 'busy' | 'unsupported'>('off')
+
+  useEffect(() => {
+    if (!pushService.supported()) { setState('unsupported'); return }
+    setState(pushService.permission() === 'granted' ? 'on' : 'off')
+  }, [])
+
+  if (state === 'unsupported') return null
+
+  async function toggle() {
+    setState('busy')
+    try {
+      if (state === 'on') { await pushService.unsubscribe(); setState('off') }
+      else { const ok = await pushService.subscribe(); setState(ok ? 'on' : 'off') }
+    } catch { setState('off') }
+  }
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={state === 'busy'}
+      title={state === 'on' ? 'Notificaciones push activadas (llegan con la app cerrada)' : 'Activar notificaciones push'}
+      className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+        state === 'on'
+          ? 'bg-emerald-600/15 text-emerald-300 border-emerald-500/30'
+          : 'bg-slate-800 text-slate-400 border-slate-600 hover:text-white'
+      } disabled:opacity-50`}
+    >
+      {state === 'busy' ? '…' : state === 'on' ? '🔔 push' : '🔕 push'}
+    </button>
+  )
 }
 
 export default function NotificationBell({ className = '' }: Readonly<{ className?: string }>) {
@@ -124,7 +159,10 @@ export default function NotificationBell({ className = '' }: Readonly<{ classNam
           <div className="fixed z-[95] top-14 right-3 sm:right-5 w-[22rem] max-w-[calc(100vw-1.5rem)] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-700">
               <h3 className="text-sm font-semibold text-white">Notificaciones</h3>
-              <span className="text-[10px] text-slate-500">{feed?.count ?? 0} recientes</span>
+              <div className="flex items-center gap-2">
+                <PushToggle />
+                <span className="text-[10px] text-slate-500">{feed?.count ?? 0} recientes</span>
+              </div>
             </div>
             <div className="max-h-96 overflow-y-auto">
               {(!feed || feed.items.length === 0) && (

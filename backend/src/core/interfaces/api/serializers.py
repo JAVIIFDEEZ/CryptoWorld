@@ -109,6 +109,7 @@ class UpdatePreferencesSerializer(serializers.Serializer):
     )
     notify_price_alerts = serializers.BooleanField(required=False)
     notify_market_digest = serializers.BooleanField(required=False)
+    notify_risk_digest = serializers.BooleanField(required=False)
 
     def validate_username(self, value: str) -> str:
         return value.strip()

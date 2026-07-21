@@ -56,7 +56,7 @@ class ScanWhaleMovementsUseCase:
                 min_usd: float = _SCAN_MIN_USD) -> dict:
         from core.infrastructure.persistence.models import WhaleMovementSnapshot
 
-        scanned = created = 0
+        scanned = created = watched_alerts = 0
         for chain in chains:
             result = self._whales.execute(chain=chain, min_usd=min_usd, limit=_SCAN_LIMIT)
             if result.get("error"):
@@ -87,12 +87,61 @@ class ScanWhaleMovementsUseCase:
                 ))
             if rows:
                 # ignore_conflicts: la restricción de unicidad hace el dedup.
+                existing = set(WhaleMovementSnapshot.objects.filter(
+                    chain=chain, tx_hash__in=[r.tx_hash for r in rows],
+                ).values_list("tx_hash", flat=True))
+                new_rows = [r for r in rows if r.tx_hash not in existing]
                 before = WhaleMovementSnapshot.objects.count()
                 WhaleMovementSnapshot.objects.bulk_create(rows, ignore_conflicts=True)
                 created += WhaleMovementSnapshot.objects.count() - before
+                # Cruce con direcciones vigiladas: si una wallet del radar del
+                # usuario aparece en un movimiento NUEVO, alerta inmediata.
+                watched_alerts += self._alert_watched(chain, new_rows)
 
-        logger.info("scan_whales: %d redes, %d movimientos nuevos", scanned, created)
-        return {"chains_scanned": scanned, "created": created}
+        logger.info("scan_whales: %d redes, %d movimientos nuevos, %d alertas vigiladas",
+                    scanned, created, watched_alerts)
+        return {"chains_scanned": scanned, "created": created, "watched_alerts": watched_alerts}
+
+    @staticmethod
+    def _alert_watched(chain: str, new_rows: list) -> int:
+        """Crea una alerta (máx. una por dirección vigilada y pasada) cuando una
+        dirección de la watchlist aparece en un movimiento grande nuevo, y la
+        empuja por WebSocket: «esa ballena volvió a mover»."""
+        from core.infrastructure.persistence.models import AddressAlert, WatchedAddress
+        from core.interfaces.ws.broadcast import broadcast_notification
+
+        if not new_rows:
+            return 0
+        watches = list(WatchedAddress.objects.filter(chain=chain))
+        if not watches:
+            return 0
+        by_addr: dict[str, list] = {}
+        for w in watches:
+            by_addr.setdefault(w.address.lower(), []).append(w)
+
+        best: dict[int, tuple] = {}   # watch_id → (movimiento mayor, rol, watch)
+        for r in new_rows:
+            for role, addr in (("decrease", r.from_address), ("increase", r.to_address)):
+                for w in by_addr.get((addr or "").lower(), []):
+                    prev = best.get(w.id)
+                    if prev is None or r.value_usd > prev[0].value_usd:
+                        best[w.id] = (r, role, w)
+
+        created = 0
+        for r, role, w in best.values():
+            AddressAlert.objects.create(
+                watched=w, owner=w.owner,
+                direction=role,
+                balance_before=w.last_balance or 0.0,
+                balance_after=w.last_balance or 0.0,
+                delta=r.amount if role == "increase" else -r.amount,
+                delta_pct=0.0,
+                value_usd=r.value_usd,
+                notified=False,
+            )
+            broadcast_notification(w.owner_id, {"kind": "whale"})
+            created += 1
+        return created
 
 
 class DetectPressureSignalUseCase:

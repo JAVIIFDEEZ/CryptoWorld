@@ -102,6 +102,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="Recibir resúmenes periódicos del estado del mercado.",
     )
+    notify_risk_digest = models.BooleanField(
+        default=False,
+        help_text="Recibir un resumen diario del riesgo de la cartera (VaR, "
+                  "barreras del OMS y P&L) por email.",
+    )
     notifications_seen_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -706,6 +711,10 @@ class PaperTradingAccount(models.Model):
     # Sello del último kill-switch: alimenta el centro de notificaciones y se
     # limpia al reactivar la promoción.
     live_disabled_at = models.DateTimeField(null=True, blank=True)
+    # Reconciliación OMS: última comparación posición esperada ↔ balance real
+    # del exchange y discrepancia detectada (unidades base; 0 = cuadra).
+    live_reconciled_at = models.DateTimeField(null=True, blank=True)
+    live_discrepancy = models.FloatField(null=True, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -953,7 +962,7 @@ class LiveOrderRecord(models.Model):
     qué hizo exactamente la promoción en cada señal.
     """
 
-    STATUS_CHOICES = [("sent", "Enviada"), ("failed", "Fallida")]
+    STATUS_CHOICES = [("sent", "Enviada"), ("failed", "Fallida"), ("blocked", "Bloqueada")]
 
     account = models.ForeignKey(
         "PaperTradingAccount", on_delete=models.CASCADE, related_name="live_orders",
@@ -1065,3 +1074,170 @@ class ExchangeConnection(models.Model):
     def __str__(self) -> str:
         mode = "testnet" if self.is_testnet else "REAL"
         return f"{self.exchange} ({mode}) · {self.owner_id}"
+
+
+class OhlcvCandle(models.Model):
+    """
+    Vela OHLCV persistida — el almacén histórico PROPIO del sistema.
+
+    Un actor institucional no re-pide 500 velas a un exchange en cada análisis:
+    acumula un histórico inmutable, verificable y reproducible. Cada análisis /
+    backtest / generación puede entonces cubrir ciclos completos de mercado y
+    citar exactamente sobre qué datos se validó. Solo se persisten velas
+    CERRADAS (la vela en curso cambia hasta que cierra) y la restricción de
+    unicidad hace idempotente cualquier re-ingesta.
+    """
+
+    symbol = models.CharField(max_length=20, db_index=True)      # BTC, ETH…
+    interval = models.CharField(max_length=8)                    # 1h, 4h, 1d…
+    open_time = models.BigIntegerField()                         # epoch ms UTC (apertura)
+    open = models.FloatField()
+    high = models.FloatField()
+    low = models.FloatField()
+    close = models.FloatField()
+    volume = models.FloatField()
+    source = models.CharField(max_length=20, default="binance")  # procedencia del dato
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ohlcv_candles"
+        verbose_name = "Vela OHLCV"
+        verbose_name_plural = "Velas OHLCV"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "interval", "open_time"], name="uq_ohlcv_candle",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["symbol", "interval", "-open_time"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.symbol} {self.interval} @ {self.open_time}"
+
+
+class ConfluenceSnapshot(models.Model):
+    """
+    Lectura del motor de confluencia 360° registrada para su verificación.
+
+    El bucle de auto-aprendizaje del motor: cada lectura guarda el score de
+    CADA fuente (técnica, ML, on-chain, noticias) y el precio del momento; al
+    vencer el horizonte se resuelve contra el precio real y el aprendizaje de
+    pesos (confluence_fusion.learn_weights) se alimenta de estas filas — las
+    fuentes que aciertan ganan peso, las que no, lo pierden.
+    """
+
+    STATUS_CHOICES = [("pending", "Pendiente"), ("resolved", "Resuelta")]
+
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    scores = models.JSONField(default=dict)      # {fuente: score ∈ [-1,1]}
+    fused_score = models.FloatField()
+    verdict = models.CharField(max_length=30)
+    price_at = models.FloatField()
+    horizon_hours = models.PositiveIntegerField(default=24)
+    resolve_at = models.DateTimeField(db_index=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES,
+                              default="pending", db_index=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    actual_return_pct = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "confluence_snapshots"
+        verbose_name = "Lectura de confluencia"
+        verbose_name_plural = "Lecturas de confluencia"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["status", "resolve_at"])]
+
+    def __str__(self) -> str:
+        return f"Confluencia {self.asset_symbol} {self.verdict} ({self.status})"
+
+
+class ConfluenceSignalEvent(models.Model):
+    """
+    Cambio de régimen del motor de confluencia 360° para un activo.
+
+    La evaluación programada compara el veredicto actual con el del último
+    evento y solo registra la TRANSICIÓN (entrar/salir/cambiar de confluencia)
+    — nunca el estado repetido. Global (como los eventos de presión on-chain):
+    alimenta el centro de notificaciones de todos los usuarios.
+    """
+
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    verdict = models.CharField(max_length=30)
+    previous_verdict = models.CharField(max_length=30, blank=True, default="")
+    score = models.FloatField()
+    agreement_pct = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "confluence_signal_events"
+        verbose_name = "Evento de confluencia"
+        verbose_name_plural = "Eventos de confluencia"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.asset_symbol}: {self.previous_verdict or '—'} → {self.verdict}"
+
+
+class LiveRiskPolicy(models.Model):
+    """
+    Política de riesgo GLOBAL de la ejecución real de un usuario (OMS).
+
+    Dos controles: límite de pérdida diaria y límite de concentración por
+    activo. Ambos bloquean COMPRAS en real (abrir riesgo), nunca ventas.
+
+    daily_loss_limit_usd: si la pérdida realizada HOY (sumando todas sus
+    promociones paper→real) alcanza este umbral, el OMS bloquea nuevas COMPRAS
+    en real hasta el día siguiente. Las ventas nunca se bloquean: reducir
+    exposición siempre está permitido. Null = sin límite configurado.
+    """
+
+    owner = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="live_risk_policy",
+    )
+    daily_loss_limit_usd = models.FloatField(null=True, blank=True)
+    # Máximo % del libro completo (exposición bruta) que puede ocupar un solo
+    # activo. Si una compra en real lo superaría, se bloquea (nunca las ventas).
+    # Null = sin límite de concentración.
+    max_concentration_pct = models.FloatField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "live_risk_policies"
+        verbose_name = "Política de riesgo en vivo"
+        verbose_name_plural = "Políticas de riesgo en vivo"
+
+    def __str__(self) -> str:
+        limit = f"{self.daily_loss_limit_usd} USD/día" if self.daily_loss_limit_usd else "sin límite"
+        return f"RiskPolicy({self.owner_id}, {limit})"
+
+
+class PushSubscription(models.Model):
+    """
+    Suscripción Web Push de un navegador del usuario (PWA).
+
+    Guarda el endpoint del push service y las claves del cliente (p256dh, auth)
+    necesarias para cifrar el payload. Permite que las notificaciones críticas
+    (kill-switch de ejecución real, controles de riesgo, cambios de régimen)
+    lleguen al dispositivo AUNQUE la app esté cerrada. El endpoint es único por
+    suscripción; un usuario puede tener varios dispositivos.
+    """
+
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="push_subscriptions",
+    )
+    endpoint = models.URLField(max_length=500, unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    user_agent = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "push_subscriptions"
+        verbose_name = "Suscripción Push"
+        verbose_name_plural = "Suscripciones Push"
+
+    def __str__(self) -> str:
+        return f"Push({self.owner_id}, {self.endpoint[:40]}…)"

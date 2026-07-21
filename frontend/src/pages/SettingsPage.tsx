@@ -453,6 +453,16 @@ export default function SettingsPage() {
               label="Novedades y Noticias"
               description="Recibe resúmenes periódicos sobre el estado del mercado."
             />
+
+            <hr className="border-slate-700 my-4" />
+
+            <ToggleSwitch
+              checked={me?.notify_risk_digest ?? false}
+              disabled={isLoadingMe || isSavingPrefs}
+              onChange={(value) => savePreference({ notify_risk_digest: value })}
+              label="Resumen diario de riesgo"
+              description="Recibe cada día laborable un email con el VaR de tu cartera, el estado de las barreras del OMS y tu P&L."
+            />
           </div>
         </section>
 

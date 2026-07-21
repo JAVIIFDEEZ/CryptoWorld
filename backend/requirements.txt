@@ -64,3 +64,4 @@ daphne==4.2.2                   # Servidor ASGI (runserver WS en dev + producci�
 # ── Trading real — conexión multi-exchange ─────────────────────────
 ccxt==4.5.63                    # API unificada de exchanges (Binance, Kraken, Coinbase…)
 cryptography>=41.0.7            # Cifrado Fernet de las claves API por usuario
+pywebpush==2.0.0  # Web Push (PWA); opcional — sin él las notificaciones push se desactivan solas

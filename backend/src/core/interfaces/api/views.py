@@ -19,7 +19,7 @@ Principio aplicado: Single Responsibility + Clean Architecture.
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
@@ -405,6 +405,7 @@ class MeView(APIView):
             "preferred_currency": user.preferred_currency,
             "notify_price_alerts": user.notify_price_alerts,
             "notify_market_digest": user.notify_market_digest,
+            "notify_risk_digest": user.notify_risk_digest,
             "recovery_codes_remaining": (
                 remaining_recovery_codes(user) if user.is_2fa_enabled else 0
             ),
@@ -1153,6 +1154,36 @@ class WalletChainsView(APIView):
         return Response(GetSupportedChainsUseCase().execute(), status=status.HTTP_200_OK)
 
 
+class WalletDossierView(APIView):
+    """
+    GET /api/blockchain/wallet/dossier/?chain=ethereum&address=0x… — Dossier de
+    inteligencia cruzada de una dirección: perfil, contrapartes con etiquetado
+    de exchanges, lectura de comportamiento, apariciones en el histórico propio
+    del escáner de ballenas y presencia multi-cadena.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # el dossier hace varias llamadas externas: cachear 5 min
+
+    def get(self, request):
+        from core.application.use_cases.wallet_dossier import WalletDossierUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        if not address:
+            return Response({"error": "Falta el parámetro address."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"wallet_dossier:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = WalletDossierUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class WalletOverviewView(APIView):
     """
     GET /api/blockchain/wallet/?chain=ethereum&address=0x... — Retrato on-chain de
@@ -1428,6 +1459,31 @@ class WhaleMovementsView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class OnChainMarketPulseView(APIView):
+    """
+    GET /api/blockchain/pulse/?hours=24 — Pulso on-chain de mercado: flujo neto
+    a/desde exchanges agregado de TODAS las redes escaneadas, con veredicto,
+    desglose por cadena/exchange/activo y serie temporal. Vista institucional.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 180
+
+    def get(self, request):
+        from core.application.use_cases.onchain_market_pulse import OnChainMarketPulseUseCase
+
+        try:
+            hours = min(max(int(request.query_params.get("hours", 24)), 1), 168)
+        except (TypeError, ValueError):
+            hours = 24
+        cache_key = f"onchain_pulse:{hours}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = OnChainMarketPulseUseCase().execute(hours=hours)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class OnChainPressureView(APIView):
     """
     GET /api/blockchain/pressure/?chain=ethereum&hours=24 — Indicador de presión
@@ -1560,6 +1616,156 @@ class NotificationsSeenView(APIView):
             MarkNotificationsSeenUseCase().execute(owner=request.user),
             status=status.HTTP_200_OK,
         )
+
+
+class ConfluenceView(APIView):
+    """
+    GET /api/analysis/confluence/?symbol=BTC — Motor de confluencia 360°:
+    fusión de señal técnica, ML, presión on-chain y sentimiento de noticias
+    con pesos aprendidos del acierto histórico real de cada fuente.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600   # las fuentes de fondo cambian despacio
+
+    def get(self, request):
+        from core.application.use_cases.get_confluence import GetConfluenceUseCase
+
+        symbol = (request.query_params.get("symbol") or "BTC").strip().upper()
+        cache_key = f"confluence:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = GetConfluenceUseCase().execute(symbol)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class OhlcvCoverageView(APIView):
+    """
+    GET /api/market/history/?symbol=BTC&interval=1d — Cobertura del almacén
+    histórico OHLCV propio: velas almacenadas, primera/última y huecos.
+    POST /api/market/history/backfill/ (solo staff) dispara la retro-carga.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.ohlcv_store import coverage
+
+        symbol = (request.query_params.get("symbol") or "BTC").strip().upper()
+        interval = (request.query_params.get("interval") or "1d").strip()
+        return Response(coverage(symbol, interval), status=status.HTTP_200_OK)
+
+
+class OhlcvBackfillView(APIView):
+    """POST /api/market/history/backfill/ — Retro-carga del histórico (staff)."""
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        from core.tasks import backfill_ohlcv, dispatch_task
+
+        symbol = (request.data.get("symbol") or "").strip().upper()
+        interval = (request.data.get("interval") or "1d").strip()
+        try:
+            target = min(int(request.data.get("target_candles", 3000)), 20000)
+        except (TypeError, ValueError):
+            target = 3000
+        if not symbol:
+            return Response({"error": "Falta symbol."}, status=status.HTTP_400_BAD_REQUEST)
+        dispatch_task(backfill_ohlcv, symbol=symbol, interval=interval, target_candles=target)
+        return Response({"status": "dispatched", "symbol": symbol,
+                         "interval": interval, "target_candles": target},
+                        status=status.HTTP_202_ACCEPTED)
+
+
+class PushPublicKeyView(APIView):
+    """GET /api/push/public-key/ — Clave pública VAPID para suscribirse a push."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.push.web_push import is_configured, vapid_public_key
+        return Response({"public_key": vapid_public_key(), "enabled": is_configured()},
+                        status=status.HTTP_200_OK)
+
+
+class PushSubscriptionView(APIView):
+    """
+    POST /api/push/subscribe/   — Guarda la suscripción Web Push del navegador.
+      Body: {"endpoint", "keys": {"p256dh", "auth"}}.
+    DELETE /api/push/subscribe/ — Elimina la suscripción por endpoint.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.infrastructure.persistence.models import PushSubscription
+
+        endpoint = (request.data.get("endpoint") or "").strip()
+        keys = request.data.get("keys") or {}
+        p256dh, auth = keys.get("p256dh"), keys.get("auth")
+        if not endpoint or not p256dh or not auth:
+            return Response({"error": "Suscripción incompleta (endpoint + keys)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        PushSubscription.objects.update_or_create(
+            endpoint=endpoint,
+            defaults={"owner": request.user, "p256dh": p256dh, "auth": auth,
+                      "user_agent": (request.META.get("HTTP_USER_AGENT") or "")[:300]},
+        )
+        return Response({"status": "subscribed"}, status=status.HTTP_201_CREATED)
+
+    def delete(self, request):
+        from core.infrastructure.persistence.models import PushSubscription
+
+        endpoint = (request.data.get("endpoint") or "").strip()
+        PushSubscription.objects.filter(owner=request.user, endpoint=endpoint).delete()
+        return Response({"status": "unsubscribed"}, status=status.HTTP_200_OK)
+
+
+class PortfolioExportView(APIView):
+    """
+    GET /api/portfolio/export/?type=positions|risk — Descarga un informe CSV
+    del usuario (posiciones o riesgo agregado). Formato universal para análisis
+    posterior en Excel/Python/R.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from core.application.use_cases.export_reports import EXPORTERS
+
+        kind = (request.query_params.get("type") or "positions").strip().lower()
+        entry = EXPORTERS.get(kind)
+        if entry is None:
+            return Response({"error": f"Tipo '{kind}' no soportado. Usa: {list(EXPORTERS)}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        label, exporter = entry
+        content = exporter(request.user)
+        stamp = timezone.now().strftime("%Y%m%d")
+        resp = HttpResponse(content, content_type="text/csv; charset=utf-8")
+        resp["Content-Disposition"] = f'attachment; filename="cryptoworld_{label}_{stamp}.csv"'
+        return resp
+
+
+class NewsGlobeView(APIView):
+    """
+    GET /api/news/globe/ — Noticias importantes clasificadas por región del
+    mundo y categoría de evento (política monetaria, conflicto, salida a
+    bolsa, regulación, hackeo, adopción, macro) para el globo terráqueo 3D.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300
+
+    def get(self, request):
+        from core.application.use_cases.get_news_globe import GetNewsGlobeUseCase
+
+        cached = cache.get("news_globe")
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = GetNewsGlobeUseCase().execute()
+        if not result.get("error"):
+            cache.set("news_globe", result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class NewsFeedView(APIView):
@@ -1741,6 +1947,37 @@ class PriceStructureView(APIView):
             return Response(cached, status=status.HTTP_200_OK)
 
         result = GetPriceStructureUseCase().execute(asset_symbol=symbol, interval=interval)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class QuantSnapshotView(APIView):
+    """
+    GET /api/analysis/quant/?asset_symbol=BTC&interval=1h — Terminal cuantitativa
+    institucional: volatilidad realizada anualizada, ATR, retornos multi-horizonte
+    con z-score, Sharpe/Sortino del activo, drawdown, posición en el rango, beta y
+    correlación frente a BTC, volumen relativo y clasificador de régimen. Es la
+    fotografía cuantitativa densa (estilo Bloomberg) del estado del activo.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 180  # segundos — datos derivados de OHLCV, se cachea 3 min
+
+    def get(self, request):
+        from core.application.use_cases.get_quant_snapshot import GetQuantSnapshotUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        interval = (request.query_params.get("interval") or "1h").strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"quant_snapshot:{symbol}:{interval}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetQuantSnapshotUseCase().execute(asset_symbol=symbol, interval=interval)
         if result.get("error"):
             return Response(result, status=status.HTTP_200_OK)
         cache.set(cache_key, result, self._CACHE_TTL)
@@ -2450,6 +2687,60 @@ class BestStrategiesView(APIView):
         )
 
 
+class LiveRiskPolicyView(APIView):
+    """
+    GET/PUT /api/trading/risk-policy/ — Política de riesgo global de la
+    ejecución real (OMS): límite de pérdida diaria en USD y límite de
+    concentración por activo (% del libro). Ambos bloquean nuevas COMPRAS en
+    real (las ventas nunca se bloquean). Incluye el PnL realizado hoy.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.paper_trading import daily_live_realized_pnl
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        policy = LiveRiskPolicy.objects.filter(owner=request.user).first()
+        return Response({
+            "daily_loss_limit_usd": policy.daily_loss_limit_usd if policy else None,
+            "max_concentration_pct": policy.max_concentration_pct if policy else None,
+            "realized_today_usd": daily_live_realized_pnl(request.user),
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        defaults = {}
+        if "daily_loss_limit_usd" in request.data:
+            raw = request.data.get("daily_loss_limit_usd")
+            limit = None
+            if raw not in (None, "", 0, "0"):
+                try:
+                    limit = min(max(abs(float(raw)), 10.0), 100_000.0)
+                except (TypeError, ValueError):
+                    return Response({"error": "daily_loss_limit_usd debe ser numérico o null."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            defaults["daily_loss_limit_usd"] = limit
+        if "max_concentration_pct" in request.data:
+            raw = request.data.get("max_concentration_pct")
+            conc = None
+            if raw not in (None, "", 0, "0"):
+                try:
+                    conc = min(max(abs(float(raw)), 5.0), 100.0)
+                except (TypeError, ValueError):
+                    return Response({"error": "max_concentration_pct debe ser numérico o null."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            defaults["max_concentration_pct"] = conc
+
+        policy, _ = LiveRiskPolicy.objects.update_or_create(
+            owner=request.user, defaults=defaults,
+        )
+        return Response({
+            "daily_loss_limit_usd": policy.daily_loss_limit_usd,
+            "max_concentration_pct": policy.max_concentration_pct,
+        }, status=status.HTTP_200_OK)
+
+
 class TradingConnectionsView(APIView):
     """
     GET  /api/trading/connections/ — Conexiones de exchange del usuario (sin
@@ -2652,6 +2943,28 @@ class AvailableStrategiesView(APIView):
 
 
 # ── Portfolio Views ────────────────────────────────────────────────
+
+class PortfolioRiskView(APIView):
+    """
+    GET /api/portfolio/risk/ — Riesgo agregado del libro completo del usuario:
+    exposición firmada por activo (posiciones manuales + paper + real), VaR/CVaR
+    1 día por simulación histórica y stress testing con los peores movimientos
+    realmente observados. Datos sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.portfolio_risk import PortfolioRiskUseCase
+
+        cache_key = f"portfolio_risk:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = PortfolioRiskUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
 
 class PortfolioView(APIView):
     """

@@ -41,7 +41,7 @@ class TestPredictionStructure:
         for key in ("prediction", "confidence", "oos_accuracy", "baseline_accuracy",
                     "edge", "precision_up", "recall_up", "f1_up", "n_oos", "n_splits", "verdict"):
             assert key in r
-        assert r["prediction"] in ("ALCISTA", "BAJISTA")
+        assert r["prediction"] in ("ALCISTA", "BAJISTA", "NEUTRAL")
         assert 0.0 <= r["confidence"] <= 1.0
         # El edge es exactamente la precisión OOS menos la línea base
         assert r["edge"] == pytest.approx(r["oos_accuracy"] - r["baseline_accuracy"], abs=1e-6)
@@ -77,6 +77,25 @@ class TestHonesty:
         # La línea base = acierto de predecir siempre la clase mayoritaria ≥ 0.5
         assert r["baseline_accuracy"] >= 0.5
         assert r["baseline_accuracy"] == pytest.approx(max(r["up_rate"], 1 - r["up_rate"]), abs=1e-6)
+
+
+class TestNeutralZone:
+
+    @pytest.mark.unit
+    def test_neutral_when_calibrated_prob_near_half(self):
+        """prob_up dentro de [45%,55%] → NEUTRAL: no se proclama dirección a
+        cara o cruz (y log_prediction no la registra en el historial)."""
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        band = r.get("neutral_band", 0.05)
+        if abs(r["prob_up"] - 0.5) <= band:
+            assert r["prediction"] == "NEUTRAL"
+        else:
+            assert r["prediction"] == ("ALCISTA" if r["prob_up"] > 0.5 else "BAJISTA")
+
+    @pytest.mark.unit
+    def test_neutral_band_exposed(self):
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert 0.0 < r["neutral_band"] <= 0.1
 
 
 class TestCalibration:

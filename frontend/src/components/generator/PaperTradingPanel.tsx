@@ -176,6 +176,13 @@ function PaperCard({ account, connections, onChange }: Readonly<{
         </p>
       )}
 
+      {(account.live_discrepancy ?? 0) !== 0 && account.live_discrepancy != null && (
+        <p className="text-[10px] text-amber-300 mt-1.5"
+           title="La reconciliación periódica comparó la posición esperada con el balance real del exchange">
+          ⚠ Reconciliación: el exchange difiere en {account.live_discrepancy > 0 ? '+' : ''}
+          {account.live_discrepancy.toLocaleString(undefined, { maximumFractionDigits: 8 })} {account.asset_symbol}
+        </p>
+      )}
       {account.live_error && (
         <p className="text-[10px] text-red-300 mt-1.5" title={account.live_error}>
           ⛔ {account.live_error}
@@ -268,6 +275,18 @@ function PaperCard({ account, connections, onChange }: Readonly<{
                   <span className="text-slate-600"> · paper ${liveAudit.paper_realized_pnl_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                 </span>
               </div>
+              {(liveAudit.slippage?.n_filled ?? 0) > 0 && (
+                <p className="text-[10px] text-slate-500 mb-1">
+                  Slippage real medio{' '}
+                  <span className={`font-mono ${(liveAudit.slippage!.avg_slippage_bps ?? 0) > liveAudit.slippage!.modeled_slippage_bps ? 'text-amber-300' : 'text-emerald-400'}`}>
+                    {liveAudit.slippage!.avg_slippage_bps?.toFixed(1)} bps
+                  </span>
+                  <span className="text-slate-600"> vs {liveAudit.slippage!.modeled_slippage_bps} bps del modelo · {liveAudit.slippage!.n_filled} ejecuciones</span>
+                  {(liveAudit.blocked_orders ?? 0) > 0 && (
+                    <span className="text-amber-300"> · {liveAudit.blocked_orders} bloqueadas por límite diario</span>
+                  )}
+                </p>
+              )}
               <div className="max-h-32 overflow-y-auto space-y-1">
                 {liveAudit.orders.map((o) => (
                   <div key={o.id} className="flex items-center gap-2 text-[10px]">
@@ -279,7 +298,9 @@ function PaperCard({ account, connections, onChange }: Readonly<{
                     <span className={`text-[9px] px-1 rounded ${o.is_testnet ? 'text-sky-300' : 'text-red-300'}`}>{o.is_testnet ? 'testnet' : 'REAL'}</span>
                     {o.status === 'failed'
                       ? <span className="ml-auto text-red-400" title={o.error ?? ''}>✕ fallida</span>
-                      : <span className="ml-auto text-slate-600">{new Date(o.created_at).toLocaleDateString()}</span>}
+                      : o.status === 'blocked'
+                        ? <span className="ml-auto text-amber-300" title={o.error ?? ''}>⛔ bloqueada</span>
+                        : <span className="ml-auto text-slate-600">{new Date(o.created_at).toLocaleDateString()}</span>}
                   </div>
                 ))}
               </div>

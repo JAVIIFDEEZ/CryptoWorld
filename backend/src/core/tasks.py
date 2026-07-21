@@ -682,3 +682,138 @@ def fill_strategy_stable(self) -> dict:
     except Exception as exc:
         logger.error("fill_strategy_stable error: %s", exc, exc_info=True)
         return {"error": str(exc)}
+
+
+@shared_task(
+    name="core.tasks.sync_ohlcv_history",
+    bind=True,
+    max_retries=0,
+)
+def sync_ohlcv_history(self) -> dict:
+    """
+    Mantiene al día el almacén histórico OHLCV propio: para los activos
+    relevantes (top por capitalización + los que tienen paper trading activo)
+    y los marcos de trabajo (1h, 4h, 1d), trae las velas recientes y las
+    persiste (solo cerradas; idempotente). Programada por celery beat (30 min).
+    """
+    from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+    from core.application.use_cases.ohlcv_store import persist_candles
+    from core.infrastructure.persistence.models import CryptoAsset, PaperTradingAccount
+
+    top = list(
+        CryptoAsset.objects.exclude(market_cap__isnull=True)
+        .order_by("-market_cap").values_list("symbol", flat=True)[:8]
+    )
+    active = list(
+        PaperTradingAccount.objects.filter(is_active=True)
+        .values_list("asset_symbol", flat=True).distinct()
+    )
+    symbols = list(dict.fromkeys(top + active))   # únicos, conservando orden
+    synced = created = 0
+    for symbol in symbols:
+        for interval in ("1h", "4h", "1d"):
+            try:
+                res = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=200)
+                if res is None or res.df.empty or res.source == "store":
+                    continue   # el fetcher ya persiste lo remoto; store = ya al día
+                synced += 1
+                created += persist_candles(symbol, interval, res.df, source=res.source)
+            except Exception as exc:  # noqa: BLE001 — un símbolo caído no frena el resto
+                logger.warning("sync_ohlcv %s %s: %s", symbol, interval, exc)
+    logger.info("sync_ohlcv_history: %d combinaciones, %d velas nuevas", synced, created)
+    return {"symbols": symbols, "synced": synced, "created": created}
+
+
+@shared_task(
+    name="core.tasks.backfill_ohlcv",
+    bind=True,
+    max_retries=0,
+)
+def backfill_ohlcv(self, symbol: str, interval: str = "1d",
+                   target_candles: int = 3000) -> dict:
+    """
+    Retro-carga profunda del histórico de un símbolo+marco (bajo demanda desde
+    el endpoint de cobertura). Idempotente y reanudable por tandas.
+    """
+    from core.application.use_cases.ohlcv_store import BackfillOhlcvUseCase
+
+    result = BackfillOhlcvUseCase().execute(
+        symbol=symbol, interval=interval, target_candles=target_candles,
+    )
+    logger.info("backfill_ohlcv %s %s: %s", symbol, interval, result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.resolve_confluence_snapshots",
+    bind=True,
+    max_retries=0,
+)
+def resolve_confluence_snapshots(self) -> dict:
+    """
+    Resuelve las lecturas de confluencia vencidas contra el precio real. Es el
+    combustible del aprendizaje de pesos del motor 360°. Beat: cada 30 min.
+    """
+    from core.application.use_cases.get_confluence import ResolveConfluenceSnapshotsUseCase
+
+    result = ResolveConfluenceSnapshotsUseCase().execute()
+    logger.info("resolve_confluence_snapshots: %s", result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.evaluate_confluence",
+    bind=True,
+    max_retries=0,
+)
+def evaluate_confluence(self) -> dict:
+    """
+    Evalúa el motor de confluencia 360° para los activos relevantes: alimenta
+    el aprendizaje continuo de pesos y registra los cambios de veredicto como
+    eventos (centro de notificaciones). Beat: cada 30 min.
+    """
+    from core.application.use_cases.get_confluence import EvaluateConfluenceUseCase
+
+    result = EvaluateConfluenceUseCase().execute()
+    logger.info("evaluate_confluence: %s", result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.reconcile_live_positions",
+    bind=True,
+    max_retries=0,
+)
+def reconcile_live_positions(self) -> dict:
+    """
+    OMS: reconcilia la posición esperada de cada promoción activa con el
+    balance real del exchange; las discrepancias se registran y notifican.
+    Beat: cada hora.
+    """
+    from core.application.use_cases.paper_trading import ReconcileLivePositionsUseCase
+
+    result = ReconcileLivePositionsUseCase().execute()
+    logger.info("reconcile_live_positions: %s", result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.send_risk_digest",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=300,
+)
+def send_risk_digest(self) -> dict:
+    """
+    Envía a diario el resumen de riesgo de cartera a los usuarios suscritos
+    (notify_risk_digest=True). Programado por celery beat (lunes-viernes 07:00).
+    """
+    try:
+        from core.application.use_cases.send_risk_digest import SendRiskDigestUseCase
+
+        sent = SendRiskDigestUseCase().execute()
+        logger.info("send_risk_digest: %d emails enviados", sent)
+        return {"sent": sent}
+    except Exception as exc:
+        logger.error("send_risk_digest error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)

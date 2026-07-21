@@ -8,6 +8,7 @@ que ya existen en el sistema y los presenta como un único feed cronológico:
   · Predicciones ML resueltas (PredictionRecord acierto/fallo)
   · Alertas de precio disparadas (PriceAlert)
   · Kill-switch de la ejecución real (PaperTradingAccount.live_disabled_at)
+  · Cambios de régimen del motor de confluencia 360° (ConfluenceSignalEvent)
 
 El estado "no leído" se resuelve con un único timestamp por usuario
 (`notifications_seen_at`): cuenta como no leído todo evento posterior. Abrir el
@@ -37,12 +38,31 @@ class NotificationsFeedUseCase:
 
     def execute(self, owner, limit: int = 30) -> dict:
         from core.infrastructure.persistence.models import (
-            AddressAlert, OnChainSignalEvent, PaperTradingAccount, PredictionRecord,
-            PriceAlert, StrategySignalEvent,
+            AddressAlert, ConfluenceSignalEvent, OnChainSignalEvent,
+            PaperTradingAccount, PredictionRecord, PriceAlert, StrategySignalEvent,
         )
 
         seen = getattr(owner, "notifications_seen_at", None)
         items: list[dict] = []
+
+        # ── Cambios de régimen de la confluencia 360° (globales) ──
+        _CONF_TITLES = {
+            "CONFLUENCIA_ALCISTA": "alineación ALCISTA",
+            "CONFLUENCIA_BAJISTA": "alineación BAJISTA",
+            "MIXTO": "fuentes divididas",
+            "NEUTRAL": "neutral",
+        }
+        for ev in ConfluenceSignalEvent.objects.order_by("-created_at")[:limit]:
+            items.append({
+                "id": f"confluence-{ev.id}",
+                "kind": "confluence",
+                "title": f"Confluencia {ev.asset_symbol}: {_CONF_TITLES.get(ev.verdict, ev.verdict)}",
+                "body": f"score {ev.score:+.2f} · acuerdo {ev.agreement_pct:.0f}%"
+                        + (f" · antes {_CONF_TITLES.get(ev.previous_verdict, ev.previous_verdict)}"
+                           if ev.previous_verdict else ""),
+                "link": "/analysis",
+                "ts": ev.created_at,
+            })
 
         # ── Kill-switch de ejecución real (paper→real desactivado) ──
         # Es la notificación más crítica del sistema: hay dinero (o testnet)
@@ -141,9 +161,10 @@ class NotificationsFeedUseCase:
     @staticmethod
     def _count_unread(owner, since) -> int:
         from core.infrastructure.persistence.models import (
-            AddressAlert, OnChainSignalEvent, PaperTradingAccount, PredictionRecord,
-            PriceAlert, StrategySignalEvent,
+            AddressAlert, ConfluenceSignalEvent, OnChainSignalEvent,
+            PaperTradingAccount, PredictionRecord, PriceAlert, StrategySignalEvent,
         )
+        confluence = ConfluenceSignalEvent.objects.all()
         pressure = OnChainSignalEvent.objects.all()
         sig = StrategySignalEvent.objects.filter(owner=owner)
         whale = AddressAlert.objects.filter(owner=owner)
@@ -157,10 +178,11 @@ class NotificationsFeedUseCase:
                      + pred.filter(resolved_at__gt=since).count()
                      + price.filter(triggered_at__gt=since).count()
                      + pressure.filter(created_at__gt=since).count()
+                     + confluence.filter(created_at__gt=since).count()
                      + live.filter(live_disabled_at__gt=since).count())
         else:
             total = (sig.count() + whale.count() + pred.count() + price.count()
-                     + pressure.count() + live.count())
+                     + pressure.count() + confluence.count() + live.count())
         return min(total, _UNREAD_CAP)
 
 

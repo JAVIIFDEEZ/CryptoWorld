@@ -24,8 +24,10 @@ import numpy as np
 
 from core.domain.services.strategy_spec import (
     COMBINES,
+    COMPARE_OPS,
     CROSS_OPS,
     OSCILLATORS,
+    SLOPE_OPS,
     THRESHOLD_OPS,
     _MAX_CONDITIONS,
     _random_regime,
@@ -70,14 +72,22 @@ class GAConfig:
 def crossover(parent_a: dict, parent_b: dict, rng: np.random.Generator) -> dict:
     """
     Cruce uniforme a nivel de bloque: el hijo hereda el bloque de entrada de un
-    progenitor y el de salida del otro (elección aleatoria). Como cada bloque es
-    independientemente legal, el hijo siempre es un spec válido.
+    progenitor y el de salida del otro (elección aleatoria). Los bloques de
+    riesgo/sizing/régimen se heredan de un progenitor al azar cada uno — antes
+    se perdían siempre en el cruce y el GA no podía conservar una buena gestión
+    de riesgo entre generaciones. Como cada bloque es independientemente legal,
+    el hijo siempre es un spec válido.
     """
     if rng.random() < 0.5:
         entry, exit_ = parent_a["entry"], parent_b["exit"]
     else:
         entry, exit_ = parent_b["entry"], parent_a["exit"]
-    return {"entry": copy.deepcopy(entry), "exit": copy.deepcopy(exit_)}
+    child = {"entry": copy.deepcopy(entry), "exit": copy.deepcopy(exit_)}
+    for block in ("risk", "sizing", "regime"):
+        donor = parent_a if rng.random() < 0.5 else parent_b
+        if donor.get(block):
+            child[block] = copy.deepcopy(donor[block])
+    return child
 
 
 def _mutate_condition_params(spec: dict, rng: np.random.Generator) -> dict:
@@ -99,15 +109,22 @@ def _mutate_threshold(spec: dict, rng: np.random.Generator) -> dict:
     return out
 
 
+_OPS_BY_TYPE = {
+    "threshold": THRESHOLD_OPS,
+    "cross": CROSS_OPS,
+    "compare": COMPARE_OPS,
+    "slope": SLOPE_OPS,
+}
+
+
 def _mutate_flip_op(spec: dict, rng: np.random.Generator) -> dict:
-    """Invierte el operador de una condición (gt↔lt o cross_above↔cross_below)."""
+    """Invierte el operador de una condición (gt↔lt, cross_above↔cross_below,
+    above↔below o rising↔falling, según el tipo)."""
     out = copy.deepcopy(spec)
     conds = [c for side in ("entry", "exit") for c in out[side]["conditions"]]
     c = conds[int(rng.integers(0, len(conds)))]
-    if c["type"] == "threshold":
-        c["op"] = THRESHOLD_OPS[1] if c["op"] == THRESHOLD_OPS[0] else THRESHOLD_OPS[0]
-    else:
-        c["op"] = CROSS_OPS[1] if c["op"] == CROSS_OPS[0] else CROSS_OPS[0]
+    ops = _OPS_BY_TYPE[c["type"]]
+    c["op"] = ops[1] if c["op"] == ops[0] else ops[0]
     return out
 
 

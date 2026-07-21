@@ -348,6 +348,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.send_market_digest",
         "schedule": crontab(day_of_week=1, hour=8, minute=0),
     },
+    # Resumen diario de riesgo de cartera (días laborables 07:00 UTC)
+    "send-risk-digest": {
+        "task": "core.tasks.send_risk_digest",
+        "schedule": crontab(day_of_week="1-5", hour=7, minute=0),
+    },
     # Señales en vivo de estrategias generadas monitorizadas (cada 15 min)
     "evaluate-monitored-strategies": {
         "task": "core.tasks.evaluate_monitored_strategies",
@@ -362,6 +367,26 @@ CELERY_BEAT_SCHEDULE = {
     "warm-ml-predictions": {
         "task": "core.tasks.warm_ml_predictions",
         "schedule": 600.0,   # segundos — la caché de predicción dura 15 min
+    },
+    # Mantener al día el almacén histórico OHLCV propio (cada 30 min)
+    "sync-ohlcv-history": {
+        "task": "core.tasks.sync_ohlcv_history",
+        "schedule": 1800.0,  # segundos — solo persiste velas cerradas
+    },
+    # Resolver lecturas de confluencia vencidas (aprendizaje de pesos, 30 min)
+    "resolve-confluence-snapshots": {
+        "task": "core.tasks.resolve_confluence_snapshots",
+        "schedule": 1800.0,
+    },
+    # Evaluar la confluencia de los activos relevantes (aprendizaje + eventos)
+    "evaluate-confluence": {
+        "task": "core.tasks.evaluate_confluence",
+        "schedule": 1800.0,
+    },
+    # OMS: reconciliar posición esperada ↔ balance real del exchange (cada hora)
+    "reconcile-live-positions": {
+        "task": "core.tasks.reconcile_live_positions",
+        "schedule": 3600.0,
     },
     # Ejecutar señales de las carteras de paper trading activas (cada 15 min)
     "evaluate-paper-trading": {
@@ -391,3 +416,13 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+
+
+# ------------------------------------------------------------------
+# Web Push (PWA) — notificaciones con la app cerrada.
+# Genera el par VAPID una vez y ponlo en el entorno. Vacío = push desactivado
+# (el WebSocket y el centro in-app siguen funcionando).
+# ------------------------------------------------------------------
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "admin@cryptoworld.app")
