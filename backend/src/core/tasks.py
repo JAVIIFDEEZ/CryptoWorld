@@ -817,3 +817,26 @@ def send_risk_digest(self) -> dict:
     except Exception as exc:
         logger.error("send_risk_digest error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.evaluate_quant_alerts",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+)
+def evaluate_quant_alerts(self):
+    """
+    Evalúa todas las alertas cuantitativas activas (multi-métrica, disparo por
+    flanco con cooldown) y notifica los disparos. Beat: cada 3 min.
+    """
+    try:
+        from core.application.use_cases.evaluate_quant_alerts import EvaluateQuantAlertsUseCase
+
+        result = EvaluateQuantAlertsUseCase().execute()
+        logger.info("evaluate_quant_alerts: %d disparadas de %d evaluadas",
+                    result["fired"], result["evaluated"])
+        return result
+    except Exception as exc:
+        logger.error("evaluate_quant_alerts error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)

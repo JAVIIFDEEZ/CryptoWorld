@@ -13,6 +13,7 @@ import {
   type CreateAlertPayload,
 } from '../services/alertsService'
 import EmptyState from '../components/ui/EmptyState'
+import QuantAlertsPanel from '../components/alerts/QuantAlertsPanel'
 
 const IconBell = () => (
   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -338,6 +339,11 @@ export default function AlertsPage() {
             ))}
           </div>
         )}
+
+        {/* ── Motor de alertas cuantitativas (multi-métrica, disparo por flanco) ── */}
+        <div className="mt-8 pt-6 border-t border-slate-800">
+          <QuantAlertsPanel />
+        </div>
 
       {showModal && (
         <CreateAlertModal

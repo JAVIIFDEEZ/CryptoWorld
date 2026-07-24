@@ -21,7 +21,7 @@ import {
 } from '@/services/notificationsService'
 
 const KIND_ICON: Record<NotificationKind, string> = {
-  signal: '📈', whale: '🐋', prediction: '🔮', price: '🔔', pressure: '⚖', live: '⛔', confluence: '🎯',
+  signal: '📈', whale: '🐋', prediction: '🔮', price: '🔔', pressure: '⚖', live: '⛔', confluence: '🎯', quant: '📊',
 }
 
 function ago(ts: string): string {

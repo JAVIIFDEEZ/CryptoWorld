@@ -270,6 +270,9 @@ urlpatterns = [
     path("alerts/", views.AlertListView.as_view(), name="alert-list"),
     path("alerts/<int:alert_id>/", views.AlertDetailView.as_view(), name="alert-detail"),
     path("alerts/<int:alert_id>/toggle/", views.AlertToggleView.as_view(), name="alert-toggle"),
+    path("quant-alerts/", views.QuantAlertListView.as_view(), name="quant-alert-list"),
+    path("quant-alerts/firings/", views.QuantAlertFiringsView.as_view(), name="quant-alert-firings"),
+    path("quant-alerts/<int:alert_id>/", views.QuantAlertDetailView.as_view(), name="quant-alert-detail"),
 
     # ── Watchlist ────────────────────────────────────────────────────
     path("watchlist/", views.WatchlistView.as_view(), name="watchlist-list"),

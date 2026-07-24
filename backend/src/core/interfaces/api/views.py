@@ -3354,3 +3354,73 @@ class WatchlistItemView(APIView):
         if not deleted:
             return Response({"error": "El activo no está en la watchlist."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Alertas cuantitativas (motor multi-métrica con disparo por flanco)
+# ════════════════════════════════════════════════════════════════════
+
+class QuantAlertListView(APIView):
+    """
+    GET  /api/quant-alerts/          — Lista las alertas cuantitativas del usuario.
+    GET  /api/quant-alerts/?catalog=1 — Incluye el catálogo de métricas.
+    POST /api/quant-alerts/          — Crea una alerta cuantitativa.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.manage_quant_alerts import (
+            ListQuantAlertsUseCase, metric_catalog,
+        )
+        payload = {"alerts": ListQuantAlertsUseCase().execute(request.user)}
+        if request.query_params.get("catalog"):
+            payload["metrics"] = metric_catalog()
+        return Response(payload, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from core.application.use_cases.manage_quant_alerts import CreateQuantAlertUseCase
+        try:
+            alert = CreateQuantAlertUseCase().execute(request.user, request.data)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(alert, status=status.HTTP_201_CREATED)
+
+
+class QuantAlertDetailView(APIView):
+    """
+    PATCH  /api/quant-alerts/<id>/ — Actualiza (o activa/desactiva) una alerta.
+    DELETE /api/quant-alerts/<id>/ — Elimina una alerta.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, alert_id: int):
+        from core.application.use_cases.manage_quant_alerts import UpdateQuantAlertUseCase
+        try:
+            alert = UpdateQuantAlertUseCase().execute(request.user, alert_id, request.data)
+        except ValueError as exc:
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in str(exc) else status.HTTP_400_BAD_REQUEST
+            return Response({"error": str(exc)}, status=code)
+        return Response(alert, status=status.HTTP_200_OK)
+
+    def delete(self, request, alert_id: int):
+        from core.application.use_cases.manage_quant_alerts import DeleteQuantAlertUseCase
+        try:
+            DeleteQuantAlertUseCase().execute(request.user, alert_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class QuantAlertFiringsView(APIView):
+    """GET /api/quant-alerts/firings/ — Últimos disparos (feed del panel)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.manage_quant_alerts import ListQuantFiringsUseCase
+        try:
+            limit = int(request.query_params.get("limit", 30))
+        except (TypeError, ValueError):
+            limit = 30
+        mark_seen = request.query_params.get("mark_seen", "false").lower() == "true"
+        rows = ListQuantFiringsUseCase().execute(request.user, limit=limit, mark_seen=mark_seen)
+        return Response({"firings": rows}, status=status.HTTP_200_OK)

@@ -1241,3 +1241,81 @@ class PushSubscription(models.Model):
 
     def __str__(self) -> str:
         return f"Push({self.owner_id}, {self.endpoint[:40]}…)"
+
+
+class QuantAlert(models.Model):
+    """
+    Alerta cuantitativa multi-métrica configurada por el usuario.
+
+    A diferencia de PriceAlert (solo precio), evalúa cualquier métrica del
+    sistema — técnica (RSI/ADX/StochRSI/MACD/vol/ATR/rango), precio,
+    confluencia 360°, presión on-chain o riesgo de cartera (VaR/CVaR/
+    concentración/exposición) — con disparo por flanco (edge-trigger) y
+    cooldown, de modo que se re-arma sola y no genera spam. La evalúa Celery
+    cada 3 min.
+    """
+
+    OPERATOR_CHOICES = [
+        ("gt", "Mayor o igual que"),
+        ("lt", "Menor que"),
+        ("cross_up", "Cruza al alza"),
+        ("cross_down", "Cruza a la baja"),
+    ]
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="quant_alerts",
+    )
+    # Nulo = métrica de cartera (riesgo del libro completo), no ligada a un activo.
+    asset = models.ForeignKey(
+        CryptoAsset, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="quant_alerts",
+    )
+    metric = models.CharField(max_length=40)                 # clave del registro de métricas
+    timeframe = models.CharField(max_length=4, default="1h")  # 1h/4h/1d (técnicas)
+    operator = models.CharField(max_length=10, choices=OPERATOR_CHOICES)
+    threshold = models.FloatField()
+    cooldown_minutes = models.PositiveIntegerField(default=60)
+    is_active = models.BooleanField(default=True)
+    # Estado para el disparo por flanco: 'above' / 'below' / '' (desconocido).
+    last_side = models.CharField(max_length=6, blank=True, default="")
+    last_value = models.FloatField(null=True, blank=True)
+    last_fired_at = models.DateTimeField(null=True, blank=True)
+    note = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "quant_alerts"
+        verbose_name = "Alerta Cuantitativa"
+        verbose_name_plural = "Alertas Cuantitativas"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        target = self.asset.symbol if self.asset else "CARTERA"
+        return (
+            f"{self.user.email} — {target} {self.metric} "
+            f"{self.operator} {self.threshold}"
+        )
+
+
+class QuantAlertFiring(models.Model):
+    """Registro de cada disparo de una QuantAlert — alimenta el feed de avisos."""
+
+    alert = models.ForeignKey(
+        QuantAlert, on_delete=models.CASCADE, related_name="firings",
+    )
+    fired_at = models.DateTimeField(auto_now_add=True)
+    value = models.FloatField()
+    threshold = models.FloatField()
+    operator = models.CharField(max_length=10)
+    message = models.CharField(max_length=300)
+    seen = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "quant_alert_firings"
+        verbose_name = "Disparo de Alerta Cuantitativa"
+        verbose_name_plural = "Disparos de Alertas Cuantitativas"
+        ordering = ["-fired_at"]
+
+    def __str__(self) -> str:
+        return f"Firing({self.alert_id}, {self.value} {self.operator} {self.threshold})"

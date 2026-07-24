@@ -39,7 +39,8 @@ class NotificationsFeedUseCase:
     def execute(self, owner, limit: int = 30) -> dict:
         from core.infrastructure.persistence.models import (
             AddressAlert, ConfluenceSignalEvent, OnChainSignalEvent,
-            PaperTradingAccount, PredictionRecord, PriceAlert, StrategySignalEvent,
+            PaperTradingAccount, PredictionRecord, PriceAlert, QuantAlertFiring,
+            StrategySignalEvent,
         )
 
         seen = getattr(owner, "notifications_seen_at", None)
@@ -147,6 +148,19 @@ class NotificationsFeedUseCase:
                 "ts": p.triggered_at,
             })
 
+        # ── Alertas cuantitativas disparadas (motor multi-métrica) ──
+        for f in (QuantAlertFiring.objects.select_related("alert", "alert__asset")
+                  .filter(alert__user=owner).order_by("-fired_at")[:limit]):
+            target = f.alert.asset.symbol if f.alert.asset else "Cartera"
+            items.append({
+                "id": f"quant-{f.id}",
+                "kind": "quant",
+                "title": f"Alerta cuantitativa · {target}",
+                "body": f.message,
+                "link": "/alerts",
+                "ts": f.fired_at,
+            })
+
         # Ordenar cronológicamente (más reciente primero) y recortar.
         items.sort(key=lambda it: it["ts"], reverse=True)
         top = items[:limit]
@@ -162,7 +176,8 @@ class NotificationsFeedUseCase:
     def _count_unread(owner, since) -> int:
         from core.infrastructure.persistence.models import (
             AddressAlert, ConfluenceSignalEvent, OnChainSignalEvent,
-            PaperTradingAccount, PredictionRecord, PriceAlert, StrategySignalEvent,
+            PaperTradingAccount, PredictionRecord, PriceAlert, QuantAlertFiring,
+            StrategySignalEvent,
         )
         confluence = ConfluenceSignalEvent.objects.all()
         pressure = OnChainSignalEvent.objects.all()
@@ -172,6 +187,7 @@ class NotificationsFeedUseCase:
             owner=owner, status__in=["correct", "incorrect"], resolved_at__isnull=False)
         price = PriceAlert.objects.filter(user=owner, is_triggered=True, triggered_at__isnull=False)
         live = PaperTradingAccount.objects.filter(owner=owner, live_disabled_at__isnull=False)
+        quant = QuantAlertFiring.objects.filter(alert__user=owner)
         if since is not None:
             total = (sig.filter(created_at__gt=since).count()
                      + whale.filter(created_at__gt=since).count()
@@ -179,10 +195,12 @@ class NotificationsFeedUseCase:
                      + price.filter(triggered_at__gt=since).count()
                      + pressure.filter(created_at__gt=since).count()
                      + confluence.filter(created_at__gt=since).count()
-                     + live.filter(live_disabled_at__gt=since).count())
+                     + live.filter(live_disabled_at__gt=since).count()
+                     + quant.filter(fired_at__gt=since).count())
         else:
             total = (sig.count() + whale.count() + pred.count() + price.count()
-                     + pressure.count() + confluence.count() + live.count())
+                     + pressure.count() + confluence.count() + live.count()
+                     + quant.count())
         return min(total, _UNREAD_CAP)
 
 

@@ -333,6 +333,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.check_price_alerts",
         "schedule": 120.0,  # segundos
     },
+    # Evaluar alertas cuantitativas (multi-métrica, disparo por flanco) cada 3 min
+    "evaluate-quant-alerts": {
+        "task": "core.tasks.evaluate_quant_alerts",
+        "schedule": 180.0,  # segundos
+    },
     # Sync rápido de precios vía Binance (1 llamada, weight=40, sin cuota CoinGecko)
     "sync-prices-quick": {
         "task": "core.tasks.sync_prices_quick",
