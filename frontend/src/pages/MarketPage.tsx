@@ -10,6 +10,7 @@ import Sparkline from '@/components/ui/Sparkline'
 import { SkeletonRow } from '@/components/ui/Skeleton'
 import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
 import MarketTreemap2D from '@/components/market/MarketTreemap2D'
+import MarketRegimePanel from '@/components/market/MarketRegimePanel'
 import { buildMarketBodies } from '@/components/market/marketViz'
 
 const MarketUniverse3D = lazy(() => import('@/components/market/MarketUniverse3D'))
@@ -112,6 +113,9 @@ function MarketPage() {
         <StatCard label={t('market.bullish24h')} value={String(bullishCount)} animateValue={bullishCount} format={(n) => String(Math.round(n))} tone="positive" />
         <StatCard label={t('market.bearish24h')} value={String(bearishCount)} animateValue={bearishCount} format={(n) => String(Math.round(n))} tone="negative" />
       </div>
+
+      {/* Régimen de mercado + correlaciones cross-asset de la cesta */}
+      <MarketRegimePanel />
 
       {/* Universo de mercado: galaxia 3D (tamaño=cap, color=cambio) con treemap 2D */}
       {!isLoading && !error && marketBodies.length > 0 && (

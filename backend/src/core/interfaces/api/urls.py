@@ -97,6 +97,7 @@ urlpatterns = [
     path("analysis/levels/", views.PriceStructureView.as_view(), name="analysis-levels"),
     path("analysis/quant/", views.QuantSnapshotView.as_view(), name="analysis-quant"),
     path("analysis/derivatives/", views.DerivativesView.as_view(), name="analysis-derivatives"),
+    path("market/regime/", views.MarketRegimeView.as_view(), name="market-regime"),
     path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
     path("analysis/predictions/", views.PredictionTrackRecordView.as_view(), name="analysis-predictions"),
     path("analysis/predictions/monitoring/", views.PredictionMonitoringView.as_view(), name="analysis-predictions-monitoring"),
