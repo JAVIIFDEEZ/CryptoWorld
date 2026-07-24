@@ -3520,3 +3520,26 @@ class ExecutionTcaView(APIView):
         result = ExecutionTcaUseCase().execute(owner=request.user)
         cache.set(cache_key, result, self._CACHE_TTL)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class OhlcvHealthView(APIView):
+    """
+    GET /api/data/health/ — Salud del almacén histórico OHLCV: completitud,
+    frescura y huecos por serie (símbolo+marco) + resumen global. Es la
+    observabilidad de la fiabilidad de los datos que alimentan riesgo,
+    backtests y la terminal cuantitativa.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300
+
+    def get(self, request):
+        from core.application.use_cases.ohlcv_health import OhlcvHealthUseCase
+
+        cache_key = "ohlcv_health"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = OhlcvHealthUseCase().execute()
+        if result.get("status") == "OK":
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)

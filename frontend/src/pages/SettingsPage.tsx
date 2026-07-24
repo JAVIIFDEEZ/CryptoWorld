@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/Toast'
 import { useCurrency } from '@/hooks/useCurrency'
 import PasswordInput from '@/components/ui/PasswordInput'
 import Skeleton from '@/components/ui/Skeleton'
+import DataHealthPanel from '@/components/settings/DataHealthPanel'
 
 const CURRENCY_OPTIONS: { value: PreferredCurrency; label: string }[] = [
   { value: 'usd', label: 'Dólar Estadounidense (USD - $)' },
@@ -557,6 +558,9 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+
+        {/* Salud del almacén histórico OHLCV (calidad de datos) */}
+        <DataHealthPanel />
 
       </div>
 
