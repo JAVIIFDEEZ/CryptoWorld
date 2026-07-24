@@ -3543,3 +3543,26 @@ class OhlcvHealthView(APIView):
         if result.get("status") == "OK":
             cache.set(cache_key, result, self._CACHE_TTL)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class ExecutionAuditView(APIView):
+    """
+    GET /api/oms/audit/?limit=50&status=blocked — Rastro de auditoría de la
+    ejecución real del usuario: resumen de cumplimiento (recuentos por estado,
+    nocional ejecutado, motivos de bloqueo/fallo) + registro cronológico
+    detallado de cada intento de orden.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.execution_audit import ExecutionAuditUseCase
+
+        try:
+            limit = int(request.query_params.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        status_filter = (request.query_params.get("status") or "").strip()
+        result = ExecutionAuditUseCase().execute(
+            owner=request.user, limit=limit, status_filter=status_filter,
+        )
+        return Response(result, status=status.HTTP_200_OK)

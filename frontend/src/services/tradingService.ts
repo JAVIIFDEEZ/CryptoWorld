@@ -95,6 +95,45 @@ export interface ExecutionTca {
   note?: string
 }
 
+export interface AuditReason {
+  reason: string
+  count: number
+}
+
+export interface AuditSummary {
+  total_attempts: number
+  sent: number
+  failed: number
+  blocked: number
+  executed_notional_usd: number
+  fill_rate_pct: number | null
+  distinct_symbols: number
+  blocked_reasons: AuditReason[]
+  failed_reasons: AuditReason[]
+}
+
+export interface AuditEntry {
+  id: number
+  created_at: string
+  symbol: string
+  side: string
+  amount: number
+  ref_price: number
+  fill_price: number | null
+  notional_usd: number
+  status: 'sent' | 'failed' | 'blocked'
+  error: string
+  broker_order_id: string
+  is_testnet: boolean
+}
+
+export interface ExecutionAudit {
+  status: 'OK' | 'EMPTY'
+  summary: AuditSummary
+  entries: AuditEntry[]
+  note?: string
+}
+
 export const tradingService = {
   /** Política de riesgo OMS: límite de pérdida diaria y de concentración. */
   getRiskPolicy: async (): Promise<LiveRiskPolicy> => {
@@ -105,6 +144,12 @@ export const tradingService = {
   /** Analítica de coste de ejecución real (slippage, fill rate, por símbolo). */
   getTca: async (): Promise<ExecutionTca> => {
     const { data } = await apiClient.get<ExecutionTca>('/oms/tca/')
+    return data
+  },
+
+  /** Rastro de auditoría de la ejecución real (cumplimiento). */
+  getAudit: async (params: { limit?: number; status?: string } = {}): Promise<ExecutionAudit> => {
+    const { data } = await apiClient.get<ExecutionAudit>('/oms/audit/', { params })
     return data
   },
 

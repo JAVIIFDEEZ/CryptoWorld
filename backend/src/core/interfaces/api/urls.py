@@ -100,6 +100,7 @@ urlpatterns = [
     path("market/regime/", views.MarketRegimeView.as_view(), name="market-regime"),
     path("oms/tca/", views.ExecutionTcaView.as_view(), name="oms-tca"),
     path("data/health/", views.OhlcvHealthView.as_view(), name="data-health"),
+    path("oms/audit/", views.ExecutionAuditView.as_view(), name="oms-audit"),
     path("analysis/predict/", views.PredictPriceView.as_view(), name="analysis-predict"),
     path("analysis/predictions/", views.PredictionTrackRecordView.as_view(), name="analysis-predictions"),
     path("analysis/predictions/monitoring/", views.PredictionMonitoringView.as_view(), name="analysis-predictions-monitoring"),

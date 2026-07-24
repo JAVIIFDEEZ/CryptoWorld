@@ -18,6 +18,7 @@ import {
 } from '@/services/tradingService'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import ExecutionAuditPanel from '@/components/trading/ExecutionAuditPanel'
 import { useTranslation } from 'react-i18next'
 
 function ModeBadge({ testnet }: Readonly<{ testnet: boolean }>) {
@@ -167,6 +168,9 @@ export default function TradingPage() {
 
       {/* OMS: límite de pérdida diaria de la ejecución real */}
       <RiskPolicyCard />
+
+      {/* Auditoría de cumplimiento de la ejecución real */}
+      <ExecutionAuditPanel />
 
       {/* Conexiones */}
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
