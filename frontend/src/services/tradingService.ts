@@ -66,10 +66,45 @@ export interface LiveRiskPolicy {
   realized_today_usd?: number
 }
 
+export interface TcaBySymbol {
+  symbol: string
+  fills: number
+  notional_usd: number
+  cost_usd: number
+  avg_slippage_bps: number
+}
+
+export interface TcaEntry {
+  symbol: string
+  side: string
+  slippage_bps: number
+  cost_usd: number
+}
+
+export interface ExecutionTca {
+  status: 'OK' | 'EMPTY'
+  fills: number
+  total_notional_usd?: number
+  avg_slippage_bps?: number
+  total_cost_usd?: number
+  fill_rate_pct?: number | null
+  worst?: TcaEntry
+  best?: TcaEntry
+  by_symbol?: TcaBySymbol[]
+  orders_analyzed?: number
+  note?: string
+}
+
 export const tradingService = {
   /** Política de riesgo OMS: límite de pérdida diaria y de concentración. */
   getRiskPolicy: async (): Promise<LiveRiskPolicy> => {
     const { data } = await apiClient.get<LiveRiskPolicy>('/trading/risk-policy/')
+    return data
+  },
+
+  /** Analítica de coste de ejecución real (slippage, fill rate, por símbolo). */
+  getTca: async (): Promise<ExecutionTca> => {
+    const { data } = await apiClient.get<ExecutionTca>('/oms/tca/')
     return data
   },
 

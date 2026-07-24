@@ -3498,3 +3498,25 @@ class MarketRegimeView(APIView):
         if result.get("status") == "OK":
             cache.set(cache_key, result, self._CACHE_TTL)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class ExecutionTcaView(APIView):
+    """
+    GET /api/oms/tca/ — Analítica de coste de ejecución real del usuario:
+    slippage medio (bps, con signo de coste, ponderado por nocional), coste
+    total, fill rate y desglose por símbolo, sobre la auditoría de órdenes
+    reales. Mide la calidad de la ejecución de la promoción paper→real.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.tca import ExecutionTcaUseCase
+
+        cache_key = f"execution_tca:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = ExecutionTcaUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
