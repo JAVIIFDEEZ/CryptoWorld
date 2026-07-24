@@ -3446,3 +3446,32 @@ class RiskAttributionView(APIView):
         result = RiskAttributionUseCase().execute(owner=request.user)
         cache.set(cache_key, result, self._CACHE_TTL)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class DerivativesView(APIView):
+    """
+    GET /api/analysis/derivatives/?asset_symbol=BTC — Microestructura del
+    perpetuo USDⓈ-M del activo: funding anualizado (con veredicto de
+    sobrecalentamiento), basis (contango/backwardation) e interés abierto
+    (contratos + nocional). Datos de Binance futuros.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120  # segundos — el funding cambia lento; 2 min es de sobra
+
+    def get(self, request):
+        from core.application.use_cases.get_derivatives import GetDerivativesUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"derivatives:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetDerivativesUseCase().execute(asset_symbol=symbol)
+        # Solo cacheamos respuestas con datos; los fallos se reintentan enseguida.
+        if result.get("available"):
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)

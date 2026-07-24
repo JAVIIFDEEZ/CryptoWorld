@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 # ── Configuración ──────────────────────────────────────────────────
 
 BINANCE_BASE_URL = "https://data-api.binance.vision"
+# API de futuros USDⓈ-M (perpetuos): funding, mark/index price, interés abierto.
+FUTURES_BASE_URL = "https://fapi.binance.com"
 REQUEST_TIMEOUT = 20  # segundos (aumentado para cubrir latencia DNS en Docker)
 
 # Reintentos automáticos ante fallos de red/SSL transitorios
@@ -163,7 +165,35 @@ class BinancePublicClient:
         except BinanceClientError:
             return False
 
+    # ── Endpoints de futuros (perpetuos USDⓈ-M) ─────────────────────
+
+    def premium_index(self, symbol: str) -> dict:
+        """
+        GET /fapi/v1/premiumIndex — mark price, index price y último funding
+        rate del perpetuo. Base para el funding y el basis.
+        """
+        return self._get_futures("/fapi/v1/premiumIndex", {"symbol": symbol})
+
+    def open_interest(self, symbol: str) -> dict:
+        """GET /fapi/v1/openInterest — interés abierto del perpetuo (contratos)."""
+        return self._get_futures("/fapi/v1/openInterest", {"symbol": symbol})
+
     # ── Internos ───────────────────────────────────────────────────
+
+    def _get_futures(self, path: str, params: Optional[dict] = None) -> Any:
+        """Ejecuta un GET contra la API de futuros USDⓈ-M (fapi)."""
+        url = f"{FUTURES_BASE_URL}{path}"
+        try:
+            response = self._session.get(url, params=params, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return response.json()
+        except requests.HTTPError as exc:
+            code = exc.response.status_code if exc.response else "?"
+            logger.error("Binance futuros HTTP %s en %s: %s", code, path, exc)
+            raise BinanceClientError(f"Binance futuros devolvió HTTP {code}: {exc}") from exc
+        except requests.RequestException as exc:
+            logger.error("Binance futuros request error en %s: %s", path, exc)
+            raise BinanceClientError(f"Error de red con Binance futuros: {exc}") from exc
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
         """Ejecuta una petición GET y devuelve el JSON parseado."""

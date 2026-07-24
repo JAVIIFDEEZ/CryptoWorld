@@ -330,6 +330,22 @@ export interface ConfluenceReading {
 }
 
 // ── Terminal cuantitativa (snapshot institucional estilo Bloomberg) ─
+export interface DerivativesSnapshot {
+  available: boolean
+  symbol?: string
+  perp_symbol?: string
+  mark_price?: number
+  index_price?: number | null
+  funding_rate?: number
+  funding_annualized_pct?: number
+  funding_verdict?: string
+  basis_pct?: number | null
+  basis_verdict?: string
+  open_interest?: number | null
+  open_interest_usd?: number | null
+  note?: string
+}
+
 export interface QuantSnapshot {
   symbol: string
   interval: string
@@ -437,6 +453,14 @@ export const analysisService = {
   async getQuantSnapshot(assetSymbol: string, interval: IntervalType = '1h'): Promise<QuantSnapshot> {
     const { data } = await apiClient.get<QuantSnapshot>('/analysis/quant/', {
       params: { asset_symbol: assetSymbol, interval },
+    })
+    return data
+  },
+
+  /** Microestructura del perpetuo del activo: funding, basis e interés abierto. */
+  async getDerivatives(assetSymbol: string): Promise<DerivativesSnapshot> {
+    const { data } = await apiClient.get<DerivativesSnapshot>('/analysis/derivatives/', {
+      params: { asset_symbol: assetSymbol },
     })
     return data
   },
