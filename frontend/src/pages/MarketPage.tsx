@@ -11,6 +11,7 @@ import { SkeletonRow } from '@/components/ui/Skeleton'
 import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
 import MarketTreemap2D from '@/components/market/MarketTreemap2D'
 import MarketRegimePanel from '@/components/market/MarketRegimePanel'
+import LeadLagPanel from '@/components/market/LeadLagPanel'
 import { buildMarketBodies } from '@/components/market/marketViz'
 
 const MarketUniverse3D = lazy(() => import('@/components/market/MarketUniverse3D'))
@@ -116,6 +117,9 @@ function MarketPage() {
 
       {/* Régimen de mercado + correlaciones cross-asset de la cesta */}
       <MarketRegimePanel />
+
+      {/* Señales lead-lag: qué activos adelantan a cuáles */}
+      <LeadLagPanel />
 
       {/* Universo de mercado: galaxia 3D (tamaño=cap, color=cambio) con treemap 2D */}
       {!isLoading && !error && marketBodies.length > 0 && (

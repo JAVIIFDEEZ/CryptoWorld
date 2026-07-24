@@ -3566,3 +3566,25 @@ class ExecutionAuditView(APIView):
             owner=request.user, limit=limit, status_filter=status_filter,
         )
         return Response(result, status=status.HTTP_200_OK)
+
+
+class LeadLagView(APIView):
+    """
+    GET /api/market/lead-lag/ — Señales lead-lag de la cesta: qué activos
+    adelantan a cuáles (correlación cruzada de retornos a distintos desfases)
+    y ranking de liderazgo. Sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — relación estructural, se cachea 10 min
+
+    def get(self, request):
+        from core.application.use_cases.lead_lag import LeadLagUseCase
+
+        cache_key = "lead_lag"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = LeadLagUseCase().execute()
+        if result.get("status") == "OK":
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)

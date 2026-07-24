@@ -38,9 +38,35 @@ export interface MarketRegime {
   note?: string
 }
 
+export interface LeadLagPair {
+  leader: string
+  follower: string
+  lag: number
+  corr: number
+}
+
+export interface LeadLagLeader {
+  symbol: string
+  leads: number
+}
+
+export interface LeadLag {
+  status: 'OK' | 'INSUFICIENTE'
+  symbols?: string[]
+  pairs?: LeadLagPair[]
+  leaders?: LeadLagLeader[]
+  max_lag?: number
+  note?: string
+}
+
 export const regimeService = {
   get: async (): Promise<MarketRegime> => {
     const { data } = await apiClient.get<MarketRegime>('/market/regime/')
+    return data
+  },
+
+  leadLag: async (): Promise<LeadLag> => {
+    const { data } = await apiClient.get<LeadLag>('/market/lead-lag/')
     return data
   },
 }
