@@ -162,6 +162,40 @@ export interface PortfolioRisk {
   note?: string
 }
 
+export interface RiskComponent {
+  symbol: string
+  component_usd: number
+  marginal: number
+  pct: number
+  exposure_usd: number
+}
+
+export interface FactorAttribution {
+  status: 'OK' | 'INSUFICIENTE'
+  beta_usd?: number
+  systematic_pct?: number
+  idiosyncratic_pct?: number
+  r_squared?: number
+  days?: number
+  note?: string
+}
+
+export interface ComponentDecomposition {
+  status: 'OK' | 'INSUFICIENTE'
+  tail_cvar_usd?: number
+  days?: number
+  tail_days?: number
+  components: RiskComponent[]
+}
+
+export interface RiskAttribution {
+  status: 'OK' | 'EMPTY' | 'INSUFICIENTE'
+  components: ComponentDecomposition
+  factor: FactorAttribution
+  gross_usd?: number
+  note?: string
+}
+
 export const portfolioService = {
   /** Riesgo agregado del libro completo: exposición firmada, VaR/CVaR y stress. */
   /** Descarga un informe CSV (positions | risk) del usuario. */
@@ -182,6 +216,12 @@ export const portfolioService = {
 
   getRisk: async (): Promise<PortfolioRisk> => {
     const { data } = await apiClient.get<PortfolioRisk>('/portfolio/risk/')
+    return data
+  },
+
+  /** Atribución del riesgo: reparto por componentes (Euler) + factor de mercado. */
+  getRiskAttribution: async (): Promise<RiskAttribution> => {
+    const { data } = await apiClient.get<RiskAttribution>('/portfolio/risk/attribution/')
     return data
   },
 

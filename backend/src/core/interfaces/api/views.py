@@ -3424,3 +3424,25 @@ class QuantAlertFiringsView(APIView):
         mark_seen = request.query_params.get("mark_seen", "false").lower() == "true"
         rows = ListQuantFiringsUseCase().execute(request.user, limit=limit, mark_seen=mark_seen)
         return Response({"firings": rows}, status=status.HTTP_200_OK)
+
+
+class RiskAttributionView(APIView):
+    """
+    GET /api/portfolio/risk/attribution/ — Atribución del riesgo del libro:
+    reparto del riesgo de cola (CVaR 95%) por posición vía descomposición de
+    Euler y separación sistemática/idiosincrásica frente al factor de mercado
+    (BTC). Sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.risk_attribution import RiskAttributionUseCase
+
+        cache_key = f"risk_attribution:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = RiskAttributionUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)

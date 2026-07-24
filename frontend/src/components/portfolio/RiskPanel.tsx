@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { portfolioService, type PortfolioRisk } from '@/services/portfolioService'
 import { tradingService, type LiveRiskPolicy } from '@/services/tradingService'
+import RiskAttributionPanel from './RiskAttributionPanel'
 
 function usd(n: number | undefined | null, sign = false): string {
   if (n == null) return '—'
@@ -163,6 +164,8 @@ export default function RiskPanel() {
         )}
 
         {risk.note && <p className="text-[10px] text-slate-600">{risk.note}</p>}
+
+        <RiskAttributionPanel />
       </div>
     </div>
   )

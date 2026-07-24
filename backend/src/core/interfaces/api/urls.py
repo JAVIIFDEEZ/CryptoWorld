@@ -255,6 +255,7 @@ urlpatterns = [
 
     # ── Portfolio ────────────────────────────────────────────────────
     path("portfolio/risk/", views.PortfolioRiskView.as_view(), name="portfolio-risk"),
+    path("portfolio/risk/attribution/", views.RiskAttributionView.as_view(), name="portfolio-risk-attribution"),
     path("portfolio/", views.PortfolioView.as_view(), name="portfolio-summary"),
     path("portfolio/trades/", views.TradeListView.as_view(), name="portfolio-trades"),
     path("portfolio/trades/<int:trade_id>/", views.TradeDetailView.as_view(), name="portfolio-trade-detail"),
