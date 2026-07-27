@@ -46,6 +46,11 @@ const STEPS: Step[] = [
     to: '/portfolio', cta: 'Ver mi Cartera',
   },
   {
+    icon: '🎓', title: 'Academia',
+    body: 'Aprende cómo funciona todo desde dentro: un módulo con grafo 3D de blockchains y puentes, un temario guiado (de "¿qué es una blockchain?" a DeFi y seguridad) y un glosario. Ideal para entender lo que ves en el resto de la plataforma.',
+    to: '/learn', cta: 'Ir a la Academia',
+  },
+  {
     icon: '⌨️', title: 'Un último truco',
     body: 'Pulsa ⌘K (o Ctrl+K) en cualquier momento para la paleta de comandos: navega a cualquier módulo o activo al instante. ¡Listo para empezar!',
   },

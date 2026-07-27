@@ -28,6 +28,7 @@ const NAV_ITEMS: Item[] = [
   { id: 'nav-portfolio', label: 'Portfolio', path: '/portfolio', group: 'Secciones' },
   { id: 'nav-alerts', label: 'Alertas', path: '/alerts', group: 'Secciones' },
   { id: 'nav-news', label: 'Noticias', path: '/news', group: 'Secciones' },
+  { id: 'nav-learn', label: 'Academia', path: '/learn', group: 'Secciones' },
   { id: 'nav-settings', label: 'Ajustes de cuenta', path: '/settings', group: 'Secciones' },
   { id: 'nav-2fa', label: 'Seguridad 2FA', path: '/security/2fa', group: 'Secciones' },
 ]
