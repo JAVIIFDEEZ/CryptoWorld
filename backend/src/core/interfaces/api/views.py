@@ -19,7 +19,7 @@ Principio aplicado: Single Responsibility + Clean Architecture.
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
@@ -31,6 +31,8 @@ from core.interfaces.api.serializers import (
     LogoutSerializer,
     VerifyEmailSerializer,
     UpdatePreferencesSerializer,
+    ChangeEmailRequestSerializer,
+    ChangeEmailConfirmSerializer,
     PasswordResetRequestSerializer,
     ResendVerificationRequestSerializer,
     PasswordResetConfirmSerializer,
@@ -49,6 +51,10 @@ from core.interfaces.api.serializers import (
     NewsQuerySerializer,
     NewsItemSerializer,
     DeleteAccountSerializer,
+    RobustBacktestRequestSerializer,
+    RobustCompareRequestSerializer,
+    StrategyGenerateRequestSerializer,
+    SpecRobustnessRequestSerializer,
     CalculateAnalysisSerializer,
     SignalsRequestSerializer,
     PredictionRequestSerializer,
@@ -376,9 +382,9 @@ class LogoutView(APIView):
 class MeView(APIView):
     """
     GET   /api/auth/me/ — Devolver los datos del usuario autenticado.
-    PATCH /api/auth/me/ — Actualizar preferencias de cuenta (moneda,
-                          notificaciones). Solo campos de preferencias:
-                          email/username no se modifican por aquí.
+    PATCH /api/auth/me/ — Actualizar nombre de usuario y preferencias de
+                          cuenta (moneda, notificaciones). El email tiene
+                          su propio flujo seguro en /auth/change-email/.
     """
     permission_classes = [IsAuthenticated]
 
@@ -389,6 +395,7 @@ class MeView(APIView):
         return {
             "id": user.pk,
             "email": user.email,
+            "pending_email": user.pending_email,
             "username": user.username,
             "is_active": user.is_active,
             "is_email_verified": user.is_email_verified,
@@ -398,6 +405,7 @@ class MeView(APIView):
             "preferred_currency": user.preferred_currency,
             "notify_price_alerts": user.notify_price_alerts,
             "notify_market_digest": user.notify_market_digest,
+            "notify_risk_digest": user.notify_risk_digest,
             "recovery_codes_remaining": (
                 remaining_recovery_codes(user) if user.is_2fa_enabled else 0
             ),
@@ -412,13 +420,100 @@ class MeView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
+        validated = serializer.validated_data
+
+        # Unicidad del username: se comprueba aquí porque el serializer
+        # no conoce al usuario actual (hay que excluirlo de la búsqueda)
+        new_username = validated.get("username")
+        if new_username and (
+            UserModel.objects.filter(username__iexact=new_username)
+            .exclude(pk=user.pk)
+            .exists()
+        ):
+            return Response(
+                {"error": "El nombre de usuario ya está en uso."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         updated_fields = []
-        for field, value in serializer.validated_data.items():
+        for field, value in validated.items():
             setattr(user, field, value)
             updated_fields.append(field)
         user.save(update_fields=updated_fields)
 
         return Response(self._serialize(user), status=status.HTTP_200_OK)
+
+
+class ChangeEmailRequestView(APIView):
+    """
+    POST /api/auth/change-email/ — Solicitar el cambio de email.
+
+    Requiere la contraseña actual. Guarda la nueva dirección como
+    pendiente y envía el enlace de confirmación AL NUEVO correo; el
+    email de login no cambia hasta que se confirme.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_change_email"
+
+    def post(self, request):
+        from core.application.use_cases.change_email import RequestEmailChangeUseCase
+        from core.tasks import send_email_change_email as send_email_change_task
+
+        serializer = ChangeEmailRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        try:
+            RequestEmailChangeUseCase().execute(
+                user_id=request.user.pk,
+                new_email=v["new_email"],
+                password=v["password"],
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        dispatch_task(send_email_change_task, request.user.pk)
+
+        return Response(
+            {
+                "message": (
+                    "Te hemos enviado un enlace de confirmación a la nueva "
+                    "dirección. Tu email actual sigue activo hasta que confirmes."
+                ),
+                "pending_email": request.user.pending_email,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChangeEmailConfirmView(APIView):
+    """
+    POST /api/auth/change-email/confirm/ — Confirmar el cambio con el
+    token recibido en el nuevo correo. No requiere sesión: el usuario
+    puede abrir el enlace desde cualquier dispositivo.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from core.application.use_cases.change_email import ConfirmEmailChangeUseCase
+
+        serializer = ChangeEmailConfirmSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            new_email = ConfirmEmailChangeUseCase().execute(
+                serializer.validated_data["token"]
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"message": f"Email actualizado correctamente a {new_email}."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class VerifyEmailView(APIView):
@@ -899,6 +994,34 @@ class MarketOverviewView(APIView):
         cache.set(self._CACHE_KEY, data, self._CACHE_TTL)
         return Response(data, status=status.HTTP_200_OK)
 
+class ConfluenceCardView(APIView):
+    """
+    GET /api/assets/<symbol>/confluence/ — Ficha de confluencia técnica.
+
+    Agrega tendencia, soportes/resistencias, Fibonacci, resumen de
+    indicadores, veredicto con confianza y narrativa en español.
+    Cacheada 1 h en el caso de uso (compartida con la landing SEO).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, symbol: str):
+        from core.application.use_cases.get_confluence_card import (
+            AssetNotFoundError,
+            ConfluenceDataUnavailableError,
+            GetConfluenceCardUseCase,
+        )
+
+        use_case = GetConfluenceCardUseCase(asset_repo=DjangoCryptoAssetRepository())
+        try:
+            dto = use_case.execute(symbol)
+        except AssetNotFoundError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ConfluenceDataUnavailableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(dto.as_dict(), status=status.HTTP_200_OK)
+
+
 class FxRatesView(APIView):
     """
     GET /api/market/fx/ — Tasas de conversión USD→EUR/GBP.
@@ -1016,6 +1139,634 @@ class MultiChainStatsView(APIView):
         symbol = request.query_params.get("symbol", "ETH").upper()
         result = GetMultiChainStatsUseCase().execute(symbol=symbol)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class WalletChainsView(APIView):
+    """
+    GET /api/blockchain/wallet/chains/ — Redes soportadas por el explorador de
+    wallets on-chain (Blockscout).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_wallet_overview import GetSupportedChainsUseCase
+
+        return Response(GetSupportedChainsUseCase().execute(), status=status.HTTP_200_OK)
+
+
+class WalletDossierView(APIView):
+    """
+    GET /api/blockchain/wallet/dossier/?chain=ethereum&address=0x… — Dossier de
+    inteligencia cruzada de una dirección: perfil, contrapartes con etiquetado
+    de exchanges, lectura de comportamiento, apariciones en el histórico propio
+    del escáner de ballenas y presencia multi-cadena.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # el dossier hace varias llamadas externas: cachear 5 min
+
+    def get(self, request):
+        from core.application.use_cases.wallet_dossier import WalletDossierUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        if not address:
+            return Response({"error": "Falta el parámetro address."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"wallet_dossier:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = WalletDossierUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class WalletOverviewView(APIView):
+    """
+    GET /api/blockchain/wallet/?chain=ethereum&address=0x... — Retrato on-chain de
+    una dirección: saldo nativo y su valor en USD, cartera de tokens ERC-20
+    valorada, valor total y transacciones recientes (vía Blockscout, datos reales).
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120  # segundos — los saldos cambian poco entre bloques
+
+    def get(self, request):
+        from core.application.use_cases.get_wallet_overview import GetWalletOverviewUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+
+        cache_key = f"wallet_overview:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetWalletOverviewUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class WalletBalanceHistoryView(APIView):
+    """
+    GET /api/blockchain/wallet/history/?chain=ethereum&address=0x... — Serie diaria
+    del saldo nativo de una dirección (curva de patrimonio on-chain) vía Blockscout.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — la serie diaria cambia poco
+
+    def get(self, request):
+        from core.application.use_cases.get_wallet_overview import GetWalletBalanceHistoryUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        cache_key = f"wallet_history:{chain}:{address.lower()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetWalletBalanceHistoryUseCase().execute(chain=chain, address=address)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class ChainHealthView(APIView):
+    """
+    GET /api/blockchain/health/?chain=ethereum — Salud de red y rastreador de gas:
+    precios de gas (Gwei), utilización, tiempo de bloque y precio del nativo, con
+    aviso de gas barato/normal/caro específico por red (vía Blockscout).
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 60  # segundos — el gas cambia bloque a bloque
+
+    def get(self, request):
+        from core.application.use_cases.get_chain_health import GetChainHealthUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        cache_key = f"chain_health:{chain}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetChainHealthUseCase().execute(chain=chain)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class OnChainRiskScoreView(APIView):
+    """
+    GET /api/blockchain/forensics/risk/?chain=ethereum&address=0x.. — Puntuación
+    de riesgo 0-100 de una dirección (exposición a etiquetas de sanciones/mixers/
+    scams + patrones on-chain), con desglose de factores.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import AddressRiskUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = AddressRiskUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainApprovalsView(APIView):
+    """
+    GET /api/blockchain/forensics/approvals/?chain=ethereum&address=0x.. —
+    Aprobaciones ERC-20 vivas de una dirección y su peligrosidad (ilimitadas a
+    contratos sin verificar = vector de drenaje).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import ApprovalsUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = ApprovalsUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainWashTradingView(APIView):
+    """
+    GET /api/blockchain/forensics/wash-trading/?chain=ethereum&token=0x.. —
+    Detección de wash trading (volumen artificial): round-trips entre las mismas
+    direcciones, concentración de volumen y pares sospechosos.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import WashTradingUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        token = (request.query_params.get("token") or "").strip()
+        result = WashTradingUseCase().execute(chain, token)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainAddressDossierView(APIView):
+    """
+    GET /api/blockchain/forensics/dossier/?chain=ethereum&address=0x.. — Dossier
+    forense unificado de una dirección: riesgo, conducta, aprobaciones, entidad y
+    flujos con un veredicto global. Alimenta el informe imprimible.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_address_dossier import AddressDossierUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = AddressDossierUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainTokenSafetyView(APIView):
+    """
+    GET /api/blockchain/forensics/token-safety/?chain=ethereum&token=0x.. —
+    Due diligence de un token: riesgo de rug/honeypot a nivel de contrato
+    (verificación, proxy, poderes del propietario) + concentración de tenedores.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import TokenSafetyUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        token = (request.query_params.get("token") or "").strip()
+        result = TokenSafetyUseCase().execute(chain, token)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainEntityGraphView(APIView):
+    """
+    GET /api/blockchain/forensics/entity/?chain=ethereum&address=0x.. — Grafo de
+    entidad: agrupa direcciones que se mueven junto a la raíz (co-movimiento).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_risk import EntityGraphUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = EntityGraphUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainFlowTraceView(APIView):
+    """
+    GET /api/blockchain/forensics/flow/?chain=ethereum&address=0x..&depth=2 —
+    Árbol de flujo saliente de valor nativo desde una dirección (sigue el dinero),
+    con detección de patrones (fan-out, peel chain).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_forensics import TraceFlowUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        try:
+            depth = int(request.query_params.get("depth", 2))
+        except (TypeError, ValueError):
+            depth = 2
+        result = TraceFlowUseCase().execute(chain, address, depth=depth)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainConcentrationView(APIView):
+    """
+    GET /api/blockchain/forensics/concentration/?chain=ethereum&token=0x.. —
+    Radiografía de concentración de tenedores de un token (Gini, HHI, cuotas top-N).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_forensics import TokenConcentrationUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        token = (request.query_params.get("token") or "").strip()
+        result = TokenConcentrationUseCase().execute(chain, token)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class OnChainFingerprintView(APIView):
+    """
+    GET /api/blockchain/forensics/fingerprint/?chain=ethereum&address=0x.. —
+    Huella conductual de una dirección: heatmap hora×día, cadencia, diversidad de
+    contrapartes y arquetipo.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.get_onchain_forensics import WalletFingerprintUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        address = (request.query_params.get("address") or "").strip()
+        result = WalletFingerprintUseCase().execute(chain, address)
+        code = status.HTTP_400_BAD_REQUEST if result.get("error") else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class WhaleMovementsView(APIView):
+    """
+    GET /api/blockchain/movements/?chain=ethereum&min_usd=100000&limit=25 — Mayores
+    movimientos on-chain recientes (transferencias nativas + de tokens ERC-20)
+    ordenados por valor en USD, con etiquetas de entidad cuando se conocen.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 60  # segundos
+
+    def get(self, request):
+        from core.application.use_cases.get_whale_movements import GetWhaleMovementsUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        try:
+            min_usd = float(request.query_params.get("min_usd", 100000))
+        except (TypeError, ValueError):
+            min_usd = 100000.0
+        try:
+            limit = min(int(request.query_params.get("limit", 25)), 100)
+        except (TypeError, ValueError):
+            limit = 25
+
+        cache_key = f"whale_movements:{chain}:{int(min_usd)}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetWhaleMovementsUseCase().execute(chain=chain, min_usd=min_usd, limit=limit)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class OnChainMarketPulseView(APIView):
+    """
+    GET /api/blockchain/pulse/?hours=24 — Pulso on-chain de mercado: flujo neto
+    a/desde exchanges agregado de TODAS las redes escaneadas, con veredicto,
+    desglose por cadena/exchange/activo y serie temporal. Vista institucional.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 180
+
+    def get(self, request):
+        from core.application.use_cases.onchain_market_pulse import OnChainMarketPulseUseCase
+
+        try:
+            hours = min(max(int(request.query_params.get("hours", 24)), 1), 168)
+        except (TypeError, ValueError):
+            hours = 24
+        cache_key = f"onchain_pulse:{hours}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = OnChainMarketPulseUseCase().execute(hours=hours)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class OnChainPressureView(APIView):
+    """
+    GET /api/blockchain/pressure/?chain=ethereum&hours=24 — Indicador de presión
+    on-chain: flujo de depósitos (presión vendedora potencial) vs retiradas
+    (acumulación) de exchanges sobre el histórico propio de grandes movimientos,
+    con puntuación en [-1, +1], serie temporal y mayores movimientos.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120  # segundos
+
+    def get(self, request):
+        from core.application.use_cases.onchain_pressure import OnChainPressureUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        try:
+            hours = min(max(int(request.query_params.get("hours", 24)), 1), 720)
+        except (TypeError, ValueError):
+            hours = 24
+
+        cache_key = f"onchain_pressure:{chain}:{hours}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = OnChainPressureUseCase().execute(chain=chain, hours=hours)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class SmartMoneyView(APIView):
+    """
+    GET /api/blockchain/smartmoney/?chain=ethereum&days=30 — Radar de dinero
+    inteligente: direcciones cuyos depósitos/retiradas de exchanges anticiparon
+    el precio (acierto y retorno capturado ponderados por tamaño).
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — evalúa precios por cada activo implicado
+
+    def get(self, request):
+        from core.application.use_cases.get_smart_money import GetSmartMoneyUseCase
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        try:
+            days = min(max(int(request.query_params.get("days", 30)), 1), 90)
+        except (TypeError, ValueError):
+            days = 30
+
+        cache_key = f"smart_money:{chain}:{days}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetSmartMoneyUseCase().execute(chain=chain, days=days)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class AddressWatchlistView(APIView):
+    """
+    GET  /api/blockchain/watchlist/ — Direcciones on-chain vigiladas del usuario,
+         con su saldo y las alertas recientes de movimientos.
+    POST /api/blockchain/watchlist/ — Añade una dirección.
+         Body: {"chain": "ethereum", "address": "0x...", "label"?: str, "threshold_pct"?: float}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.watchlist import WatchlistUseCase
+
+        return Response(WatchlistUseCase().execute(owner=request.user), status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from core.application.use_cases.watchlist import AddWatchedAddressUseCase
+
+        result = AddWatchedAddressUseCase().execute(
+            owner=request.user,
+            chain=request.data.get("chain", "ethereum"),
+            address=request.data.get("address", ""),
+            label=request.data.get("label", ""),
+            threshold_pct=request.data.get("threshold_pct", 5.0),
+        )
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class AddressWatchlistItemView(APIView):
+    """DELETE /api/blockchain/watchlist/<id>/ — Elimina una dirección vigilada."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, watch_id: int):
+        from core.application.use_cases.watchlist import RemoveWatchedAddressUseCase
+
+        result = RemoveWatchedAddressUseCase().execute(owner=request.user, watch_id=watch_id)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class NotificationsView(APIView):
+    """
+    GET  /api/notifications/ — Feed unificado de notificaciones del usuario
+         (señales, ballenas, predicciones resueltas, alertas de precio) + nº de
+         no leídas.
+    POST /api/notifications/seen/ — Marca todas como leídas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.notifications import NotificationsFeedUseCase
+
+        try:
+            limit = min(int(request.query_params.get("limit", 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+        return Response(
+            NotificationsFeedUseCase().execute(owner=request.user, limit=limit),
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationsSeenView(APIView):
+    """POST /api/notifications/seen/ — Marca todas las notificaciones como leídas."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.application.use_cases.notifications import MarkNotificationsSeenUseCase
+
+        return Response(
+            MarkNotificationsSeenUseCase().execute(owner=request.user),
+            status=status.HTTP_200_OK,
+        )
+
+
+class ConfluenceView(APIView):
+    """
+    GET /api/analysis/confluence/?symbol=BTC — Motor de confluencia 360°:
+    fusión de señal técnica, ML, presión on-chain y sentimiento de noticias
+    con pesos aprendidos del acierto histórico real de cada fuente.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600   # las fuentes de fondo cambian despacio
+
+    def get(self, request):
+        from core.application.use_cases.get_confluence import GetConfluenceUseCase
+
+        symbol = (request.query_params.get("symbol") or "BTC").strip().upper()
+        cache_key = f"confluence:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = GetConfluenceUseCase().execute(symbol)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class OhlcvCoverageView(APIView):
+    """
+    GET /api/market/history/?symbol=BTC&interval=1d — Cobertura del almacén
+    histórico OHLCV propio: velas almacenadas, primera/última y huecos.
+    POST /api/market/history/backfill/ (solo staff) dispara la retro-carga.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.ohlcv_store import coverage
+
+        symbol = (request.query_params.get("symbol") or "BTC").strip().upper()
+        interval = (request.query_params.get("interval") or "1d").strip()
+        return Response(coverage(symbol, interval), status=status.HTTP_200_OK)
+
+
+class OhlcvBackfillView(APIView):
+    """POST /api/market/history/backfill/ — Retro-carga del histórico (staff)."""
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        from core.tasks import backfill_ohlcv, dispatch_task
+
+        symbol = (request.data.get("symbol") or "").strip().upper()
+        interval = (request.data.get("interval") or "1d").strip()
+        try:
+            target = min(int(request.data.get("target_candles", 3000)), 20000)
+        except (TypeError, ValueError):
+            target = 3000
+        if not symbol:
+            return Response({"error": "Falta symbol."}, status=status.HTTP_400_BAD_REQUEST)
+        dispatch_task(backfill_ohlcv, symbol=symbol, interval=interval, target_candles=target)
+        return Response({"status": "dispatched", "symbol": symbol,
+                         "interval": interval, "target_candles": target},
+                        status=status.HTTP_202_ACCEPTED)
+
+
+class PushPublicKeyView(APIView):
+    """GET /api/push/public-key/ — Clave pública VAPID para suscribirse a push."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.push.web_push import is_configured, vapid_public_key
+        return Response({"public_key": vapid_public_key(), "enabled": is_configured()},
+                        status=status.HTTP_200_OK)
+
+
+class PushSubscriptionView(APIView):
+    """
+    POST /api/push/subscribe/   — Guarda la suscripción Web Push del navegador.
+      Body: {"endpoint", "keys": {"p256dh", "auth"}}.
+    DELETE /api/push/subscribe/ — Elimina la suscripción por endpoint.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from core.infrastructure.persistence.models import PushSubscription
+
+        endpoint = (request.data.get("endpoint") or "").strip()
+        keys = request.data.get("keys") or {}
+        p256dh, auth = keys.get("p256dh"), keys.get("auth")
+        if not endpoint or not p256dh or not auth:
+            return Response({"error": "Suscripción incompleta (endpoint + keys)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        PushSubscription.objects.update_or_create(
+            endpoint=endpoint,
+            defaults={"owner": request.user, "p256dh": p256dh, "auth": auth,
+                      "user_agent": (request.META.get("HTTP_USER_AGENT") or "")[:300]},
+        )
+        return Response({"status": "subscribed"}, status=status.HTTP_201_CREATED)
+
+    def delete(self, request):
+        from core.infrastructure.persistence.models import PushSubscription
+
+        endpoint = (request.data.get("endpoint") or "").strip()
+        PushSubscription.objects.filter(owner=request.user, endpoint=endpoint).delete()
+        return Response({"status": "unsubscribed"}, status=status.HTTP_200_OK)
+
+
+class PortfolioExportView(APIView):
+    """
+    GET /api/portfolio/export/?type=positions|risk — Descarga un informe CSV
+    del usuario (posiciones o riesgo agregado). Formato universal para análisis
+    posterior en Excel/Python/R.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from core.application.use_cases.export_reports import EXPORTERS
+
+        kind = (request.query_params.get("type") or "positions").strip().lower()
+        entry = EXPORTERS.get(kind)
+        if entry is None:
+            return Response({"error": f"Tipo '{kind}' no soportado. Usa: {list(EXPORTERS)}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        label, exporter = entry
+        content = exporter(request.user)
+        stamp = timezone.now().strftime("%Y%m%d")
+        resp = HttpResponse(content, content_type="text/csv; charset=utf-8")
+        resp["Content-Disposition"] = f'attachment; filename="cryptoworld_{label}_{stamp}.csv"'
+        return resp
+
+
+class NewsGlobeView(APIView):
+    """
+    GET /api/news/globe/ — Noticias importantes clasificadas por región del
+    mundo y categoría de evento (política monetaria, conflicto, salida a
+    bolsa, regulación, hackeo, adopción, macro) para el globo terráqueo 3D.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300
+
+    def get(self, request):
+        from core.application.use_cases.get_news_globe import GetNewsGlobeUseCase
+
+        cached = cache.get("news_globe")
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = GetNewsGlobeUseCase().execute()
+        if not result.get("error"):
+            cache.set("news_globe", result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
 
 class NewsFeedView(APIView):
     """
@@ -1145,6 +1896,94 @@ class SignalsDashboardView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class MtfConfluenceView(APIView):
+    """
+    GET /api/analysis/mtf/?asset_symbol=BTC — Confluencia multi-marco temporal:
+    señales multi-indicador en 15m/1h/4h/1d con puntuación de alineación
+    ponderada (los marcos altos pesan más) y % de acuerdo entre marcos.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # segundos — calcula 4 marcos, se cachea 5 min
+
+    def get(self, request):
+        from core.application.use_cases.get_mtf_confluence import GetMtfConfluenceUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"mtf_confluence:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetMtfConfluenceUseCase().execute(asset_symbol=symbol)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class PriceStructureView(APIView):
+    """
+    GET /api/analysis/levels/?asset_symbol=BTC&interval=1h — Estructura de
+    precio: niveles de soporte/resistencia por agrupación de pivotes (fuerza =
+    nº de toques) y divergencias RSI/precio recientes.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # segundos
+
+    def get(self, request):
+        from core.application.use_cases.get_price_structure import GetPriceStructureUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        interval = (request.query_params.get("interval") or "1h").strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"price_structure:{symbol}:{interval}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetPriceStructureUseCase().execute(asset_symbol=symbol, interval=interval)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class QuantSnapshotView(APIView):
+    """
+    GET /api/analysis/quant/?asset_symbol=BTC&interval=1h — Terminal cuantitativa
+    institucional: volatilidad realizada anualizada, ATR, retornos multi-horizonte
+    con z-score, Sharpe/Sortino del activo, drawdown, posición en el rango, beta y
+    correlación frente a BTC, volumen relativo y clasificador de régimen. Es la
+    fotografía cuantitativa densa (estilo Bloomberg) del estado del activo.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 180  # segundos — datos derivados de OHLCV, se cachea 3 min
+
+    def get(self, request):
+        from core.application.use_cases.get_quant_snapshot import GetQuantSnapshotUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        interval = (request.query_params.get("interval") or "1h").strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"quant_snapshot:{symbol}:{interval}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetQuantSnapshotUseCase().execute(asset_symbol=symbol, interval=interval)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class PredictPriceView(APIView):
     """
     POST /api/analysis/predict/ — Predicción ML de dirección de precio.
@@ -1162,9 +2001,52 @@ class PredictPriceView(APIView):
                 asset_symbol=v["asset_symbol"],
                 interval=v.get("interval", "1h"),
                 horizon=v.get("horizon", 5),
-            )
+            ),
+            owner=request.user,
         )
         return Response(result, status=status.HTTP_200_OK)
+
+
+class PredictionTrackRecordView(APIView):
+    """
+    GET /api/analysis/predictions/ — Rendimiento realizado (en vivo) de las
+    predicciones del usuario: precisión global, segmentada por veredicto del
+    modelo y registros recientes con su estado (acierto/fallo/pendiente).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.track_predictions import PredictionTrackRecordUseCase
+
+        try:
+            limit = min(int(request.query_params.get("limit", 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+        return Response(
+            PredictionTrackRecordUseCase().execute(owner=request.user, limit=limit),
+            status=status.HTTP_200_OK,
+        )
+
+
+class PredictionMonitoringView(APIView):
+    """
+    GET /api/analysis/predictions/monitoring/ — Monitorización de *drift* del
+    modelo: precisión prometida (OOS) vs realizada en vivo, serie temporal de
+    precisión y estado de alerta (ok/watch/drift) para disparar reoptimización.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.track_predictions import PredictionMonitoringUseCase
+
+        try:
+            buckets = min(max(int(request.query_params.get("buckets", 8)), 2), 24)
+        except (TypeError, ValueError):
+            buckets = 8
+        return Response(
+            PredictionMonitoringUseCase().execute(owner=request.user, buckets=buckets),
+            status=status.HTTP_200_OK,
+        )
 
 
 class DetectPatternsView(APIView):
@@ -1207,8 +2089,772 @@ class RunBacktestView(APIView):
                 interval=v.get("interval", "1h"),
                 limit=v.get("limit", 500),
                 initial_capital=v.get("initial_capital", 10000.0),
+                commission_bps=v.get("commission_bps", 0.0),
+                slippage_bps=v.get("slippage_bps", 0.0),
+                stop_loss_pct=v.get("stop_loss_pct"),
+                take_profit_pct=v.get("take_profit_pct"),
             )
         )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class RobustBacktestLaunchView(APIView):
+    """
+    POST /api/analysis/backtest/robust/ — Lanza la suite de robustez como
+    tarea Celery (cientos de backtests) y devuelve un job_id sin bloquear.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "robust_backtest"
+
+    def post(self, request):
+        serializer = RobustBacktestRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import run_robust_backtest as task
+
+        v = serializer.validated_data
+        async_result = task.delay(
+            asset_symbol=v["asset_symbol"],
+            strategy=v["strategy"],
+            interval=v.get("interval", "1d"),
+            limit=v.get("limit", 365),
+            initial_capital=v.get("initial_capital", 10000.0),
+            objective=v.get("objective", "sharpe"),
+            preset=v.get("preset", "balanced"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/analysis/backtest/robust/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class RobustBacktestCompareView(APIView):
+    """
+    POST /api/analysis/backtest/robust/compare/ — Lanza la comparación de las
+    5 estrategias como tarea Celery y devuelve un job_id. El resultado se
+    consulta con el mismo endpoint de estado (.../robust/<job_id>/).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = RobustCompareRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import compare_strategies_robustness as task
+
+        v = serializer.validated_data
+        async_result = task.delay(
+            asset_symbol=v["asset_symbol"],
+            interval=v.get("interval", "1d"),
+            objective=v.get("objective", "sharpe"),
+            preset=v.get("preset", "fast"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/analysis/backtest/robust/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class RobustBacktestStatusView(APIView):
+    """
+    GET /api/analysis/backtest/robust/<job_id>/ — Estado/resultado del job.
+
+    status: PENDING | STARTED | SUCCESS | FAILURE. Con SUCCESS incluye el
+    informe completo en `result`.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from celery.result import AsyncResult
+        from config.celery import app
+
+        res = AsyncResult(job_id, app=app)
+        payload = {"job_id": job_id, "status": res.state}
+
+        if res.successful():
+            payload["result"] = res.result
+        elif res.failed():
+            payload["error"] = "La suite de robustez falló durante la ejecución."
+
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class StrategyGenerateLaunchView(APIView):
+    """
+    POST /api/strategies/generate/ — Lanza el generador genético de estrategias
+    como tarea Celery (evolución + gating de robustez, cientos de backtests) y
+    devuelve un job_id sin bloquear.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "strategy_generate"
+
+    def post(self, request):
+        serializer = StrategyGenerateRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import generate_strategies as task
+
+        v = serializer.validated_data
+        async_result = task.delay(
+            asset_symbol=v["asset_symbol"],
+            interval=v.get("interval", "1d"),
+            limit=v.get("limit", 730),
+            initial_capital=v.get("initial_capital", 10000.0),
+            preset=v.get("preset", "balanced"),
+            optimizer=v.get("optimizer", "single"),
+            seed=v.get("seed"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/strategies/generate/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class StrategyGenerateStatusView(APIView):
+    """
+    GET /api/strategies/generate/<job_id>/ — Estado/resultado del generador.
+
+    status: PENDING | STARTED | SUCCESS | FAILURE. Con SUCCESS incluye el
+    informe completo con el ranking de finalistas en `result`. Mientras corre,
+    `progress` trae la telemetría en vivo de la evolución (convergencia por
+    generación + curvas de equity de los mejores candidatos + fase de gating),
+    publicada en cache por la tarea.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from celery.result import AsyncResult
+        from config.celery import app
+
+        res = AsyncResult(job_id, app=app)
+        payload = {"job_id": job_id, "status": res.state}
+
+        if res.successful():
+            payload["result"] = res.result
+        elif res.failed():
+            payload["error"] = "El generador de estrategias falló durante la ejecución."
+        else:
+            progress = cache.get(f"strategy_gen_progress:{job_id}")
+            if progress is not None:
+                payload["progress"] = progress
+
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class SpecRobustnessLaunchView(APIView):
+    """
+    POST /api/strategies/robustness/ — Análisis profundo de robustez de una
+    estrategia generada (su StrategySpec). Suite completa + validación cruzada
+    multi-activo, como tarea Celery; devuelve un job_id.
+
+    Cuerpo: spec (objeto) o strategy_id (de una guardada) + asset_symbol.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "strategy_robustness"
+
+    def post(self, request):
+        serializer = SpecRobustnessRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        v = serializer.validated_data
+        spec = v.get("spec")
+        if spec is None:
+            from core.infrastructure.persistence.models import StrategyDefinition
+            obj = StrategyDefinition.objects.filter(id=v["strategy_id"]).first()
+            if obj is None:
+                return Response({"error": "Estrategia no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+            spec = obj.spec
+
+        from core.domain.services.strategy_spec import validate_spec
+        if not validate_spec(spec):
+            return Response({"error": "El spec no es una estrategia válida."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from core.tasks import analyze_spec_robustness as task
+
+        async_result = task.delay(
+            spec=spec,
+            asset_symbol=v["asset_symbol"],
+            interval=v.get("interval", "1d"),
+            limit=v.get("limit", 365),
+            preset=v.get("preset", "balanced"),
+        )
+        return Response(
+            {
+                "job_id": async_result.id,
+                "status": async_result.state,
+                "poll_url": f"/api/strategies/robustness/{async_result.id}/",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class SpecRobustnessStatusView(APIView):
+    """GET /api/strategies/robustness/<job_id>/ — Estado/resultado del análisis."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id: str):
+        from celery.result import AsyncResult
+        from config.celery import app
+
+        res = AsyncResult(job_id, app=app)
+        payload = {"job_id": job_id, "status": res.state}
+        if res.successful():
+            payload["result"] = res.result
+        elif res.failed():
+            payload["error"] = "El análisis de robustez falló durante la ejecución."
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class SavedStrategiesListView(APIView):
+    """
+    GET /api/strategies/ — Historial de estrategias generadas que pasaron el
+    gating de robustez (StrategyDefinition), las más recientes primero.
+
+    Filtros opcionales: ?asset_symbol=BTC, ?interval=1d, ?limit=50.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.persistence.models import StrategyDefinition
+
+        qs = StrategyDefinition.objects.select_related("asset").filter(passed_gating=True)
+        symbol = request.query_params.get("asset_symbol")
+        interval = request.query_params.get("interval")
+        if symbol:
+            qs = qs.filter(asset__symbol=symbol.upper())
+        if interval:
+            qs = qs.filter(interval=interval)
+
+        try:
+            limit = min(int(request.query_params.get("limit", 50)), 200)
+        except (TypeError, ValueError):
+            limit = 50
+
+        qs = qs.order_by("-created_at")[:limit]
+        items = [
+            {
+                "id": s.id,
+                "asset_symbol": s.asset.symbol if s.asset else None,
+                "name": s.name,
+                "spec": s.spec,
+                "spec_hash": s.spec_hash,
+                "interval": s.interval,
+                "rank": s.rank,
+                "fitness": s.fitness,
+                "robustness_metrics": s.robustness_metrics,
+                "gating_checks": s.gating_checks,
+                "holdout_metrics": s.holdout_metrics,
+                "status": s.status,
+                "is_monitored": s.is_monitored,
+                "last_signal": s.last_signal,
+                "last_signal_at": s.last_signal_at.isoformat() if s.last_signal_at else None,
+                "generated_at": s.generated_at.isoformat() if s.generated_at else None,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in qs
+        ]
+        return Response({"count": len(items), "results": items}, status=status.HTTP_200_OK)
+
+
+class StrategyCompareView(APIView):
+    """
+    GET /api/strategies/compare/?ids=1,2,3 — Comparador cara a cara de 2-4
+    estrategias guardadas: evidencia almacenada, re-ejecución fresca (equity
+    normalizada), correlación entre sus retornos y veredictos por dimensión.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.compare_strategies import (
+            MAX_IDS, MIN_IDS, CompareStrategiesUseCase,
+        )
+
+        raw = (request.query_params.get("ids") or "").strip()
+        try:
+            ids = [int(x) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            ids = []
+        if not (MIN_IDS <= len(set(ids)) <= MAX_IDS):
+            return Response(
+                {"error": f"Indica entre {MIN_IDS} y {MAX_IDS} ids separados por comas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result = CompareStrategiesUseCase().execute(ids)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class StrategyDossierView(APIView):
+    """
+    GET /api/strategies/<id>/dossier/ — Dossier de auditoría de una estrategia
+    guardada: identidad + ADN, evidencia de robustez original (gating/holdout),
+    análisis fresco sobre datos actuales (equity + matriz walk-forward) y track
+    record real del usuario. Alimenta el documento imprimible.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, strategy_id: int):
+        from core.application.use_cases.get_strategy_dossier import GetStrategyDossierUseCase
+
+        dossier = GetStrategyDossierUseCase().execute(strategy_id, owner=request.user)
+        if dossier.get("error"):
+            return Response(dossier, status=status.HTTP_404_NOT_FOUND)
+        return Response(dossier, status=status.HTTP_200_OK)
+
+
+class StrategyMonitorView(APIView):
+    """
+    POST /api/strategies/<id>/monitor/ — Activa o desactiva la monitorización en
+    vivo de una estrategia generada. Body: {"active": true|false}. Al activar,
+    el usuario pasa a ser su dueño y recibirá notificaciones de cambio de señal.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, strategy_id: int):
+        from core.infrastructure.persistence.models import StrategyDefinition
+
+        obj = StrategyDefinition.objects.filter(id=strategy_id).first()
+        if obj is None:
+            return Response({"error": "Estrategia no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        active = bool(request.data.get("active", True))
+        obj.is_monitored = active
+        obj.owner = request.user if active else None
+        obj.save(update_fields=["is_monitored", "owner", "updated_at"])
+        return Response({"strategy_id": obj.id, "is_monitored": obj.is_monitored}, status=status.HTTP_200_OK)
+
+
+class StrategySignalView(APIView):
+    """
+    GET /api/strategies/<id>/signal/ — Señal actual (BUY/SELL/HOLD) de la
+    estrategia sobre los datos más recientes, con el estado de cada condición.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, strategy_id: int):
+        from core.application.use_cases.monitor_strategies import StrategySignalUseCase
+
+        result = StrategySignalUseCase().execute(strategy_id)
+        code = status.HTTP_404_NOT_FOUND if result.get("error") == "Estrategia no encontrada." else status.HTTP_200_OK
+        return Response(result, status=code)
+
+
+class RecentSignalEventsView(APIView):
+    """
+    GET /api/strategies/signals/recent/ — Historial reciente de señales disparadas
+    por las estrategias monitorizadas del usuario (las más recientes primero).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.infrastructure.persistence.models import StrategySignalEvent
+
+        try:
+            limit = min(int(request.query_params.get("limit", 30)), 100)
+        except (TypeError, ValueError):
+            limit = 30
+
+        qs = (
+            StrategySignalEvent.objects
+            .select_related("strategy", "strategy__asset")
+            .filter(owner=request.user)
+            .order_by("-created_at")[:limit]
+        )
+        events = [
+            {
+                "id": e.id,
+                "strategy_id": e.strategy_id,
+                "asset_symbol": e.strategy.asset.symbol if e.strategy.asset else None,
+                "name": e.strategy.name,
+                "signal": e.signal,
+                "price": e.price,
+                "notified": e.notified,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in qs
+        ]
+        return Response({"count": len(events), "results": events}, status=status.HTTP_200_OK)
+
+
+class PaperTradingView(APIView):
+    """
+    GET  /api/strategies/paper/ — Carteras de paper trading del usuario.
+    POST /api/strategies/paper/ — Lanza una cartera virtual que sigue una
+         estrategia generada. Body: {"strategy_id": int, "initial_capital"?: float}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.paper_trading import PaperTradingListUseCase
+
+        return Response(
+            PaperTradingListUseCase().execute(owner=request.user), status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        from core.infrastructure.persistence.models import PaperTradingAccount, StrategyDefinition
+
+        strategy_id = request.data.get("strategy_id")
+        if not strategy_id:
+            return Response({"error": "Falta strategy_id."}, status=status.HTTP_400_BAD_REQUEST)
+        strat = StrategyDefinition.objects.select_related("asset").filter(id=strategy_id).first()
+        if strat is None:
+            return Response({"error": "Estrategia no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        if not strat.asset:
+            return Response({"error": "La estrategia no tiene activo asociado."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            capital = float(request.data.get("initial_capital", 10000.0))
+        except (TypeError, ValueError):
+            capital = 10000.0
+        capital = min(max(capital, 100.0), 1_000_000.0)
+
+        # Reactivar si el usuario ya seguía esta estrategia (evita duplicados).
+        existing = PaperTradingAccount.objects.filter(
+            owner=request.user, strategy=strat, is_active=True,
+        ).first()
+        if existing:
+            from core.application.use_cases.paper_trading import _serialize_account
+            return Response(_serialize_account(existing), status=status.HTTP_200_OK)
+
+        acc = PaperTradingAccount.objects.create(
+            strategy=strat, owner=request.user,
+            asset_symbol=strat.asset.symbol, interval=strat.interval,
+            initial_capital=capital, cash=capital,
+        )
+        from core.application.use_cases.paper_trading import _serialize_account
+        return Response(_serialize_account(acc), status=status.HTTP_201_CREATED)
+
+
+class PaperTradingDetailView(APIView):
+    """
+    GET    /api/strategies/paper/<id>/ — Detalle de una cartera con su historial.
+    DELETE /api/strategies/paper/<id>/ — Detiene la cartera (deja de operar).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, account_id: int):
+        from core.application.use_cases.paper_trading import PaperTradingDetailUseCase
+
+        data = PaperTradingDetailUseCase().execute(owner=request.user, account_id=account_id)
+        if data is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(data, status=status.HTTP_200_OK)
+
+    def delete(self, request, account_id: int):
+        from core.infrastructure.persistence.models import PaperTradingAccount
+
+        acc = PaperTradingAccount.objects.filter(id=account_id, owner=request.user).first()
+        if acc is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        acc.is_active = False
+        acc.save(update_fields=["is_active", "updated_at"])
+        return Response({"id": acc.id, "is_active": False}, status=status.HTTP_200_OK)
+
+
+class StrategyPortfolioView(APIView):
+    """
+    GET /api/strategies/portfolio/?top=5 — Análisis de cartera de las estrategias
+    campeonas: matriz de correlación entre sus retornos diarios, correlación
+    media y métricas de la cartera equiponderada (equity, retorno, drawdown,
+    Sharpe) sobre la ventana común de datos.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 900  # segundos — re-ejecuta hasta 6 backtests
+
+    def get(self, request):
+        from core.application.use_cases.strategy_portfolio import StrategyPortfolioUseCase
+
+        try:
+            top = min(max(int(request.query_params.get("top", 5)), 2), 6)
+        except (TypeError, ValueError):
+            top = 5
+
+        cache_key = f"strategy_portfolio:{top}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = StrategyPortfolioUseCase().execute(top_n=top)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_200_OK)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class PaperLiveOrdersView(APIView):
+    """
+    GET /api/strategies/paper/<id>/live/orders/ — Auditoría de las órdenes
+    reales espejadas por la promoción (enviadas y fallidas) con el P&L real
+    estimado frente al del paper.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, account_id: int):
+        from core.application.use_cases.paper_trading import LiveOrdersUseCase
+
+        result = LiveOrdersUseCase().execute(owner=request.user, account_id=account_id)
+        if result is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class PaperLivePromotionView(APIView):
+    """
+    POST /api/strategies/paper/<id>/live/ — Activa/desactiva la ejecución REAL
+    de una cartera de paper trading. Body: {"enable": bool, "connection_id"?: int,
+    "cap_usd"?: float}. La conexión debe pertenecer al usuario; el tope de
+    nocional por orden se limita a [10, 10000] USD. Al activar se limpia el
+    kill-switch anterior.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, account_id: int):
+        from core.infrastructure.persistence.models import ExchangeConnection, PaperTradingAccount
+
+        acc = PaperTradingAccount.objects.filter(id=account_id, owner=request.user).first()
+        if acc is None:
+            return Response({"error": "Cartera no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        enable = bool(request.data.get("enable", False))
+        if not enable:
+            acc.live_enabled = False
+            acc.save(update_fields=["live_enabled", "updated_at"])
+            return Response({"id": acc.id, "live_enabled": False}, status=status.HTTP_200_OK)
+
+        connection = ExchangeConnection.objects.filter(
+            id=request.data.get("connection_id"), owner=request.user, is_active=True,
+        ).first()
+        if connection is None:
+            return Response({"error": "Conexión de exchange no encontrada: conéctala primero en Trading."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            cap = float(request.data.get("cap_usd", 100.0))
+        except (TypeError, ValueError):
+            cap = 100.0
+        cap = min(max(cap, 10.0), 10_000.0)
+
+        acc.live_connection = connection
+        acc.live_enabled = True
+        acc.live_cap_usd = cap
+        acc.live_error = ""
+        acc.live_disabled_at = None
+        acc.save(update_fields=[
+            "live_connection", "live_enabled", "live_cap_usd", "live_error",
+            "live_disabled_at", "updated_at",
+        ])
+        return Response({
+            "id": acc.id, "live_enabled": True, "live_cap_usd": cap,
+            "live_is_testnet": connection.is_testnet,
+        }, status=status.HTTP_200_OK)
+
+
+class BestStrategiesView(APIView):
+    """
+    GET /api/strategies/best/ — Mejor estrategia validada de cada activo (la
+    campeona por fitness), con su rendimiento en holdout y su track record en
+    vivo (paper trading del usuario). Filtro opcional: ?interval=1d.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.reoptimize_strategies import BestStrategiesUseCase
+
+        interval = request.query_params.get("interval")
+        return Response(
+            BestStrategiesUseCase().execute(owner=request.user, interval=interval),
+            status=status.HTTP_200_OK,
+        )
+
+
+class LiveRiskPolicyView(APIView):
+    """
+    GET/PUT /api/trading/risk-policy/ — Política de riesgo global de la
+    ejecución real (OMS): límite de pérdida diaria en USD y límite de
+    concentración por activo (% del libro). Ambos bloquean nuevas COMPRAS en
+    real (las ventas nunca se bloquean). Incluye el PnL realizado hoy.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.paper_trading import daily_live_realized_pnl
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        policy = LiveRiskPolicy.objects.filter(owner=request.user).first()
+        return Response({
+            "daily_loss_limit_usd": policy.daily_loss_limit_usd if policy else None,
+            "max_concentration_pct": policy.max_concentration_pct if policy else None,
+            "realized_today_usd": daily_live_realized_pnl(request.user),
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        from core.infrastructure.persistence.models import LiveRiskPolicy
+
+        defaults = {}
+        if "daily_loss_limit_usd" in request.data:
+            raw = request.data.get("daily_loss_limit_usd")
+            limit = None
+            if raw not in (None, "", 0, "0"):
+                try:
+                    limit = min(max(abs(float(raw)), 10.0), 100_000.0)
+                except (TypeError, ValueError):
+                    return Response({"error": "daily_loss_limit_usd debe ser numérico o null."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            defaults["daily_loss_limit_usd"] = limit
+        if "max_concentration_pct" in request.data:
+            raw = request.data.get("max_concentration_pct")
+            conc = None
+            if raw not in (None, "", 0, "0"):
+                try:
+                    conc = min(max(abs(float(raw)), 5.0), 100.0)
+                except (TypeError, ValueError):
+                    return Response({"error": "max_concentration_pct debe ser numérico o null."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            defaults["max_concentration_pct"] = conc
+
+        policy, _ = LiveRiskPolicy.objects.update_or_create(
+            owner=request.user, defaults=defaults,
+        )
+        return Response({
+            "daily_loss_limit_usd": policy.daily_loss_limit_usd,
+            "max_concentration_pct": policy.max_concentration_pct,
+        }, status=status.HTTP_200_OK)
+
+
+class TradingConnectionsView(APIView):
+    """
+    GET  /api/trading/connections/ — Conexiones de exchange del usuario (sin
+         credenciales: nunca se devuelven).
+    POST /api/trading/connections/ — Conecta un exchange. Body: {"exchange",
+         "api_key", "api_secret", "api_password"?, "is_testnet"?, "label"?}.
+         Se verifica contra el exchange antes de guardarse (cifrada).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.broker_trading import ListConnectionsUseCase
+
+        return Response(ListConnectionsUseCase().execute(owner=request.user), status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from core.application.use_cases.broker_trading import ConnectExchangeUseCase
+
+        result = ConnectExchangeUseCase().execute(
+            owner=request.user,
+            exchange=request.data.get("exchange", ""),
+            api_key=request.data.get("api_key", ""),
+            api_secret=request.data.get("api_secret", ""),
+            api_password=request.data.get("api_password", ""),
+            is_testnet=bool(request.data.get("is_testnet", True)),
+            label=request.data.get("label", ""),
+        )
+        if result.get("error"):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class TradingConnectionDetailView(APIView):
+    """DELETE /api/trading/connections/<id>/ — Desconecta el exchange."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import RemoveConnectionUseCase
+
+        result = RemoveConnectionUseCase().execute(owner=request.user, connection_id=connection_id)
+        if result.get("error"):
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class TradingBalanceView(APIView):
+    """GET /api/trading/connections/<id>/balance/ — Saldos de la conexión."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import GetBrokerBalanceUseCase
+
+        result = GetBrokerBalanceUseCase().execute(owner=request.user, connection_id=connection_id)
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class TradingOrdersView(APIView):
+    """
+    GET  /api/trading/connections/<id>/orders/?symbol= — Órdenes abiertas.
+    POST /api/trading/connections/<id>/orders/ — Lanza una orden manual.
+         Body: {"symbol": "BTC/USDT", "side": "buy|sell", "type": "market|limit",
+                "amount": float, "price"?: float}.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import OpenOrdersUseCase
+
+        result = OpenOrdersUseCase().execute(
+            owner=request.user, connection_id=connection_id,
+            symbol=request.query_params.get("symbol"),
+        )
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_200_OK)
+
+    def post(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import PlaceOrderUseCase
+
+        result = PlaceOrderUseCase().execute(
+            owner=request.user,
+            connection_id=connection_id,
+            symbol=request.data.get("symbol", ""),
+            side=request.data.get("side", ""),
+            order_type=request.data.get("type", ""),
+            amount=request.data.get("amount"),
+            price=request.data.get("price"),
+        )
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class TradingCancelOrderView(APIView):
+    """POST /api/trading/connections/<id>/orders/cancel/ — Cancela una orden.
+    Body: {"order_id", "symbol"}."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id: int):
+        from core.application.use_cases.broker_trading import CancelOrderUseCase
+
+        result = CancelOrderUseCase().execute(
+            owner=request.user, connection_id=connection_id,
+            order_id=str(request.data.get("order_id", "")),
+            symbol=request.data.get("symbol", ""),
+        )
+        if result.get("error"):
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in result["error"] else status.HTTP_400_BAD_REQUEST
+            return Response(result, status=code)
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -1297,6 +2943,28 @@ class AvailableStrategiesView(APIView):
 
 
 # ── Portfolio Views ────────────────────────────────────────────────
+
+class PortfolioRiskView(APIView):
+    """
+    GET /api/portfolio/risk/ — Riesgo agregado del libro completo del usuario:
+    exposición firmada por activo (posiciones manuales + paper + real), VaR/CVaR
+    1 día por simulación histórica y stress testing con los peores movimientos
+    realmente observados. Datos sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.portfolio_risk import PortfolioRiskUseCase
+
+        cache_key = f"portfolio_risk:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = PortfolioRiskUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
 
 class PortfolioView(APIView):
     """
@@ -1686,3 +3354,237 @@ class WatchlistItemView(APIView):
         if not deleted:
             return Response({"error": "El activo no está en la watchlist."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  Alertas cuantitativas (motor multi-métrica con disparo por flanco)
+# ════════════════════════════════════════════════════════════════════
+
+class QuantAlertListView(APIView):
+    """
+    GET  /api/quant-alerts/          — Lista las alertas cuantitativas del usuario.
+    GET  /api/quant-alerts/?catalog=1 — Incluye el catálogo de métricas.
+    POST /api/quant-alerts/          — Crea una alerta cuantitativa.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.manage_quant_alerts import (
+            ListQuantAlertsUseCase, metric_catalog,
+        )
+        payload = {"alerts": ListQuantAlertsUseCase().execute(request.user)}
+        if request.query_params.get("catalog"):
+            payload["metrics"] = metric_catalog()
+        return Response(payload, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        from core.application.use_cases.manage_quant_alerts import CreateQuantAlertUseCase
+        try:
+            alert = CreateQuantAlertUseCase().execute(request.user, request.data)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(alert, status=status.HTTP_201_CREATED)
+
+
+class QuantAlertDetailView(APIView):
+    """
+    PATCH  /api/quant-alerts/<id>/ — Actualiza (o activa/desactiva) una alerta.
+    DELETE /api/quant-alerts/<id>/ — Elimina una alerta.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, alert_id: int):
+        from core.application.use_cases.manage_quant_alerts import UpdateQuantAlertUseCase
+        try:
+            alert = UpdateQuantAlertUseCase().execute(request.user, alert_id, request.data)
+        except ValueError as exc:
+            code = status.HTTP_404_NOT_FOUND if "no encontrada" in str(exc) else status.HTTP_400_BAD_REQUEST
+            return Response({"error": str(exc)}, status=code)
+        return Response(alert, status=status.HTTP_200_OK)
+
+    def delete(self, request, alert_id: int):
+        from core.application.use_cases.manage_quant_alerts import DeleteQuantAlertUseCase
+        try:
+            DeleteQuantAlertUseCase().execute(request.user, alert_id)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class QuantAlertFiringsView(APIView):
+    """GET /api/quant-alerts/firings/ — Últimos disparos (feed del panel)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.manage_quant_alerts import ListQuantFiringsUseCase
+        try:
+            limit = int(request.query_params.get("limit", 30))
+        except (TypeError, ValueError):
+            limit = 30
+        mark_seen = request.query_params.get("mark_seen", "false").lower() == "true"
+        rows = ListQuantFiringsUseCase().execute(request.user, limit=limit, mark_seen=mark_seen)
+        return Response({"firings": rows}, status=status.HTTP_200_OK)
+
+
+class RiskAttributionView(APIView):
+    """
+    GET /api/portfolio/risk/attribution/ — Atribución del riesgo del libro:
+    reparto del riesgo de cola (CVaR 95%) por posición vía descomposición de
+    Euler y separación sistemática/idiosincrásica frente al factor de mercado
+    (BTC). Sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.risk_attribution import RiskAttributionUseCase
+
+        cache_key = f"risk_attribution:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = RiskAttributionUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class DerivativesView(APIView):
+    """
+    GET /api/analysis/derivatives/?asset_symbol=BTC — Microestructura del
+    perpetuo USDⓈ-M del activo: funding anualizado (con veredicto de
+    sobrecalentamiento), basis (contango/backwardation) e interés abierto
+    (contratos + nocional). Datos de Binance futuros.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120  # segundos — el funding cambia lento; 2 min es de sobra
+
+    def get(self, request):
+        from core.application.use_cases.get_derivatives import GetDerivativesUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"derivatives:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = GetDerivativesUseCase().execute(asset_symbol=symbol)
+        # Solo cacheamos respuestas con datos; los fallos se reintentan enseguida.
+        if result.get("available"):
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class MarketRegimeView(APIView):
+    """
+    GET /api/market/regime/ — Correlaciones cross-asset de la cesta (top por
+    capitalización) y clasificador de régimen de mercado (risk-on / risk-off /
+    rotación / neutral) combinando correlación media, tendencia de BTC y
+    amplitud. Sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300  # segundos — correlaciones diarias, se cachea 5 min
+
+    def get(self, request):
+        from core.application.use_cases.market_regime import MarketRegimeUseCase
+
+        cache_key = "market_regime"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = MarketRegimeUseCase().execute()
+        if result.get("status") == "OK":
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class ExecutionTcaView(APIView):
+    """
+    GET /api/oms/tca/ — Analítica de coste de ejecución real del usuario:
+    slippage medio (bps, con signo de coste, ponderado por nocional), coste
+    total, fill rate y desglose por símbolo, sobre la auditoría de órdenes
+    reales. Mide la calidad de la ejecución de la promoción paper→real.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+
+    def get(self, request):
+        from core.application.use_cases.tca import ExecutionTcaUseCase
+
+        cache_key = f"execution_tca:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = ExecutionTcaUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class OhlcvHealthView(APIView):
+    """
+    GET /api/data/health/ — Salud del almacén histórico OHLCV: completitud,
+    frescura y huecos por serie (símbolo+marco) + resumen global. Es la
+    observabilidad de la fiabilidad de los datos que alimentan riesgo,
+    backtests y la terminal cuantitativa.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300
+
+    def get(self, request):
+        from core.application.use_cases.ohlcv_health import OhlcvHealthUseCase
+
+        cache_key = "ohlcv_health"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = OhlcvHealthUseCase().execute()
+        if result.get("status") == "OK":
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class ExecutionAuditView(APIView):
+    """
+    GET /api/oms/audit/?limit=50&status=blocked — Rastro de auditoría de la
+    ejecución real del usuario: resumen de cumplimiento (recuentos por estado,
+    nocional ejecutado, motivos de bloqueo/fallo) + registro cronológico
+    detallado de cada intento de orden.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from core.application.use_cases.execution_audit import ExecutionAuditUseCase
+
+        try:
+            limit = int(request.query_params.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        status_filter = (request.query_params.get("status") or "").strip()
+        result = ExecutionAuditUseCase().execute(
+            owner=request.user, limit=limit, status_filter=status_filter,
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class LeadLagView(APIView):
+    """
+    GET /api/market/lead-lag/ — Señales lead-lag de la cesta: qué activos
+    adelantan a cuáles (correlación cruzada de retornos a distintos desfases)
+    y ranking de liderazgo. Sobre el almacén OHLCV propio.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — relación estructural, se cachea 10 min
+
+    def get(self, request):
+        from core.application.use_cases.lead_lag import LeadLagUseCase
+
+        cache_key = "lead_lag"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = LeadLagUseCase().execute()
+        if result.get("status") == "OK":
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)

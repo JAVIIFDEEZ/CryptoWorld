@@ -75,3 +75,38 @@ class BacktestRequestDTO:
     interval: str = "1h"
     limit: int = 500
     initial_capital: float = 10000.0
+    # Realismo de ejecución (motor v2)
+    commission_bps: float = 0.0
+    slippage_bps: float = 0.0
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+
+
+@dataclass(frozen=True)
+class ConfluenceCardDTO:
+    """
+    Ficha de confluencia técnica de un activo.
+
+    Agrega tendencia, niveles S/R, Fibonacci, resumen de indicadores,
+    veredicto con confianza y la narrativa en español. La consumen tanto
+    el endpoint REST como la landing SEO renderizada por servidor.
+    """
+    symbol: str
+    name: str
+    slug: str
+    logo_url: Optional[str]
+    last_price: float
+    generated_at: str
+    interval: str
+    data_source: str
+    trend: dict
+    support_resistance: dict
+    fibonacci: dict
+    signals: dict
+    verdict: dict
+    narrative: str
+    analysis_paragraphs: list = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        from dataclasses import asdict
+        return asdict(self)

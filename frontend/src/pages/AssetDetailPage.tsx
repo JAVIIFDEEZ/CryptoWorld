@@ -9,11 +9,14 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { marketService, type AssetInfo } from '@/services/marketService'
+import { publicLandingUrl } from '@/services/confluenceService'
 import { formatNumber } from '@/utils/format'
 import { useCurrency } from '@/hooks/useCurrency'
 import DeltaChip from '@/components/ui/DeltaChip'
-import OhlcvChart from '@/components/OhlcvChart'
-import AnalysisPanel from '@/components/AnalysisPanel'
+import OhlcvChart from '@/components/analysis/OhlcvChart'
+import AnalysisPanel from '@/components/analysis/AnalysisPanel'
+import ConfluenceCard from '@/components/analysis/ConfluenceCard'
+import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function AssetDetailPage() {
@@ -108,7 +111,20 @@ function AssetDetailPage() {
             )}
             <div>
               <h1 className="text-2xl font-bold text-white">{asset.name}</h1>
-              <p className="text-slate-400 text-sm">{asset.symbol}</p>
+              <p className="text-slate-400 text-sm">
+                {asset.symbol}
+                {/* Enlace a la landing pública: la sirve el backend (Django),
+                    no el router de la SPA. publicLandingUrl deriva el origen
+                    correcto en dev (localhost:8000) y prod (proxy Vercel). */}
+                <a
+                  href={publicLandingUrl(asset.coingecko_id ?? asset.symbol.toLowerCase())}
+                  target="_blank"
+                  rel="noopener"
+                  className="ml-3 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Ver ficha técnica pública ↗
+                </a>
+              </p>
             </div>
           </div>
           <div className="text-right">
@@ -139,11 +155,17 @@ function AssetDetailPage() {
         <OhlcvChart symbol={asset.symbol} initialInterval="1h" />
       </div>
 
+      {/* Ficha de confluencia técnica (veredicto agregado + S/R + Fibonacci) */}
+      <ConfluenceCard symbol={asset.symbol} />
+
       {/* Información de proyecto (backend → CoinGecko) */}
       {assetInfo && <ProjectCard info={assetInfo} symbol={asset.symbol} />}
 
       {/* Panel de análisis técnico avanzado */}
       <AnalysisPanel symbol={asset.symbol} />
+
+      {/* Suite de robustez de backtest (¿estrategia sobreajustada?) */}
+      <RobustnessPanel symbol={asset.symbol} />
     </div>
   )
 }

@@ -40,6 +40,10 @@ ALLOWED_HOSTS = re.split(r'[,\s]+', os.environ.get("DJANGO_ALLOWED_HOSTS", "loca
 # Aplicaciones instaladas
 # ------------------------------------------------------------------
 INSTALLED_APPS = [
+    # Daphne (servidor ASGI) debe ir el primero para que `runserver` sirva
+    # WebSockets en desarrollo (Channels). En producción se usa daphne/uvicorn.
+    "daphne",
+
     # Apps de Django
     "django.contrib.admin",
     "django.contrib.auth",
@@ -55,6 +59,7 @@ INSTALLED_APPS = [
     "corsheaders",                             # CORS para comunicación con el frontend
     "django_celery_beat",                      # Scheduler persistente para Celery beat
     "anymail",                                 # SendGrid API nativa (mejor que SMTP)
+    "channels",                                # WebSockets / ASGI (tiempo real)
 
     # Apps del proyecto (capa interfaces expone los endpoints)
     "core",
@@ -134,6 +139,9 @@ LANGUAGE_CODE = "es-es"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+# Agrupa miles con el separador del locale (es-ES: "64.307,35") en las
+# plantillas server-side. Da formato numérico consistente a las landings SEO.
+USE_THOUSAND_SEPARATOR = True
 
 # ------------------------------------------------------------------
 # Archivos estáticos
@@ -171,7 +179,13 @@ REST_FRAMEWORK = {
         "auth_register": "10/hour",
         "auth_password_reset": "5/hour",
         "auth_resend_verification": "5/hour",
+        "auth_change_email": "5/hour",
         "auth_2fa": "10/min",
+        # Endpoints costosos (lanzan cientos de backtests en Celery): se limitan
+        # por usuario/IP para proteger el worker. El contador vive en Redis.
+        "robust_backtest": "30/hour",
+        "strategy_generate": "10/hour",
+        "strategy_robustness": "40/hour",
     },
 }
 
@@ -281,6 +295,20 @@ CELERY_TIMEZONE = "UTC"
 CELERY_ENABLE_UTC = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True  # Evita CPendingDeprecationWarning en Celery 6
 
+# ------------------------------------------------------------------
+# Channels / WebSockets (tiempo real)
+# ------------------------------------------------------------------
+# La capa de canales usa Redis (DB 2, sin colisión con Celery /0 ni la caché /1).
+# En producción se sirve con un servidor ASGI (daphne/uvicorn) apuntando a
+# config.asgi:application. Los tests sustituyen esta capa por InMemory.
+ASGI_APPLICATION = "config.asgi.application"
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [REDIS_URL.rstrip("/0") + "/2"]},
+    }
+}
+
 # Despliegues SIN worker dedicado (p. ej. Railway con un solo servicio):
 # con CELERY_TASK_ALWAYS_EAGER=True las llamadas .delay() se ejecutan de
 # forma sincrona en el propio proceso web. Sin esta variable y sin worker,
@@ -290,6 +318,12 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True  # Evita CPendingDeprecationWar
 # convierte el registro de usuario en un 500.
 CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "False") == "True"
 
+# Estado STARTED visible al hacer polling de un job (suite de robustez).
+CELERY_TASK_TRACK_STARTED = True
+# En modo eager (tests) guarda el resultado en el backend para que
+# AsyncResult(job_id) lo recupere igual que con un worker real.
+CELERY_TASK_STORE_EAGER_RESULT = True
+
 # Tareas periódicas (celery beat)
 from celery.schedules import crontab  # noqa: E402
 
@@ -298,6 +332,11 @@ CELERY_BEAT_SCHEDULE = {
     "check-price-alerts": {
         "task": "core.tasks.check_price_alerts",
         "schedule": 120.0,  # segundos
+    },
+    # Evaluar alertas cuantitativas (multi-métrica, disparo por flanco) cada 3 min
+    "evaluate-quant-alerts": {
+        "task": "core.tasks.evaluate_quant_alerts",
+        "schedule": 180.0,  # segundos
     },
     # Sync rápido de precios vía Binance (1 llamada, weight=40, sin cuota CoinGecko)
     "sync-prices-quick": {
@@ -314,5 +353,81 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.send_market_digest",
         "schedule": crontab(day_of_week=1, hour=8, minute=0),
     },
+    # Resumen diario de riesgo de cartera (días laborables 07:00 UTC)
+    "send-risk-digest": {
+        "task": "core.tasks.send_risk_digest",
+        "schedule": crontab(day_of_week="1-5", hour=7, minute=0),
+    },
+    # Señales en vivo de estrategias generadas monitorizadas (cada 15 min)
+    "evaluate-monitored-strategies": {
+        "task": "core.tasks.evaluate_monitored_strategies",
+        "schedule": 900.0,  # segundos — cada 15 min
+    },
+    # Verificar predicciones ML cuyo horizonte ha vencido (cada 30 min)
+    "resolve-predictions": {
+        "task": "core.tasks.resolve_predictions",
+        "schedule": 1800.0,  # segundos — cada 30 min
+    },
+    # Precalentar la caché de predicción ML de los activos top (cada 10 min)
+    "warm-ml-predictions": {
+        "task": "core.tasks.warm_ml_predictions",
+        "schedule": 600.0,   # segundos — la caché de predicción dura 15 min
+    },
+    # Mantener al día el almacén histórico OHLCV propio (cada 30 min)
+    "sync-ohlcv-history": {
+        "task": "core.tasks.sync_ohlcv_history",
+        "schedule": 1800.0,  # segundos — solo persiste velas cerradas
+    },
+    # Resolver lecturas de confluencia vencidas (aprendizaje de pesos, 30 min)
+    "resolve-confluence-snapshots": {
+        "task": "core.tasks.resolve_confluence_snapshots",
+        "schedule": 1800.0,
+    },
+    # Evaluar la confluencia de los activos relevantes (aprendizaje + eventos)
+    "evaluate-confluence": {
+        "task": "core.tasks.evaluate_confluence",
+        "schedule": 1800.0,
+    },
+    # OMS: reconciliar posición esperada ↔ balance real del exchange (cada hora)
+    "reconcile-live-positions": {
+        "task": "core.tasks.reconcile_live_positions",
+        "schedule": 3600.0,
+    },
+    # Ejecutar señales de las carteras de paper trading activas (cada 15 min)
+    "evaluate-paper-trading": {
+        "task": "core.tasks.evaluate_paper_trading",
+        "schedule": 900.0,  # segundos — cada 15 min
+    },
+    # Reoptimizar las estrategias de los activos seguidos (lunes 03:00 UTC)
+    "reoptimize-strategies": {
+        "task": "core.tasks.reoptimize_strategies",
+        "schedule": crontab(day_of_week=1, hour=3, minute=0),
+    },
+    # Establo nocturno: generar campeonas para activos sin estrategia validada
+    # fresca (watchlists + top por capitalización), 2 por noche (diaria 04:00 UTC)
+    "fill-strategy-stable": {
+        "task": "core.tasks.fill_strategy_stable",
+        "schedule": crontab(hour=4, minute=0),
+    },
+    # Vigilar direcciones on-chain de la watchlist y alertar movimientos (cada 30 min)
+    "monitor-watched-addresses": {
+        "task": "core.tasks.monitor_watched_addresses",
+        "schedule": 1800.0,  # segundos — cada 30 min
+    },
+    # Persistir grandes movimientos on-chain para el indicador de presión (cada 15 min)
+    "scan-whale-movements": {
+        "task": "core.tasks.scan_whale_movements",
+        "schedule": 900.0,  # segundos — cada 15 min
+    },
 }
 
+
+
+# ------------------------------------------------------------------
+# Web Push (PWA) — notificaciones con la app cerrada.
+# Genera el par VAPID una vez y ponlo en el entorno. Vacío = push desactivado
+# (el WebSocket y el centro in-app siguen funcionando).
+# ------------------------------------------------------------------
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "admin@cryptoworld.app")

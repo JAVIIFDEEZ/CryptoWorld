@@ -13,25 +13,31 @@
 
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import ProtectedRoute from '@/components/ProtectedRoute'
-import { AdminRoute } from '@/components/AdminRoute'
-import AppShell from '@/components/AppShell'
+import ProtectedRoute from '@/components/layout/ProtectedRoute'
+import { AdminRoute } from '@/components/layout/AdminRoute'
+import AppShell from '@/components/layout/AppShell'
 
 // Code splitting: cada página se carga sólo cuando se navega a ella
 const LandingPage = lazy(() => import('@/pages/LandingPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/RegisterPage'))
 const VerifyEmailPage = lazy(() => import('@/pages/VerifyEmailPage'))
+const ConfirmEmailChangePage = lazy(() => import('@/pages/ConfirmEmailChangePage'))
 const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
 const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const AssetDetailPage = lazy(() => import('@/pages/AssetDetailPage'))
 const MarketPage = lazy(() => import('@/pages/MarketPage'))
 const TechnicalAnalysisPage = lazy(() => import('@/pages/TechnicalAnalysisPage'))
+const StrategyGeneratorPage = lazy(() => import('@/pages/StrategyGeneratorPage'))
+const StrategyDossierPage = lazy(() => import('@/pages/StrategyDossierPage'))
+const AddressDossierPage = lazy(() => import('@/pages/AddressDossierPage'))
 const PortfolioPage = lazy(() => import('@/pages/PortfolioPage'))
+const TradingPage = lazy(() => import('@/pages/TradingPage'))
 const AlertsPage = lazy(() => import('@/pages/AlertsPage'))
 const NewsPage = lazy(() => import('@/pages/NewsPage'))
 const BlockchainPage = lazy(() => import('@/pages/BlockchainPage'))
+const LearnPage = lazy(() => import('@/pages/LearnPage'))
 const Security2FAPage = lazy(() => import('@/pages/Security2FAPage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
 const AdminDashboardPage = lazy(() => import('@/pages/AdminDashboardPage'))
@@ -52,18 +58,25 @@ function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/auth/confirm-email-change" element={<ConfirmEmailChangePage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/auth/password-reset/confirm" element={<ResetPasswordPage />} />
 
       {/* Rutas protegidas: envueltas en el guard de autenticación */}
       <Route element={<ProtectedRoute />}>
+        {/* Dossiers imprimibles: protegidos pero SIN AppShell (imprimen limpio) */}
+        <Route path="/strategies/:id/dossier" element={<StrategyDossierPage />} />
+        <Route path="/blockchain/address/:chain/:address/dossier" element={<AddressDossierPage />} />
         {/* AppShell persiste entre páginas protegidas */}
         <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/market" element={<MarketPage />} />
           <Route path="/analysis" element={<TechnicalAnalysisPage />} />
+          <Route path="/strategies" element={<StrategyGeneratorPage />} />
           <Route path="/blockchain" element={<BlockchainPage />} />
+          <Route path="/learn" element={<LearnPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/trading" element={<TradingPage />} />
           <Route path="/news" element={<NewsPage />} />
           <Route path="/alerts" element={<AlertsPage />} />
           <Route path="/security/2fa" element={<Security2FAPage />} />

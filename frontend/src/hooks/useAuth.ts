@@ -40,6 +40,8 @@ interface AuthContextType {
     preAuthToken: string,
     factor: { totpCode?: string; recoveryCode?: string },
   ) => Promise<void>
+  /** Actualiza datos del usuario en memoria y localStorage (ej. tras editar el perfil). */
+  updateUser: (partial: Partial<AuthUser>) => void
   logout: () => void
 }
 
@@ -128,6 +130,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   /**
+   * updateUser — Sincronizar el usuario en memoria tras editar el perfil
+   * (username, email...) sin obligar a recargar ni a re-loguear.
+   */
+  const updateUser = useCallback((partial: Partial<AuthUser>) => {
+    setUser((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, ...partial }
+      localStorage.setItem(USER_KEY, JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  /**
    * logout — Invalidar el refresh token en el backend (blacklist) y
    * limpiar el estado local. La llamada al backend es fire-and-forget:
    * el logout local no debe bloquearse si la red falla.
@@ -156,6 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         login,
         verify2FALogin,
+        updateUser,
         logout,
       },
     },

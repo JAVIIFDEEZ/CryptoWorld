@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 import ta as ta_lib
 
+from core.domain.services.backtest_execution import CostModel, RiskModel, SizingModel, simulate
+
 logger = logging.getLogger(__name__)
 
 
@@ -564,142 +566,265 @@ def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
 # 4. PREDICCIÓN ML
 # ═══════════════════════════════════════════════════════════════════
 
-def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
-    """
-    Predice la dirección del precio usando Random Forest.
+# Media banda neutral alrededor del 50%: dentro de [45%, 55%] la predicción se
+# reporta como NEUTRAL (sin dirección accionable) en lugar de forzar un lado.
+_NEUTRAL_BAND = 0.05
 
-    Usa indicadores técnicos como features.
-    Target: 1 si precio sube en 'horizon' velas, 0 si baja.
 
-    Args:
-        df: DataFrame OHLCV con al menos 100 filas.
-        horizon: Número de velas futuras para la predicción.
-
-    Returns:
-        Dict con prediction, confidence, features_importance, etc.
-    """
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import cross_val_score
-
-    if len(df) < 100:
-        return {
-            "prediction": "INSUFFICIENT_DATA",
-            "confidence": 0,
-            "horizon": horizon,
-            "message": "Se necesitan al menos 100 velas para entrenar el modelo.",
-        }
-
-    # ── Construir features ─────────────────────────────────────────
+def _build_prediction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Construye las features (todas causales) para el clasificador de dirección."""
     feat = pd.DataFrame(index=df.index)
-    feat["rsi_14"] = ta_lib.momentum.RSIIndicator(df["close"], window=14).rsi()
-    feat["rsi_7"] = ta_lib.momentum.RSIIndicator(df["close"], window=7).rsi()
+    close = df["close"]
+    feat["rsi_14"] = ta_lib.momentum.RSIIndicator(close, window=14).rsi()
+    feat["rsi_7"] = ta_lib.momentum.RSIIndicator(close, window=7).rsi()
 
-    macd_obj = ta_lib.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
-    feat["macd"] = macd_obj.macd()
-    feat["macd_signal"] = macd_obj.macd_signal()
+    macd_obj = ta_lib.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
     feat["macd_hist"] = macd_obj.macd_diff()
 
-    feat["sma_20"] = ta_lib.trend.SMAIndicator(df["close"], window=20).sma_indicator()
-    feat["sma_50"] = ta_lib.trend.SMAIndicator(df["close"], window=50).sma_indicator()
-    feat["ema_12"] = ta_lib.trend.EMAIndicator(df["close"], window=12).ema_indicator()
-    feat["ema_26"] = ta_lib.trend.EMAIndicator(df["close"], window=26).ema_indicator()
+    sma_20 = ta_lib.trend.SMAIndicator(close, window=20).sma_indicator()
+    sma_50 = ta_lib.trend.SMAIndicator(close, window=50).sma_indicator()
+    # Normalizados (distancia relativa): el nivel absoluto del precio no generaliza.
+    feat["price_vs_sma20"] = close / sma_20 - 1.0
+    feat["price_vs_sma50"] = close / sma_50 - 1.0
+    feat["sma20_vs_sma50"] = sma_20 / sma_50 - 1.0
 
-    bb = ta_lib.volatility.BollingerBands(df["close"], window=20, window_dev=2)
-    feat["bb_upper"] = bb.bollinger_hband()
-    feat["bb_middle"] = bb.bollinger_mavg()
-    feat["bb_lower"] = bb.bollinger_lband()
+    bb = ta_lib.volatility.BollingerBands(close, window=20, window_dev=2)
     feat["bb_width"] = bb.bollinger_wband()
+    rng = (bb.bollinger_hband() - bb.bollinger_lband())
+    feat["bb_position"] = (close - bb.bollinger_lband()) / rng.replace(0, np.nan)
 
-    adx_obj = ta_lib.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
-    feat["adx"] = adx_obj.adx()
+    feat["adx"] = ta_lib.trend.ADXIndicator(df["high"], df["low"], close, window=14).adx()
+    feat["stoch_k"] = ta_lib.momentum.StochasticOscillator(df["high"], df["low"], close).stoch()
 
-    # vol_change: si el volumen es todo cero (datos CoinGecko sin volumen real)
-    # pct_change() produciría NaN en cada fila y dropna() eliminaría todo el DataFrame.
-    # En ese caso se sustituye por 0.0 (neutro) para no perder los demás features.
+    # Momentum y volatilidad de los retornos (causales)
+    ret = close.pct_change()
+    feat["ret_1"] = ret
+    feat["ret_3"] = close.pct_change(3)
+    feat["ret_10"] = close.pct_change(10)
+    feat["volatility_10"] = ret.rolling(10).std()
+    feat["high_low_ratio"] = (df["high"] - df["low"]) / close
+
     volume_series = df["volume"]
     if volume_series.sum() == 0:
         feat["vol_change"] = 0.0
     else:
-        feat["vol_change"] = (
-            volume_series.pct_change()
-            .fillna(0)
-            .replace([np.inf, -np.inf], 0)
+        feat["vol_change"] = volume_series.pct_change().replace([np.inf, -np.inf], 0)
+    return feat
+
+
+def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
+    """
+    Predice la dirección del precio a `horizon` velas con un Random Forest,
+    evaluado de forma HONESTA mediante validación walk-forward (TimeSeriesSplit):
+    respeta el orden temporal (entrena en el pasado, valida en el futuro), nunca
+    al revés. Reporta la precisión fuera de muestra frente a una línea base
+    (clase mayoritaria) y el EDGE (ventaja sobre el azar) — la única cifra que
+    indica si hay señal real — además de precisión/recall/F1 y AUC.
+
+    Target: 1 si el precio sube en `horizon` velas, 0 si no.
+    """
+    import time as _time
+
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, brier_score_loss
+
+    t_start = _time.perf_counter()
+
+    if len(df) < 100:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "Se necesitan al menos 100 velas para entrenar el modelo."}
+
+    feat_all = _build_prediction_features(df)
+    feature_cols = list(feat_all.columns)
+    target = (df["close"].shift(-horizon) > df["close"]).astype(int)
+
+    # Conjunto de entrenamiento: features válidas + target válido (no las últimas
+    # `horizon` velas, cuyo futuro aún no se ha observado).
+    data = feat_all.copy()
+    data["target"] = target
+    data = data.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(data) < 80:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "Datos insuficientes tras calcular indicadores."}
+
+    X = data[feature_cols].values
+    y = data["target"].values
+    if len(set(y)) < 2:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "Una sola clase en el objetivo; no hay nada que predecir."}
+
+    def _rf() -> "RandomForestClassifier":
+        # n_jobs=1 a propósito: con cientos de filas el coste de repartir árboles
+        # entre hilos supera al ahorro, y en máquinas pequeñas satura los núcleos.
+        return RandomForestClassifier(
+            n_estimators=150, max_depth=6, min_samples_leaf=8,
+            class_weight="balanced", random_state=42, n_jobs=1,
         )
-    feat["price_change_1"] = df["close"].pct_change(1)
-    feat["price_change_5"] = df["close"].pct_change(5)
-    feat["high_low_ratio"] = (df["high"] - df["low"]) / df["close"]
 
-    # ── Target: ¿sube el precio en N velas? ────────────────────────
-    feat["target"] = (df["close"].shift(-horizon) > df["close"]).astype(int)
+    def _make_model():
+        # Ensemble por votación blanda: combina familias de modelos con sesgos
+        # distintos (bosque, boosting, lineal) → predicciones más robustas que
+        # un único modelo. La regresión logística va escalada en un pipeline.
+        # HistGradientBoosting = gradient boosting con histogramas (~6× más
+        # rápido que GradientBoostingClassifier a igual capacidad).
+        from sklearn.ensemble import HistGradientBoostingClassifier, VotingClassifier
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+        gb = HistGradientBoostingClassifier(max_iter=80, max_depth=3, random_state=42)
+        lr = make_pipeline(StandardScaler(),
+                           LogisticRegression(max_iter=1000, class_weight="balanced"))
+        return VotingClassifier(
+            [("rf", _rf()), ("gb", gb), ("lr", lr)], voting="soft",
+        )
 
-    # Limpiar NaN
-    feat = feat.dropna()
+    # ── Evaluación walk-forward (out-of-sample, respeta el tiempo) ──
+    n_splits = max(3, min(6, len(X) // 40))
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    oos_true, oos_pred, oos_proba, fold_acc = [], [], [], []
+    for tr, te in tscv.split(X):
+        if len(set(y[tr])) < 2:
+            continue
+        m = _make_model().fit(X[tr], y[tr])
+        p = m.predict(X[te])
+        oos_pred.extend(p)
+        oos_true.extend(y[te])
+        oos_proba.extend(m.predict_proba(X[te])[:, 1])
+        fold_acc.append(accuracy_score(y[te], p))
 
-    if len(feat) < 60:
-        return {
-            "prediction": "INSUFFICIENT_DATA",
-            "confidence": 0,
-            "horizon": horizon,
-            "message": "Datos insuficientes tras calcular indicadores.",
-        }
+    if not oos_true:
+        return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
+                "message": "No se pudo validar el modelo en datos fuera de muestra."}
 
-    feature_cols = [c for c in feat.columns if c != "target"]
-    X = feat[feature_cols].values
-    y = feat["target"].values
+    oos_true = np.asarray(oos_true)
+    oos_pred = np.asarray(oos_pred)
+    oos_proba = np.asarray(oos_proba)
+    # Redondeados a 4 decimales ANTES de derivar el edge para que la identidad
+    # edge = oos_accuracy - baseline se cumpla exactamente en el payload.
+    oos_accuracy = round(float(accuracy_score(oos_true, oos_pred)), 4)
+    up_rate = float(oos_true.mean())
+    baseline = round(max(up_rate, 1.0 - up_rate), 4)  # predecir siempre la clase mayoritaria
+    edge = round(oos_accuracy - baseline, 4)
+    try:
+        auc = float(roc_auc_score(oos_true, oos_proba)) if len(set(oos_true)) == 2 else None
+    except ValueError:
+        auc = None
 
-    # Separar train (todo menos últimas 'horizon' filas) y predict (última fila)
-    X_train = X[:-horizon]
-    y_train = y[:-horizon]
-    X_latest = X[-1:].copy()
+    # ── Calibración de Platt aprendida SOLO con datos fuera de muestra ──
+    # Reutiliza las probabilidades OOS del walk-forward para aprender el mapa
+    # voto crudo → probabilidad realista (2 parámetros, sin re-entrenar nada).
+    # Sustituye a CalibratedClassifierCV, que re-ajustaba el ensemble completo
+    # 3 veces más y duplicaba el tiempo de respuesta del endpoint.
+    platt = None
+    if len(set(oos_true)) == 2:
+        try:
+            from sklearn.linear_model import LogisticRegression as _PlattLR
+            platt = _PlattLR(max_iter=1000).fit(oos_proba.reshape(-1, 1), oos_true)
+        except Exception:  # noqa: BLE001 — sin calibración se usa el voto crudo
+            platt = None
 
-    if len(X_train) < 50:
-        return {
-            "prediction": "INSUFFICIENT_DATA",
-            "confidence": 0,
-            "horizon": horizon,
-            "message": "Datos de entrenamiento insuficientes.",
-        }
+    # Brier score: calidad de las probabilidades que realmente se muestran
+    # (calibradas si hay calibrador, crudas si no), medida en OOS (0 = perfecto).
+    if len(set(oos_true)) == 2:
+        shown_proba = (platt.predict_proba(oos_proba.reshape(-1, 1))[:, 1]
+                       if platt is not None else oos_proba)
+        brier = float(brier_score_loss(oos_true, shown_proba))
+    else:
+        brier = None
 
-    # ── Entrenar modelo ────────────────────────────────────────────
-    model = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=8,
-        min_samples_split=10,
-        random_state=42,
-        n_jobs=-1,
-    )
-    model.fit(X_train, y_train)
+    # ── Modelo final con TODO el histórico → predicción de la vela actual ──
+    # Importancias desde un RF plano (ni el ensemble ni el calibrador las exponen).
+    imp_model = _rf().fit(X, y)
+    latest = feat_all.replace([np.inf, -np.inf], np.nan).dropna()
+    X_latest = latest.iloc[-1:][feature_cols].values
 
-    # Cross-validation para evaluar fiabilidad
-    cv_scores = cross_val_score(model, X_train, y_train, cv=max(2, min(5, len(X_train) // 10)), scoring="accuracy")
+    # Un único ensemble final; su voto crudo pasa por el calibrador OOS para que
+    # la "confianza" mostrada sea una probabilidad realista, no el voto del bosque.
+    final_model = _make_model().fit(X, y)
+    raw_up = float(final_model.predict_proba(X_latest)[0, 1])
+    calibrated = platt is not None
+    prob_up = float(platt.predict_proba([[raw_up]])[0, 1]) if calibrated else raw_up
+    proba = np.array([1.0 - prob_up, prob_up])
+    # Zona NEUTRAL: con la probabilidad calibrada a un paso del 50%, proclamar
+    # dirección sería vender una moneda al aire como señal. NEUTRAL no se
+    # registra en el historial (log_prediction solo guarda ALCISTA/BAJISTA).
+    if prob_up >= 0.5 + _NEUTRAL_BAND:
+        pred_label = "ALCISTA"
+    elif prob_up <= 0.5 - _NEUTRAL_BAND:
+        pred_label = "BAJISTA"
+    else:
+        pred_label = "NEUTRAL"
 
-    # Predicción
-    proba = model.predict_proba(X_latest)[0]
-    pred_class = model.predict(X_latest)[0]
+    top_features = sorted(zip(feature_cols, imp_model.feature_importances_),
+                          key=lambda x: x[1], reverse=True)[:8]
 
-    # Feature importance
-    importances = model.feature_importances_
-    top_features = sorted(
-        zip(feature_cols, importances),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:8]
+    # ── Explicabilidad LOCAL de esta predicción (atribución por oclusión) ──
+    # Para esta vela concreta, ¿qué features empujan la probabilidad alcista?
+    # Se sustituye cada feature por su valor "neutro" (mediana histórica) y se
+    # mide cuánto cae prob_up: la diferencia es la contribución de esa feature.
+    # Es atribución por oclusión sobre el RF (rápida y determinista); no es SHAP,
+    # pero da la dirección y magnitud del aporte de cada señal a ESTA decisión.
+    drivers = []
+    try:
+        base_prob = float(imp_model.predict_proba(X_latest)[0, 1])
+        neutral = np.median(X, axis=0)
+        contribs = []
+        for j in range(len(feature_cols)):
+            occ = X_latest.copy()
+            occ[0, j] = neutral[j]
+            p = float(imp_model.predict_proba(occ)[0, 1])
+            contribs.append((feature_cols[j], round(base_prob - p, 4)))
+        drivers = [
+            {"feature": name, "contribution": contrib}
+            for name, contrib in sorted(contribs, key=lambda c: abs(c[1]), reverse=True)[:6]
+        ]
+    except Exception:  # noqa: BLE001 — la explicabilidad nunca debe romper la predicción
+        drivers = []
 
-    prediction = "ALCISTA" if pred_class == 1 else "BAJISTA"
-    confidence = float(max(proba))
+    # Veredicto honesto: ¿hay edge fuera de muestra?
+    if edge >= 0.04 and oos_accuracy > 0.5:
+        verdict = "EDGE"
+        verdict_text = f"El modelo acierta el {oos_accuracy:.0%} fuera de muestra, {edge:+.0%} sobre el azar."
+    elif edge >= 0.01:
+        verdict = "WEAK"
+        verdict_text = f"Edge marginal ({edge:+.0%} sobre el azar): señal débil, tómatela con cautela."
+    else:
+        verdict = "NO_EDGE"
+        verdict_text = "Sin ventaja fiable sobre el azar: la predicción es prácticamente una moneda al aire."
 
     return {
-        "prediction": prediction,
-        "confidence": round(confidence, 4),
+        "prediction": pred_label,
+        "confidence": round(float(max(proba)), 4),
+        "prob_up": round(float(proba[1]), 4),
+        "neutral_band": _NEUTRAL_BAND,
         "horizon": horizon,
-        "model": "RandomForest",
-        "cv_accuracy": round(float(cv_scores.mean()), 4),
-        "cv_std": round(float(cv_scores.std()), 4),
+        "model": "Ensemble (RF+GB+LR) calibrado, walk-forward" if calibrated else "Ensemble (RF+GB+LR), walk-forward",
+        "calibrated": calibrated,
+        "brier_score": round(brier, 4) if brier is not None else None,
+        # cv_accuracy se mantiene por compatibilidad, ahora es la precisión OOS honesta.
+        "cv_accuracy": round(oos_accuracy, 4),
+        "cv_std": round(float(np.std(fold_acc)) if fold_acc else 0.0, 4),
+        "oos_accuracy": round(oos_accuracy, 4),
+        "baseline_accuracy": round(baseline, 4),
+        "edge": round(edge, 4),
+        "precision_up": round(float(precision_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
+        "recall_up": round(float(recall_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
+        "f1_up": round(float(f1_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
+        "auc": round(auc, 4) if auc is not None else None,
+        "n_oos": int(len(oos_true)),
+        "n_train": int(len(X)),
+        "n_splits": int(n_splits),
+        "up_rate": round(up_rate, 4),
+        "verdict": verdict,
+        "verdict_text": verdict_text,
         "features_importance": [
-            {"feature": name, "importance": round(float(imp), 4)}
-            for name, imp in top_features
+            {"feature": name, "importance": round(float(imp), 4)} for name, imp in top_features
         ],
-        "disclaimer": "Predicción estadística basada en indicadores técnicos. No constituye consejo financiero.",
+        "drivers": drivers,
+        "elapsed_ms": int((_time.perf_counter() - t_start) * 1000),
+        "disclaimer": "Predicción estadística evaluada fuera de muestra (walk-forward). "
+                      "No constituye consejo financiero.",
     }
 
 
@@ -711,56 +836,94 @@ STRATEGIES = {
     "rsi_reversal": {
         "name": "RSI Reversal",
         "description": "Comprar cuando RSI < 30 (sobreventa), vender cuando RSI > 70 (sobrecompra).",
+        "param_space": [
+            {"name": "window", "type": "int", "low": 7, "high": 21, "default": 14},
+            {"name": "oversold", "type": "int", "low": 20, "high": 35, "default": 30},
+            {"name": "overbought", "type": "int", "low": 65, "high": 80, "default": 70},
+        ],
     },
     "macd_crossover": {
         "name": "MACD Crossover",
         "description": "Comprar cuando MACD cruza por encima de la señal, vender al revés.",
+        "param_space": [
+            {"name": "fast", "type": "int", "low": 8, "high": 16, "default": 12},
+            {"name": "slow", "type": "int", "low": 20, "high": 34, "default": 26},
+            {"name": "signal", "type": "int", "low": 6, "high": 12, "default": 9},
+        ],
     },
     "bollinger_bounce": {
         "name": "Bollinger Bounce",
         "description": "Comprar al tocar banda inferior, vender al tocar banda superior.",
+        "param_space": [
+            {"name": "window", "type": "int", "low": 14, "high": 30, "default": 20},
+            {"name": "dev", "type": "float", "low": 1.5, "high": 3.0, "default": 2.0},
+        ],
     },
     "sma_crossover": {
         "name": "SMA Crossover",
         "description": "Comprar cuando SMA rápida (20) cruza por encima de SMA lenta (50).",
+        "param_space": [
+            {"name": "fast", "type": "int", "low": 10, "high": 30, "default": 20},
+            {"name": "slow", "type": "int", "low": 40, "high": 100, "default": 50},
+        ],
     },
     "ema_trend": {
         "name": "EMA Trend",
         "description": "Comprar cuando precio > EMA(26), vender cuando precio < EMA(26).",
+        "param_space": [
+            {"name": "window", "type": "int", "low": 14, "high": 40, "default": 26},
+        ],
     },
 }
 
 
-def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000.0) -> dict:
+def strategy_param_space(strategy: str) -> list[dict]:
+    """Espacio de parámetros optimizables de una estrategia (rangos + defaults)."""
+    return STRATEGIES[strategy]["param_space"]
+
+
+def strategy_defaults(strategy: str) -> dict:
+    """Valores por defecto de los parámetros (reproducen el comportamiento clásico)."""
+    return {p["name"]: p["default"] for p in STRATEGIES[strategy]["param_space"]}
+
+
+def _merge_params(strategy: str, params: Optional[dict]) -> dict:
+    """Combina los parámetros recibidos con los defaults; ignora claves desconocidas."""
+    merged = strategy_defaults(strategy)
+    if params:
+        for key, value in params.items():
+            if key in merged:
+                merged[key] = value
+    return merged
+
+
+def _generate_signals(df: pd.DataFrame, strategy: str, params: dict) -> np.ndarray:
     """
-    Ejecuta un backtest de una estrategia predefinida sobre datos OHLCV.
-
-    Returns:
-        Dict con métricas de rendimiento y lista de trades.
+    Genera el array de señales (1=compra, -1=venta, 0=hold) de una estrategia
+    según sus parámetros. Con los defaults reproduce exactamente la lógica
+    clásica; solo cambia QUÉ parámetros usa, no el algoritmo.
     """
-    if strategy not in STRATEGIES:
-        return {"error": f"Estrategia '{strategy}' no reconocida. Opciones: {list(STRATEGIES.keys())}"}
-
-    if len(df) < 60:
-        return {"error": "Se necesitan al menos 60 velas para backtesting."}
-
     close = df["close"].values
     n = len(close)
-    signals = np.zeros(n)  # 1 = buy, -1 = sell, 0 = hold
+    signals = np.zeros(n)
 
-    # ── Generar señales según estrategia ───────────────────────────
     if strategy == "rsi_reversal":
-        rsi_series = ta_lib.momentum.RSIIndicator(df["close"], window=14).rsi()
-        rsi_vals = rsi_series.values
-        for i in range(14, n):
+        window = int(params["window"])
+        oversold = float(params["oversold"])
+        overbought = float(params["overbought"])
+        rsi_vals = ta_lib.momentum.RSIIndicator(df["close"], window=window).rsi().values
+        for i in range(window, n):
             if not np.isnan(rsi_vals[i]):
-                if rsi_vals[i] < 30:
+                if rsi_vals[i] < oversold:
                     signals[i] = 1
-                elif rsi_vals[i] > 70:
+                elif rsi_vals[i] > overbought:
                     signals[i] = -1
 
     elif strategy == "macd_crossover":
-        macd_obj = ta_lib.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
+        fast, slow, sign = int(params["fast"]), int(params["slow"]), int(params["signal"])
+        if fast >= slow:
+            return signals  # combinación inválida (rápida ≥ lenta) → sin operaciones
+        macd_obj = ta_lib.trend.MACD(df["close"], window_slow=slow, window_fast=fast, window_sign=sign)
         macd_line = macd_obj.macd().values
         sig_line = macd_obj.macd_signal().values
         for i in range(1, n):
@@ -771,10 +934,12 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
                     signals[i] = -1
 
     elif strategy == "bollinger_bounce":
-        bb = ta_lib.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+        window = int(params["window"])
+        dev = float(params["dev"])
+        bb = ta_lib.volatility.BollingerBands(df["close"], window=window, window_dev=dev)
         upper = bb.bollinger_hband().values
         lower = bb.bollinger_lband().values
-        for i in range(20, n):
+        for i in range(window, n):
             if not np.isnan(upper[i]) and not np.isnan(lower[i]):
                 if close[i] <= lower[i]:
                     signals[i] = 1
@@ -782,17 +947,21 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
                     signals[i] = -1
 
     elif strategy == "sma_crossover":
-        s20 = ta_lib.trend.SMAIndicator(df["close"], window=20).sma_indicator().values
-        s50 = ta_lib.trend.SMAIndicator(df["close"], window=50).sma_indicator().values
+        fast, slow = int(params["fast"]), int(params["slow"])
+        if fast >= slow:
+            return signals
+        s_fast = ta_lib.trend.SMAIndicator(df["close"], window=fast).sma_indicator().values
+        s_slow = ta_lib.trend.SMAIndicator(df["close"], window=slow).sma_indicator().values
         for i in range(1, n):
-            if not np.isnan(s20[i]) and not np.isnan(s50[i]):
-                if s20[i] > s50[i] and s20[i - 1] <= s50[i - 1]:
+            if not np.isnan(s_fast[i]) and not np.isnan(s_slow[i]):
+                if s_fast[i] > s_slow[i] and s_fast[i - 1] <= s_slow[i - 1]:
                     signals[i] = 1
-                elif s20[i] < s50[i] and s20[i - 1] >= s50[i - 1]:
+                elif s_fast[i] < s_slow[i] and s_fast[i - 1] >= s_slow[i - 1]:
                     signals[i] = -1
 
     elif strategy == "ema_trend":
-        ema_vals = ta_lib.trend.EMAIndicator(df["close"], window=26).ema_indicator().values
+        window = int(params["window"])
+        ema_vals = ta_lib.trend.EMAIndicator(df["close"], window=window).ema_indicator().values
         for i in range(1, n):
             if not np.isnan(ema_vals[i]):
                 if close[i] > ema_vals[i] and close[i - 1] <= ema_vals[i - 1]:
@@ -800,76 +969,140 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
                 elif close[i] < ema_vals[i] and close[i - 1] >= ema_vals[i - 1]:
                     signals[i] = -1
 
-    # ── Simular trades ─────────────────────────────────────────────
-    capital = initial_capital
-    position = 0.0  # cantidad de asset
-    trades = []
-    in_trade = False
-    entry_price = 0.0
-    entry_idx = 0
+    return signals
 
-    for i in range(n):
-        if signals[i] == 1 and not in_trade:
-            # Comprar
-            position = capital / close[i]
-            entry_price = close[i]
-            entry_idx = i
-            in_trade = True
-            capital = 0
 
-        elif signals[i] == -1 and in_trade:
-            # Vender
-            capital = position * close[i]
-            pnl_pct = ((close[i] - entry_price) / entry_price) * 100
-            trades.append({
-                "entry_index": int(entry_idx),
-                "exit_index": int(i),
-                "entry_price": round(float(entry_price), 4),
-                "exit_price": round(float(close[i]), 4),
-                "pnl_pct": round(float(pnl_pct), 2),
-                "result": "WIN" if pnl_pct > 0 else "LOSS",
-            })
-            position = 0
-            in_trade = False
+def generate_signals(df: pd.DataFrame, strategy: str, params: Optional[dict] = None) -> np.ndarray:
+    """Señales (1/-1/0) de una estrategia con sus parámetros (defaults si None).
+    Público para los detectores de sesgo de la suite de robustez."""
+    return _generate_signals(df, strategy, _merge_params(strategy, params))
 
-    # Si aún tenemos posición abierta, cerrar al último precio
-    if in_trade:
-        capital = position * close[-1]
-        pnl_pct = ((close[-1] - entry_price) / entry_price) * 100
-        trades.append({
-            "entry_index": int(entry_idx),
-            "exit_index": int(n - 1),
-            "entry_price": round(float(entry_price), 4),
-            "exit_price": round(float(close[-1]), 4),
-            "pnl_pct": round(float(pnl_pct), 2),
-            "result": "WIN" if pnl_pct > 0 else "LOSS",
-        })
+
+def strategy_indicator_series(
+    df: pd.DataFrame, strategy: str, params: Optional[dict] = None
+) -> np.ndarray:
+    """
+    Serie del indicador principal que dirige cada estrategia. La usa el
+    detector de inestabilidad recursiva (EMA/RSI son recursivos; SMA no).
+    """
+    p = _merge_params(strategy, params)
+    close = df["close"]
+    if strategy == "rsi_reversal":
+        return ta_lib.momentum.RSIIndicator(close, window=int(p["window"])).rsi().values
+    if strategy == "macd_crossover":
+        return ta_lib.trend.MACD(
+            close, window_slow=int(p["slow"]), window_fast=int(p["fast"]),
+            window_sign=int(p["signal"]),
+        ).macd().values
+    if strategy == "bollinger_bounce":
+        return ta_lib.volatility.BollingerBands(
+            close, window=int(p["window"]), window_dev=float(p["dev"]),
+        ).bollinger_pband().values
+    if strategy == "sma_crossover":
+        return ta_lib.trend.SMAIndicator(close, window=int(p["fast"])).sma_indicator().values
+    if strategy == "ema_trend":
+        return ta_lib.trend.EMAIndicator(close, window=int(p["window"])).ema_indicator().values
+    return np.full(len(df), np.nan)
+
+
+def run_backtest(
+    df: pd.DataFrame,
+    strategy: str,
+    initial_capital: float = 10000.0,
+    params: Optional[dict] = None,
+    costs: "CostModel | None" = None,
+    risk: "RiskModel | None" = None,
+) -> dict:
+    """
+    Ejecuta un backtest de una estrategia sobre datos OHLCV.
+
+    Salida pública estable (compatibilidad): métricas + las últimas 20
+    operaciones. Sin `params`/costes usa los valores por defecto (comportamiento
+    histórico idéntico). `costs` aplica comisión+deslizamiento y `risk` aplica
+    stop-loss/take-profit. La curva de equity completa se obtiene con
+    run_backtest_full().
+    """
+    full = run_backtest_full(df, strategy, initial_capital, params, costs=costs, risk=risk)
+    if "error" in full:
+        return full
+    public = {
+        k: v for k, v in full.items()
+        if k not in ("trades", "equity_curve", "bar_returns", "params", "exposure_pct")
+    }
+    public["trades"] = full["trades"][-20:]  # Últimas 20 operaciones
+    return public
+
+
+def run_backtest_full(
+    df: pd.DataFrame,
+    strategy: str,
+    initial_capital: float = 10000.0,
+    params: Optional[dict] = None,
+    costs: "CostModel | None" = None,
+    risk: "RiskModel | None" = None,
+) -> dict:
+    """
+    Igual que run_backtest pero devuelve además la curva de equity, la serie
+    de retornos por vela y TODAS las operaciones. Lo consume la suite de
+    robustez (métricas, Monte Carlo, PBO). Con costes/riesgo None es idéntico
+    al motor histórico (la suite de robustez lo usa así).
+    """
+    if strategy not in STRATEGIES:
+        return {"error": f"Estrategia '{strategy}' no reconocida. Opciones: {list(STRATEGIES.keys())}"}
+
+    if len(df) < 60:
+        return {"error": "Se necesitan al menos 60 velas para backtesting."}
+
+    merged = _merge_params(strategy, params)
+    signals = _generate_signals(df, strategy, merged)
+    result = _simulate_and_measure(df, strategy, signals, initial_capital, costs=costs, risk=risk)
+    result["params"] = merged
+    return result
+
+
+def backtest_signals(
+    df: pd.DataFrame,
+    signals: np.ndarray,
+    initial_capital: float = 10000.0,
+    costs: "CostModel | None" = None,
+    risk: "RiskModel | None" = None,
+    sizing: "SizingModel | None" = None,
+) -> dict:
+    """
+    Backtest long-only (todo dentro / todo fuera) de un array de señales
+    arbitrario (1=compra, -1=venta, 0=hold). Reutilizable por el generador
+    de estrategias (señales compiladas de un StrategySpec componible), no
+    solo por las 5 estrategias del catálogo.
+
+    `costs` aplica comisión + deslizamiento (None = sin costes, comportamiento
+    histórico); `risk` aplica stop-loss/take-profit/trailing intrabar. Devuelve
+    métricas + curva de equity + retornos por vela + todas las operaciones (con
+    su motivo de salida) + costes pagados.
+    """
+    close = df["close"].values
+    high = df["high"].values if "high" in df.columns else close
+    low = df["low"].values if "low" in df.columns else close
+    n = len(close)
+
+    # El stop por ATR necesita la serie de ATR(14); solo se paga si el spec lo usa.
+    atr_arr = None
+    if risk is not None and getattr(risk, "atr_stop_mult", None) is not None:
+        atr_arr = ta_lib.volatility.AverageTrueRange(
+            pd.Series(high), pd.Series(low), pd.Series(close), window=14,
+        ).average_true_range().values
+
+    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk, sizing=sizing, atr=atr_arr)
+    trades = sim["trades"]
+    equity_curve = sim["equity_curve"]
+    final_capital = sim["final_capital"]
 
     # ── Métricas ───────────────────────────────────────────────────
-    final_capital = capital or (position * close[-1])
     total_return = ((final_capital - initial_capital) / initial_capital) * 100
     buy_hold_return = ((close[-1] - close[0]) / close[0]) * 100
 
     wins = [t for t in trades if t["result"] == "WIN"]
     losses = [t for t in trades if t["result"] == "LOSS"]
     win_rate = (len(wins) / len(trades) * 100) if trades else 0
-
-    # Max drawdown
-    equity_curve = [initial_capital]
-    temp_capital = initial_capital
-    temp_position = 0.0
-    temp_in_trade = False
-    for i in range(n):
-        if signals[i] == 1 and not temp_in_trade:
-            temp_position = temp_capital / close[i]
-            temp_capital = 0
-            temp_in_trade = True
-        elif signals[i] == -1 and temp_in_trade:
-            temp_capital = temp_position * close[i]
-            temp_position = 0
-            temp_in_trade = False
-        current_equity = temp_capital + (temp_position * close[i] if temp_in_trade else 0)
-        equity_curve.append(current_equity)
 
     peak = equity_curve[0]
     max_dd = 0
@@ -879,6 +1112,15 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
         dd = (peak - eq) / peak * 100
         if dd > max_dd:
             max_dd = dd
+
+    # Retornos por vela de la propia estrategia (0 cuando está en liquidez).
+    # Base de las métricas de riesgo (Sharpe, Sortino, VaR…).
+    bar_returns = [
+        (equity_curve[i] - equity_curve[i - 1]) / equity_curve[i - 1]
+        if equity_curve[i - 1] else 0.0
+        for i in range(1, len(equity_curve))
+    ]
+    exposure_pct = (sim["in_market_bars"] / n * 100) if n else 0.0
 
     avg_win = np.mean([t["pnl_pct"] for t in wins]) if wins else 0
     avg_loss = np.mean([abs(t["pnl_pct"]) for t in losses]) if losses else 0
@@ -898,12 +1140,10 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
             start_date = datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
             end_date = datetime.fromtimestamp(end_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
-    strategy_info = STRATEGIES[strategy]
-
     return {
-        "strategy": strategy_info["name"],
-        "strategy_key": strategy,
-        "description": strategy_info["description"],
+        "strategy": "Personalizada",
+        "strategy_key": None,
+        "description": "Estrategia compuesta",
         "initial_capital": initial_capital,
         "final_capital": round(float(final_capital), 2),
         "total_return_pct": round(float(total_return), 2),
@@ -916,5 +1156,35 @@ def run_backtest(df: pd.DataFrame, strategy: str, initial_capital: float = 10000
         "avg_win_pct": round(float(avg_win), 2),
         "avg_loss_pct": round(float(avg_loss), 2),
         "max_drawdown_pct": round(float(max_dd), 2),
-        "trades": trades[-20:],  # Últimas 20 operaciones
+        "exposure_pct": round(float(exposure_pct), 2),
+        "total_commission_pct": sim["total_commission_pct"],
+        "turnover": sim["turnover"],
+        "exit_reasons": _exit_reason_counts(trades),
+        # Datos completos para la suite de robustez (run_backtest los recorta):
+        "trades": trades,
+        "equity_curve": equity_curve,
+        "bar_returns": bar_returns,
     }
+
+
+def _exit_reason_counts(trades: list[dict]) -> dict:
+    """Recuento de operaciones por motivo de salida (señal, stop, objetivo…)."""
+    counts: dict[str, int] = {}
+    for t in trades:
+        reason = t.get("exit_reason", "signal")
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _simulate_and_measure(
+    df: pd.DataFrame, strategy: str, signals: np.ndarray, initial_capital: float,
+    costs: "CostModel | None" = None, risk: "RiskModel | None" = None,
+) -> dict:
+    """Backtest de una de las 5 estrategias del catálogo: añade nombre y
+    descripción a la salida genérica de backtest_signals (compatibilidad)."""
+    result = backtest_signals(df, signals, initial_capital, costs=costs, risk=risk)
+    info = STRATEGIES[strategy]
+    result["strategy"] = info["name"]
+    result["strategy_key"] = strategy
+    result["description"] = info["description"]
+    return result

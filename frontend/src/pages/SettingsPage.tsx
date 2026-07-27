@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/Toast'
 import { useCurrency } from '@/hooks/useCurrency'
 import PasswordInput from '@/components/ui/PasswordInput'
 import Skeleton from '@/components/ui/Skeleton'
+import DataHealthPanel from '@/components/settings/DataHealthPanel'
 
 const CURRENCY_OPTIONS: { value: PreferredCurrency; label: string }[] = [
   { value: 'usd', label: 'Dólar Estadounidense (USD - $)' },
@@ -84,7 +85,7 @@ function VerifiedBadge({ verified }: { verified: boolean }) {
 }
 
 export default function SettingsPage() {
-  const { user, logout } = useAuth()
+  const { user, logout, updateUser } = useAuth()
   const navigate = useNavigate()
   const { showToast } = useToast()
   const { setCurrency } = useCurrency()
@@ -94,6 +95,18 @@ export default function SettingsPage() {
   const [isLoadingMe, setIsLoadingMe] = useState(true)
   const [isSavingPrefs, setIsSavingPrefs] = useState(false)
   const [isResendingVerification, setIsResendingVerification] = useState(false)
+
+  // Edición de username
+  const [editingUsername, setEditingUsername] = useState(false)
+  const [usernameDraft, setUsernameDraft] = useState('')
+  const [isSavingUsername, setIsSavingUsername] = useState(false)
+
+  // Modal de cambio de email
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [emailPassword, setEmailPassword] = useState('')
+  const [emailError, setEmailError] = useState('')
+  const [isRequestingEmail, setIsRequestingEmail] = useState(false)
 
   // Modal para borrar cuenta
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -147,6 +160,50 @@ export default function SettingsPage() {
       showToast('No se pudieron guardar las preferencias.', 'error')
     } finally {
       setIsSavingPrefs(false)
+    }
+  }
+
+  /** Guardar el nuevo nombre de usuario y propagarlo al contexto global. */
+  const handleSaveUsername = async () => {
+    const trimmed = usernameDraft.trim()
+    if (!me || trimmed.length < 3 || trimmed === me.username) {
+      setEditingUsername(false)
+      return
+    }
+    setIsSavingUsername(true)
+    try {
+      const updated = await authService.updatePreferences({ username: trimmed })
+      setMe(updated)
+      // Refrescar el username del sidebar/avatar sin recargar
+      updateUser({ username: updated.username })
+      setEditingUsername(false)
+      showToast('Nombre de usuario actualizado.', 'success')
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } }
+      showToast(axiosErr.response?.data?.error || 'No se pudo actualizar el nombre de usuario.', 'error')
+    } finally {
+      setIsSavingUsername(false)
+    }
+  }
+
+  /** Solicitar el cambio de email: el enlace llega a la NUEVA dirección. */
+  const handleRequestEmailChange = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!me) return
+    setEmailError('')
+    setIsRequestingEmail(true)
+    try {
+      const response = await authService.requestEmailChange(newEmail, emailPassword)
+      setMe({ ...me, pending_email: response.pending_email })
+      setShowEmailModal(false)
+      setNewEmail('')
+      setEmailPassword('')
+      showToast('Enlace enviado a la nueva dirección. Revísala para confirmar el cambio.', 'success')
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } }
+      setEmailError(axiosErr.response?.data?.error || 'No se pudo solicitar el cambio de email.')
+    } finally {
+      setIsRequestingEmail(false)
     }
   }
 
@@ -237,16 +294,73 @@ export default function SettingsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Nombre de usuario</label>
-              <div className="bg-slate-900/50 px-4 py-3 rounded-lg border border-slate-700 text-slate-300">
-                {me?.username ?? user?.username}
-              </div>
+              {editingUsername ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={usernameDraft}
+                    onChange={(e) => setUsernameDraft(e.target.value)}
+                    minLength={3}
+                    maxLength={150}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveUsername()
+                      if (e.key === 'Escape') setEditingUsername(false)
+                    }}
+                    className="flex-1 min-w-0 bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                  <button
+                    onClick={handleSaveUsername}
+                    disabled={isSavingUsername || usernameDraft.trim().length < 3}
+                    className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm px-3 py-3 rounded-lg transition-colors"
+                  >
+                    {isSavingUsername ? '...' : 'Guardar'}
+                  </button>
+                  <button
+                    onClick={() => setEditingUsername(false)}
+                    className="shrink-0 text-slate-400 hover:text-white text-sm px-2 py-3 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-slate-900/50 px-4 py-3 rounded-lg border border-slate-700 text-slate-300 flex items-center justify-between gap-2">
+                  <span className="truncate">{me?.username ?? user?.username}</span>
+                  <button
+                    onClick={() => {
+                      setUsernameDraft(me?.username ?? '')
+                      setEditingUsername(true)
+                    }}
+                    aria-label="Editar nombre de usuario"
+                    className="shrink-0 text-slate-500 hover:text-white transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                    </svg>
+                  </button>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">Correo electrónico</label>
               <div className="bg-slate-900/50 px-4 py-3 rounded-lg border border-slate-700 text-slate-300 flex items-center justify-between gap-2">
                 <span className="truncate">{me?.email ?? user?.email}</span>
-                {me && <VerifiedBadge verified={me.is_email_verified} />}
+                <div className="flex items-center gap-2 shrink-0">
+                  {me && <VerifiedBadge verified={me.is_email_verified} />}
+                  <button
+                    onClick={() => setShowEmailModal(true)}
+                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    Cambiar
+                  </button>
+                </div>
               </div>
+              {me?.pending_email && (
+                <p className="mt-2 text-xs text-amber-400">
+                  Cambio pendiente a <strong>{me.pending_email}</strong> — revisa ese correo para
+                  confirmarlo (válido 24 h).
+                </p>
+              )}
             </div>
           </div>
           )}
@@ -339,6 +453,16 @@ export default function SettingsPage() {
               onChange={(value) => savePreference({ notify_market_digest: value })}
               label="Novedades y Noticias"
               description="Recibe resúmenes periódicos sobre el estado del mercado."
+            />
+
+            <hr className="border-slate-700 my-4" />
+
+            <ToggleSwitch
+              checked={me?.notify_risk_digest ?? false}
+              disabled={isLoadingMe || isSavingPrefs}
+              onChange={(value) => savePreference({ notify_risk_digest: value })}
+              label="Resumen diario de riesgo"
+              description="Recibe cada día laborable un email con el VaR de tu cartera, el estado de las barreras del OMS y tu P&L."
             />
           </div>
         </section>
@@ -435,7 +559,76 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {/* Salud del almacén histórico OHLCV (calidad de datos) */}
+        <DataHealthPanel />
+
       </div>
+
+      {/* MODAL DE CAMBIO DE EMAIL */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-2">Cambiar correo electrónico</h3>
+            <p className="text-slate-400 text-sm mb-6">
+              Te enviaremos un enlace de confirmación a la <strong className="text-slate-300">nueva dirección</strong>.
+              Tu email actual seguirá activo hasta que lo confirmes.
+            </p>
+
+            <form onSubmit={handleRequestEmailChange} className="space-y-4">
+              <div>
+                <label htmlFor="new-email" className="block text-sm font-medium text-slate-300 mb-1">
+                  Nueva dirección de email
+                </label>
+                <input
+                  id="new-email"
+                  type="email"
+                  required
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="nuevo@email.com"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="email-password" className="block text-sm font-medium text-slate-300 mb-1">
+                  Tu contraseña actual
+                </label>
+                <PasswordInput
+                  id="email-password"
+                  value={emailPassword}
+                  onChange={setEmailPassword}
+                  required
+                  placeholder="Confirma tu identidad"
+                />
+              </div>
+
+              {emailError && <p className="text-sm text-red-400">{emailError}</p>}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEmailModal(false)
+                    setNewEmail('')
+                    setEmailPassword('')
+                    setEmailError('')
+                  }}
+                  className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-700 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRequestingEmail}
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white transition-colors"
+                >
+                  {isRequestingEmail ? 'Enviando...' : 'Enviar confirmación'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE CONFIRMACIÓN DE BORRADO */}
       {showDeleteModal && (

@@ -100,19 +100,37 @@ class UpdatePreferencesSerializer(serializers.Serializer):
     Valida el cuerpo de PATCH /api/auth/me/.
 
     Todos los campos son opcionales: el cliente envía solo lo que cambia.
+    Además de las preferencias, permite actualizar el nombre de usuario
+    (la unicidad se comprueba en la vista, que conoce al usuario actual).
     """
+    username = serializers.CharField(min_length=3, max_length=150, required=False)
     preferred_currency = serializers.ChoiceField(
         choices=["usd", "eur", "gbp"], required=False
     )
     notify_price_alerts = serializers.BooleanField(required=False)
     notify_market_digest = serializers.BooleanField(required=False)
+    notify_risk_digest = serializers.BooleanField(required=False)
+
+    def validate_username(self, value: str) -> str:
+        return value.strip()
 
     def validate(self, data: dict) -> dict:
         if not data:
             raise serializers.ValidationError(
-                "Debes enviar al menos una preferencia para actualizar."
+                "Debes enviar al menos un campo para actualizar."
             )
         return data
+
+
+class ChangeEmailRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/change-email/."""
+    new_email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+
+class ChangeEmailConfirmSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/auth/change-email/confirm/."""
+    token = serializers.CharField()
 
 
 class Enable2FASerializer(serializers.Serializer):
@@ -334,9 +352,99 @@ class BacktestRequestSerializer(serializers.Serializer):
     )
     limit = serializers.IntegerField(min_value=60, max_value=1000, default=500, required=False)
     initial_capital = serializers.FloatField(min_value=100, max_value=1000000, default=10000, required=False)
+    # Realismo de ejecución (opcional): costes y gestión de riesgo
+    commission_bps = serializers.FloatField(min_value=0, max_value=100, default=0, required=False)
+    slippage_bps = serializers.FloatField(min_value=0, max_value=100, default=0, required=False)
+    stop_loss_pct = serializers.FloatField(min_value=0.005, max_value=0.5, required=False, allow_null=True)
+    take_profit_pct = serializers.FloatField(min_value=0.005, max_value=1.0, required=False, allow_null=True)
 
 
 # ── Portfolio ──────────────────────────────────────────────────────
+
+class RobustBacktestRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/analysis/backtest/robust/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    strategy = serializers.ChoiceField(
+        choices=["rsi_reversal", "macd_crossover", "bollinger_bounce", "sma_crossover", "ema_trend"]
+    )
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    limit = serializers.IntegerField(min_value=250, max_value=1000, default=365, required=False)
+    initial_capital = serializers.FloatField(
+        min_value=100, max_value=1_000_000, default=10000.0, required=False
+    )
+    objective = serializers.ChoiceField(
+        choices=["sharpe", "sortino", "calmar", "total_return"],
+        default="sharpe", required=False,
+    )
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="balanced", required=False,
+    )
+
+
+class RobustCompareRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/analysis/backtest/robust/compare/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    objective = serializers.ChoiceField(
+        choices=["sharpe", "sortino", "calmar", "total_return"],
+        default="sharpe", required=False,
+    )
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="fast", required=False,
+    )
+
+
+class StrategyGenerateRequestSerializer(serializers.Serializer):
+    """Valida el cuerpo de POST /api/strategies/generate/."""
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    limit = serializers.IntegerField(min_value=300, max_value=2000, default=730, required=False)
+    initial_capital = serializers.FloatField(
+        min_value=100, max_value=1_000_000, default=10000.0, required=False
+    )
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="balanced", required=False,
+    )
+    optimizer = serializers.ChoiceField(
+        choices=["single", "nsga"], default="single", required=False,
+    )
+    # Semilla reproducible del GA (mismos datos + misma semilla → misma evolución)
+    seed = serializers.IntegerField(
+        min_value=0, max_value=2**31 - 1, required=False, allow_null=True,
+    )
+
+
+class SpecRobustnessRequestSerializer(serializers.Serializer):
+    """Valida POST /api/strategies/robustness/ — análisis profundo de un spec.
+
+    Se puede pasar el spec directamente, o un strategy_id de una estrategia
+    guardada (StrategyDefinition) de la que se recupera el spec."""
+    spec = serializers.JSONField(required=False)
+    strategy_id = serializers.IntegerField(required=False)
+    asset_symbol = serializers.CharField(max_length=20)
+    interval = serializers.ChoiceField(
+        choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
+        default="1d", required=False,
+    )
+    limit = serializers.IntegerField(min_value=250, max_value=2000, default=365, required=False)
+    preset = serializers.ChoiceField(
+        choices=["fast", "balanced", "thorough"], default="balanced", required=False,
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("spec") and not attrs.get("strategy_id"):
+            raise serializers.ValidationError("Indica 'spec' o 'strategy_id'.")
+        return attrs
+
 
 class AddTradeSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/trades/."""

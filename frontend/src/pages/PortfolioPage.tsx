@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   portfolioService,
   type Position,
@@ -21,7 +22,9 @@ import {
   type ClosePositionPayload,
   type AddToPositionPayload,
 } from '../services/portfolioService'
-import PortfolioInsights from '../components/PortfolioInsights'
+import PortfolioInsights from '@/components/portfolio/PortfolioInsights'
+import RiskPanel from '@/components/portfolio/RiskPanel'
+import TcaPanel from '@/components/portfolio/TcaPanel'
 import EmptyState from '../components/ui/EmptyState'
 import AnimatedNumber from '../components/ui/AnimatedNumber'
 import Skeleton from '../components/ui/Skeleton'
@@ -744,6 +747,7 @@ function TradeHistoryTable({
 type Tab = 'open' | 'closed' | 'history'
 
 export default function PortfolioPage() {
+  const { t } = useTranslation()
   const [positionSummary, setPositionSummary] = useState<PositionSummary | null>(null)
   const [trades, setTrades] = useState<Trade[]>([])
   const [tab, setTab] = useState<Tab>('open')
@@ -795,17 +799,41 @@ export default function PortfolioPage() {
         {/* Cabecera */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Portfolio</h1>
+            <h1 className="text-2xl font-bold">{t('portfolio.title')}</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Posiciones LONG/SHORT independientes con PnL en tiempo real
+              {t('portfolio.subtitle')}
             </p>
           </div>
-          <button
-            onClick={() => setShowOpenModal(true)}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
-          >
-            + Nueva posición
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative group">
+              <button
+                className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5"
+                title="Exportar informe CSV"
+              >
+                ⭳ Exportar
+              </button>
+              <div className="absolute right-0 mt-1 w-44 bg-slate-800 border border-slate-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-20">
+                <button
+                  onClick={() => portfolioService.downloadReport('positions').catch(() => { /* ignore */ })}
+                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/60 rounded-t-lg"
+                >
+                  📄 Posiciones (CSV)
+                </button>
+                <button
+                  onClick={() => portfolioService.downloadReport('risk').catch(() => { /* ignore */ })}
+                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/60 rounded-b-lg"
+                >
+                  🛡 Riesgo (CSV)
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowOpenModal(true)}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+            >
+              {t('portfolio.newPosition')}
+            </button>
+          </div>
         </div>
 
         {loading && (
@@ -830,21 +858,25 @@ export default function PortfolioPage() {
 
         {!loading && !error && positionSummary && (
           <>
+            {/* Riesgo agregado del libro completo (manual + paper + real) */}
+            <RiskPanel />
+            {/* Coste de ejecución real (TCA) */}
+            <div className="mb-6"><TcaPanel /></div>
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-slate-800 rounded-xl p-4">
-                <p className="text-xs text-slate-400 mb-1">Posiciones abiertas</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.openPositions')}</p>
                 <AnimatedNumber value={openPositions.length} className="text-xl font-bold block" />
                 <p className="text-xs text-slate-500 mt-0.5">
                   {positionSummary.open_long_count} LONG · {positionSummary.open_short_count} SHORT
                 </p>
               </div>
               <div className="bg-slate-800 rounded-xl p-4">
-                <p className="text-xs text-slate-400 mb-1">Posiciones cerradas</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.closedPositions')}</p>
                 <AnimatedNumber value={closedPositions.length} className="text-xl font-bold block" />
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalUnrealized >= 0)}`}>
-                <p className="text-xs text-slate-400 mb-1">PnL no realizado</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.unrealizedPnl')}</p>
                 <AnimatedNumber
                   value={totalUnrealized}
                   format={(n) => `${n >= 0 ? '+' : ''}${fmtUSD(n)}`}
@@ -852,7 +884,7 @@ export default function PortfolioPage() {
                 />
               </div>
               <div className={`rounded-xl p-4 ${pnlBg(totalRealized >= 0)}`}>
-                <p className="text-xs text-slate-400 mb-1">PnL realizado total</p>
+                <p className="text-xs text-slate-400 mb-1">{t('portfolio.realizedPnl')}</p>
                 <AnimatedNumber
                   value={totalRealized}
                   format={(n) => `${n >= 0 ? '+' : ''}${fmtUSD(n)}`}
@@ -870,9 +902,9 @@ export default function PortfolioPage() {
             <div className="flex gap-2 mb-4">
               {(
                 [
-                  ['open', `Posiciones Abiertas (${openPositions.length})`],
-                  ['closed', `Posiciones Cerradas (${closedPositions.length})`],
-                  ['history', `Historial (${trades.length})`],
+                  ['open', t('portfolio.tabOpen', { count: openPositions.length })],
+                  ['closed', t('portfolio.tabClosed', { count: closedPositions.length })],
+                  ['history', t('portfolio.tabHistory', { count: trades.length })],
                 ] as [Tab, string][]
               ).map(([t, label]) => (
                 <button

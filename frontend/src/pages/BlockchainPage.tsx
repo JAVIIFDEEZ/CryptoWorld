@@ -19,6 +19,16 @@ import {
   type MultiChainSymbol,
   type MultiChainStatItem,
 } from '../services/blockchainService'
+import { useTranslation } from 'react-i18next'
+import MultiChainComparePanel from '@/components/blockchain/MultiChainComparePanel'
+import WalletExplorerPanel from '@/components/blockchain/WalletExplorerPanel'
+import NetworkHealthPanel from '@/components/blockchain/NetworkHealthPanel'
+import ForensicsPanel from '@/components/blockchain/ForensicsPanel'
+import WhaleMovementsPanel from '@/components/blockchain/WhaleMovementsPanel'
+import OnChainPressurePanel from '@/components/blockchain/OnChainPressurePanel'
+import MarketPulsePanel from '@/components/blockchain/MarketPulsePanel'
+import SmartMoneyPanel from '@/components/blockchain/SmartMoneyPanel'
+import WatchlistPanel from '@/components/blockchain/WatchlistPanel'
 
 // ────────────────────────── Gráfico SVG simple ────────────────────
 
@@ -127,7 +137,28 @@ function fmtValue(v: number): string {
 
 // ────────────────────────── Página principal ─────────────────────
 
+type BlockchainView = 'network' | 'whales' | 'wallets' | 'forensics' | 'market'
+
+// Las etiquetas son claves i18n (se traducen en render).
+const BLOCKCHAIN_TABS: { key: BlockchainView; label: string; icon: string }[] = [
+  { key: 'network', label: 'blockchain.tabNetwork', icon: '⛽' },
+  { key: 'whales', label: 'blockchain.tabWhales', icon: '🐋' },
+  { key: 'wallets', label: 'blockchain.tabWallets', icon: '🔍' },
+  { key: 'forensics', label: 'blockchain.tabForensics', icon: '🕵️' },
+  { key: 'market', label: 'blockchain.tabMarket', icon: '📊' },
+]
+
+const SCAN_CHAINS = [
+  { slug: 'ethereum', label: 'Ethereum' },
+  { slug: 'base', label: 'Base' },
+  { slug: 'arbitrum', label: 'Arbitrum' },
+  { slug: 'optimism', label: 'Optimism' },
+]
+
 export default function BlockchainPage() {
+  const { t } = useTranslation()
+  const [view, setView] = useState<BlockchainView>('network')
+  const [whaleChain, setWhaleChain] = useState('ethereum')
   const [chain, setChain] = useState<MultiChainSymbol>('BTC')
 
   // ── Blockchair snapshot ──
@@ -215,12 +246,70 @@ export default function BlockchainPage() {
 
         {/* ── Cabecera ── */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Blockchain Analytics</h1>
+          <h1 className="text-2xl font-bold text-white">{t('blockchain.title')}</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Estadísticas on-chain en tiempo real · 10 blockchains
+            {t('blockchain.subtitle')}
           </p>
         </div>
 
+        {/* ── Sub-navegación por submódulos ── */}
+        <div className="flex flex-wrap gap-1 mb-6 border-b border-slate-700">
+          {BLOCKCHAIN_TABS.map(tabDef => (
+            <button
+              key={tabDef.key}
+              onClick={() => setView(tabDef.key)}
+              className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                view === tabDef.key ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span className="mr-1.5">{tabDef.icon}</span>{t(tabDef.label)}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Red y gas (Blockscout) ── */}
+        {view === 'network' && <NetworkHealthPanel />}
+
+        {/* ── Movimientos / ballenas: presión de exchanges + feed (Blockscout) ── */}
+        {view === 'whales' && (
+          <>
+            {/* Selector de red del histórico escaneado (presión + smart money) */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              {SCAN_CHAINS.map((c) => (
+                <button
+                  key={c.slug}
+                  onClick={() => setWhaleChain(c.slug)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    whaleChain === c.slug
+                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <OnChainPressurePanel chain={whaleChain} />
+            <SmartMoneyPanel chain={whaleChain} />
+            <WhaleMovementsPanel />
+          </>
+        )}
+
+        {/* ── Wallets: explorador + vigilancia (Blockscout) ── */}
+        {view === 'wallets' && (
+          <>
+            <WalletExplorerPanel />
+            <WatchlistPanel />
+          </>
+        )}
+
+        {/* ── Forense on-chain: flujos, concentración, huella conductual ── */}
+        {view === 'forensics' && <ForensicsPanel />}
+
+        {/* ── Mercado on-chain: pulso agregado + comparador por cadena ── */}
+        {view === 'market' && (
+          <>
+        <MarketPulsePanel />
         {/* ── Selector de chain ── */}
         <div className="flex flex-wrap gap-2 mb-6">
           {MULTICHAIN_SYMBOLS.map(s => (
@@ -235,6 +324,11 @@ export default function BlockchainPage() {
               {s}
             </button>
           ))}
+        </div>
+
+        {/* ── Comparador multi-cadena (3D/2D) ── */}
+        <div className="mb-6">
+          <MultiChainComparePanel />
         </div>
 
         {/* ── Snapshot Blockchair ── */}
@@ -461,6 +555,8 @@ export default function BlockchainPage() {
               </div>
             )}
           </div>
+        )}
+          </>
         )}
 
     </div>

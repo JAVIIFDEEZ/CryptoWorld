@@ -77,18 +77,148 @@ export interface FeatureImportance {
   importance: number
 }
 
+// Explicabilidad local: contribución de cada feature a ESTA predicción
+export interface PredictionDriver {
+  feature: string
+  contribution: number
+}
+
 export interface PredictionResult {
   prediction: string
   confidence: number
+  prob_up?: number
+  neutral_band?: number
   horizon: number
   model?: string
+  calibrated?: boolean
+  brier_score?: number | null
   cv_accuracy?: number
   cv_std?: number
+  oos_accuracy?: number
+  baseline_accuracy?: number
+  edge?: number
+  precision_up?: number
+  recall_up?: number
+  f1_up?: number
+  auc?: number | null
+  n_oos?: number
+  n_train?: number
+  n_splits?: number
+  up_rate?: number
+  verdict?: 'EDGE' | 'WEAK' | 'NO_EDGE'
+  verdict_text?: string
   features_importance?: FeatureImportance[]
+  drivers?: PredictionDriver[]
+  elapsed_ms?: number
   disclaimer?: string
   asset_symbol?: string
   interval?: string
   message?: string
+  error?: string
+}
+
+// Historial real de predicciones (verificadas a posteriori)
+export interface PredictionTrackRecordItem {
+  id: number
+  asset_symbol: string
+  interval: string
+  horizon: number
+  predicted: string
+  confidence: number
+  verdict: string
+  status: 'pending' | 'correct' | 'incorrect' | 'unresolved'
+  actual_direction: string | null
+  actual_return_pct: number | null
+  created_at: string
+  resolve_at: string
+}
+
+export interface PredictionTrackRecord {
+  total: number
+  resolved: number
+  pending: number
+  correct: number
+  accuracy: number | null
+  by_verdict: Record<string, { n: number; accuracy: number }>
+  recent: PredictionTrackRecordItem[]
+}
+
+// Monitorización de drift del modelo (prometido OOS vs realizado en vivo)
+export interface PredictionMonitoringBucket {
+  from: string
+  to: string
+  n: number
+  accuracy: number
+}
+
+export interface PredictionMonitoring {
+  status: 'ok' | 'watch' | 'drift' | 'insufficient'
+  message: string
+  expected_accuracy: number | null
+  realized_accuracy: number | null
+  gap: number | null
+  n_resolved: number
+  min_sample: number
+  series: PredictionMonitoringBucket[]
+  by_asset: Record<string, { n: number; accuracy: number }>
+  thresholds: { watch: number; drift: number }
+}
+
+// Confluencia multi-marco temporal (MTF)
+export interface MtfFrame {
+  interval: string
+  weight: number
+  verdict?: string
+  score?: number
+  max_score?: number
+  normalized?: number
+  buy_count?: number
+  neutral_count?: number
+  sell_count?: number
+  last_price?: number | null
+  error?: string
+}
+
+export interface MtfConfluence {
+  asset_symbol: string
+  frames: MtfFrame[]
+  frames_analyzed: number
+  alignment_score: number
+  agreement_pct: number
+  verdict: 'ALINEADO_ALCISTA' | 'ALINEADO_BAJISTA' | 'MIXTO' | 'NEUTRAL'
+  verdict_text: string
+  disclaimer?: string
+  error?: string
+}
+
+// Estructura de precio: soportes/resistencias + divergencias
+export interface PriceLevel {
+  price: number
+  touches: number
+  kind: 'support' | 'resistance'
+  distance_pct: number
+}
+
+export interface Divergence {
+  type: 'bearish' | 'bullish'
+  detail: string
+  price_from: number
+  price_to: number
+  rsi_from: number
+  rsi_to: number
+}
+
+export interface PriceStructure {
+  asset_symbol: string
+  interval: string
+  last_price: number
+  levels: PriceLevel[]
+  nearest_support: PriceLevel | null
+  nearest_resistance: PriceLevel | null
+  divergences: Divergence[]
+  candles_analyzed: number
+  data_source: string
+  note: string
   error?: string
 }
 
@@ -117,6 +247,7 @@ export interface BacktestTrade {
   exit_price: number
   pnl_pct: number
   result: string
+  exit_reason?: string
 }
 
 export interface BacktestResult {
@@ -137,14 +268,131 @@ export interface BacktestResult {
   avg_win_pct: number
   avg_loss_pct: number
   max_drawdown_pct: number
+  total_commission_pct?: number
+  turnover?: number
+  exit_reasons?: Record<string, number>
+  commission_bps?: number
+  slippage_bps?: number
   trades: BacktestTrade[]
   error?: string
+}
+
+export interface BacktestOptions {
+  commission_bps?: number
+  slippage_bps?: number
+  stop_loss_pct?: number | null
+  take_profit_pct?: number | null
 }
 
 export interface StrategyInfo {
   key: string
   name: string
   description: string
+}
+
+// Motor de confluencia 360° (técnica + ML + on-chain + noticias)
+export interface ConfluenceSource {
+  available: boolean
+  score: number | null
+  detail: string
+  weight: number
+  weight_mode: 'aprendido_activo' | 'aprendido_global' | 'a_priori'
+  hit_rate: number | null
+  sample: number
+}
+
+export interface ConfluenceReading {
+  asset_symbol: string
+  score: number
+  verdict: 'CONFLUENCIA_ALCISTA' | 'CONFLUENCIA_BAJISTA' | 'MIXTO' | 'NEUTRAL' | 'INSUFICIENTE'
+  verdict_text: string
+  agreement_pct: number
+  sources_available: number
+  sources: Record<string, ConfluenceSource>
+  track_record?: {
+    overall: { n: number; hit_rate: number | null; avg_signed_return_pct: number | null }
+    by_verdict: Record<string, { n: number; hit_rate: number | null; avg_signed_return_pct: number | null }>
+  }
+  backtest?: {
+    status: 'OK' | 'INSUFICIENTE'
+    trades: number
+    total_return_pct?: number
+    win_rate?: number
+    avg_trade_pct?: number
+    max_drawdown_pct?: number
+    profit_factor?: number | null
+    cost_bps?: number
+    equity_curve?: number[]
+  }
+  horizon_hours: number
+  note: string
+  error?: string
+}
+
+// ── Terminal cuantitativa (snapshot institucional estilo Bloomberg) ─
+export interface DerivativesSnapshot {
+  available: boolean
+  symbol?: string
+  perp_symbol?: string
+  mark_price?: number
+  index_price?: number | null
+  funding_rate?: number
+  funding_annualized_pct?: number
+  funding_verdict?: string
+  basis_pct?: number | null
+  basis_verdict?: string
+  open_interest?: number | null
+  open_interest_usd?: number | null
+  note?: string
+}
+
+export interface QuantSnapshot {
+  symbol: string
+  interval: string
+  last_price: number | null
+  candles: number
+  data_source?: string
+  volatility: {
+    annualized_pct: number | null
+    atr: number | null
+    atr_pct: number | null
+    regime: string
+    ratio_vs_median: number | null
+  }
+  returns: { h: number; pct: number | null }[]
+  z_last_return: number | null
+  risk: {
+    sharpe: number | null
+    sortino: number | null
+    max_drawdown_pct: number | null
+    current_drawdown_pct: number | null
+  }
+  range: {
+    high: number | null
+    low: number | null
+    pct_rank: number | null
+    dist_to_high_pct: number | null
+    dist_to_low_pct: number | null
+  }
+  market: { beta_btc: number | null; corr_btc: number | null }
+  volume: { has_volume: boolean; relative: number | null; z_score: number | null }
+  regime: {
+    label: string
+    direction: 'ALCISTA' | 'BAJISTA' | 'NEUTRAL'
+    strength: string
+    adx: number | null
+    plus_di: number | null
+    minus_di: number | null
+    sma20: number | null
+    sma50: number | null
+    price_vs_sma20_pct: number | null
+    price_vs_sma50_pct: number | null
+  }
+  bias: 'ALCISTA' | 'BAJISTA' | 'NEUTRAL'
+  bull_confirmations: number
+  spark: number[]
+  disclaimer: string
+  error?: string
 }
 
 // ── Caché en memoria con TTL ───────────────────────────────────────
@@ -184,13 +432,70 @@ export const analysisService = {
     return data
   },
 
-  /** Predicción ML de dirección de precio. */
-  async predict(assetSymbol: string, interval: IntervalType = '1h', horizon = 5): Promise<PredictionResult> {
-    const { data } = await apiClient.post<PredictionResult>('/analysis/predict/', {
-      asset_symbol: assetSymbol,
-      interval,
-      horizon,
+  /** Confluencia multi-marco temporal: señales en 15m/1h/4h/1d con alineación. */
+  async getMtfConfluence(assetSymbol: string): Promise<MtfConfluence> {
+    const { data } = await apiClient.get<MtfConfluence>('/analysis/mtf/', {
+      params: { asset_symbol: assetSymbol },
     })
+    return data
+  },
+
+  /** Soportes/resistencias por pivotes + divergencias RSI/precio. */
+  async getPriceStructure(assetSymbol: string, interval: IntervalType = '1h'): Promise<PriceStructure> {
+    const { data } = await apiClient.get<PriceStructure>('/analysis/levels/', {
+      params: { asset_symbol: assetSymbol, interval },
+    })
+    return data
+  },
+
+  /** Terminal cuantitativa: snapshot institucional (volatilidad, riesgo,
+   * régimen, beta) derivado del OHLCV. Cacheado 3 min en el backend. */
+  async getQuantSnapshot(assetSymbol: string, interval: IntervalType = '1h'): Promise<QuantSnapshot> {
+    const { data } = await apiClient.get<QuantSnapshot>('/analysis/quant/', {
+      params: { asset_symbol: assetSymbol, interval },
+    })
+    return data
+  },
+
+  /** Microestructura del perpetuo del activo: funding, basis e interés abierto. */
+  async getDerivatives(assetSymbol: string): Promise<DerivativesSnapshot> {
+    const { data } = await apiClient.get<DerivativesSnapshot>('/analysis/derivatives/', {
+      params: { asset_symbol: assetSymbol },
+    })
+    return data
+  },
+
+  /** Predicción ML de dirección de precio. El primer cálculo entrena y valida
+   * el ensemble (walk-forward) y puede tardar bastante más que el timeout
+   * global de 10 s, sobre todo en máquinas modestas; luego queda cacheado
+   * 15 min en el backend. Timeout propio holgado para no abortar ese primer
+   * entrenamiento. */
+  async predict(assetSymbol: string, interval: IntervalType = '1h', horizon = 5): Promise<PredictionResult> {
+    const { data } = await apiClient.post<PredictionResult>(
+      '/analysis/predict/',
+      { asset_symbol: assetSymbol, interval, horizon },
+      { timeout: 90_000 },
+    )
+    return data
+  },
+
+  /** Motor de confluencia 360°: fusión de las 4 fuentes con pesos aprendidos. */
+  async getConfluence(assetSymbol: string): Promise<ConfluenceReading> {
+    const { data } = await apiClient.get<ConfluenceReading>('/analysis/confluence/', {
+      params: { symbol: assetSymbol }, timeout: 90_000,
+    })
+    return data
+  },
+
+  /** Historial real de aciertos de las predicciones (bucle de mejora continua). */
+  async getPredictionTrackRecord(): Promise<PredictionTrackRecord> {
+    const { data } = await apiClient.get<PredictionTrackRecord>('/analysis/predictions/')
+    return data
+  },
+
+  /** Monitorización de drift del modelo (prometido OOS vs realizado en vivo). */
+  async getPredictionMonitoring(): Promise<PredictionMonitoring> {
+    const { data } = await apiClient.get<PredictionMonitoring>('/analysis/predictions/monitoring/')
     return data
   },
 
@@ -210,6 +515,7 @@ export const analysisService = {
     interval: IntervalType = '1h',
     limit = 1000,
     initialCapital = 10000,
+    options: BacktestOptions = {},
   ): Promise<BacktestResult> {
     const { data } = await apiClient.post<BacktestResult>('/analysis/backtest/', {
       asset_symbol: assetSymbol,
@@ -217,6 +523,7 @@ export const analysisService = {
       interval,
       limit,
       initial_capital: initialCapital,
+      ...options,
     })
     return data
   },

@@ -225,3 +225,112 @@ class TestDispatchTaskFallback:
 
         assert result == "eager-result"
         assert executed["args"] == (42,)
+
+
+class TestUsernameChange:
+
+    @pytest.mark.integration
+    def test_patch_updates_username(self, authenticated_client, test_user):
+        response = authenticated_client.patch(
+            "/api/auth/me/", {"username": "nuevonombre"}, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["username"] == "nuevonombre"
+        test_user.refresh_from_db()
+        assert test_user.username == "nuevonombre"
+
+    @pytest.mark.integration
+    def test_patch_rejects_duplicate_username(self, authenticated_client, admin_user):
+        response = authenticated_client.patch(
+            "/api/auth/me/", {"username": "adminuser"}, format="json"
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    def test_patch_rejects_short_username(self, authenticated_client):
+        response = authenticated_client.patch(
+            "/api/auth/me/", {"username": "ab"}, format="json"
+        )
+        assert response.status_code == 400
+
+
+class TestEmailChange:
+
+    @pytest.mark.integration
+    def test_request_requires_correct_password(self, authenticated_client):
+        response = authenticated_client.post(
+            "/api/auth/change-email/",
+            {"new_email": "nuevo@example.com", "password": "incorrecta"},
+            format="json",
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    def test_request_rejects_email_in_use(self, authenticated_client, admin_user):
+        response = authenticated_client.post(
+            "/api/auth/change-email/",
+            {"new_email": "admin@example.com", "password": "testpass123"},
+            format="json",
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    def test_request_sets_pending_email(self, authenticated_client, test_user):
+        response = authenticated_client.post(
+            "/api/auth/change-email/",
+            {"new_email": "Nuevo@Example.com", "password": "testpass123"},
+            format="json",
+        )
+        assert response.status_code == 200
+        test_user.refresh_from_db()
+        # Normalizado a minusculas; el email de login NO cambia todavia
+        assert test_user.pending_email == "nuevo@example.com"
+        assert test_user.email == "test@example.com"
+
+    @pytest.mark.integration
+    def test_confirm_swaps_email_and_verifies(self, authenticated_client, test_user, api_client):
+        from django.core import signing
+        from core.application.use_cases.change_email import EMAIL_CHANGE_SALT
+
+        # Peticion previa que deja la direccion pendiente
+        authenticated_client.post(
+            "/api/auth/change-email/",
+            {"new_email": "nuevo@example.com", "password": "testpass123"},
+            format="json",
+        )
+
+        token = signing.dumps(
+            {"user_id": test_user.pk, "new_email": "nuevo@example.com"},
+            salt=EMAIL_CHANGE_SALT,
+        )
+        response = api_client.post(
+            "/api/auth/change-email/confirm/", {"token": token}, format="json"
+        )
+        assert response.status_code == 200
+
+        test_user.refresh_from_db()
+        assert test_user.email == "nuevo@example.com"
+        assert test_user.pending_email is None
+        assert test_user.is_email_verified is True
+
+    @pytest.mark.integration
+    def test_confirm_rejects_token_without_pending_request(self, api_client, test_user):
+        from django.core import signing
+        from core.application.use_cases.change_email import EMAIL_CHANGE_SALT
+
+        # Token bien firmado pero sin peticion pendiente en BD
+        token = signing.dumps(
+            {"user_id": test_user.pk, "new_email": "otro@example.com"},
+            salt=EMAIL_CHANGE_SALT,
+        )
+        response = api_client.post(
+            "/api/auth/change-email/confirm/", {"token": token}, format="json"
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    def test_confirm_rejects_garbage_token(self, api_client, db):
+        response = api_client.post(
+            "/api/auth/change-email/confirm/", {"token": "no-es-un-token"}, format="json"
+        )
+        assert response.status_code == 400

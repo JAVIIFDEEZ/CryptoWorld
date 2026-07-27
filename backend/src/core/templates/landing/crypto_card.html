@@ -1,0 +1,179 @@
+{% comment %}
+  landing/crypto_card.html — Ficha técnica pública e indexable de un activo.
+  Renderizada 100% por servidor: todo el contenido es visible sin JS.
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ meta_description }}" />
+  <link rel="canonical" href="{{ canonical_url }}" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="CryptoWorld" />
+  <meta property="og:title" content="{{ title }}" />
+  <meta property="og:description" content="{{ meta_description }}" />
+  <meta property="og:url" content="{{ canonical_url }}" />
+  <meta property="og:locale" content="es_ES" />
+  {% if card.logo_url %}<meta property="og:image" content="{{ card.logo_url }}" />{% endif %}
+  <meta name="twitter:card" content="summary" />
+
+  <!-- Datos estructurados schema.org -->
+  <script type="application/ld+json">{{ json_ld|safe }}</script>
+
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      background: #0f172a; color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      line-height: 1.6;
+    }
+    a { color: #60a5fa; text-decoration: none; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 0 24px; }
+    .brand { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+    .brand span { color: #60a5fa; }
+    .btn {
+      display: inline-block; background: #2563eb; color: #fff; font-weight: 600;
+      font-size: 14px; padding: 10px 18px; border-radius: 10px;
+    }
+    .hero { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+    .hero img { width: 56px; height: 56px; border-radius: 50%; }
+    h1 { font-size: 26px; color: #f8fafc; line-height: 1.25; }
+    .price { font-size: 34px; font-weight: 700; color: #f8fafc; font-variant-numeric: tabular-nums; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 28px; }
+    .chip {
+      font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 999px;
+      border: 1px solid #334155; background: #1e293b;
+    }
+    .chip.buy { color: #34d399; border-color: rgba(52,211,153,.35); }
+    .chip.sell { color: #f87171; border-color: rgba(248,113,113,.35); }
+    .chip.neutral { color: #cbd5e1; }
+    section { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 22px 24px; margin-bottom: 18px; }
+    h2 { font-size: 17px; color: #f1f5f9; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; color: #94a3b8; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #334155; }
+    td { padding: 7px 8px; border-bottom: 1px solid rgba(51,65,85,.5); font-variant-numeric: tabular-nums; }
+    td.buy { color: #34d399; } td.sell { color: #f87171; } td.neutral { color: #94a3b8; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 640px) { .cols { grid-template-columns: 1fr; } }
+    .analysis p { margin-bottom: 14px; color: #cbd5e1; font-size: 15px; }
+    .muted { color: #64748b; font-size: 12px; }
+    .links { display: flex; flex-wrap: wrap; gap: 8px; }
+    .links a {
+      font-size: 13px; padding: 6px 12px; border-radius: 999px;
+      border: 1px solid #334155; background: #0f172a; color: #cbd5e1;
+    }
+    .links a:hover { border-color: #3b82f6; color: #fff; }
+    footer { margin-top: 26px; color: #64748b; font-size: 12px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="topbar">
+      <a class="brand" href="{{ base_url }}"><span>Crypto</span>World</a>
+      <a class="btn" href="{{ app_url }}">Abrir en la app</a>
+    </nav>
+
+    <header>
+      <div class="hero">
+        {% if card.logo_url %}<img src="{{ card.logo_url }}" alt="Logo de {{ card.name }}" />{% endif %}
+        <div>
+          <h1>Análisis técnico de {{ card.name }} ({{ card.symbol }})</h1>
+          <p class="muted">Ficha de confluencia · gráfico diario · actualizada cada hora</p>
+        </div>
+      </div>
+      <p class="price">{{ card.last_price }} USD</p>
+      <div class="chips">
+        <span class="chip {{ verdict_tone }}">Veredicto: {{ verdict_label }} ({{ card.verdict.confidence_pct }}%)</span>
+        <span class="chip {{ trend_tone }}">Tendencia: {{ trend_label }}</span>
+        <span class="chip neutral">Confianza: {{ card.verdict.confidence_level }}</span>
+      </div>
+    </header>
+
+    <section class="analysis">
+      <h2>Análisis de {{ card.name }} hoy</h2>
+      {% for paragraph in card.analysis_paragraphs %}
+        <p>{{ paragraph }}</p>
+      {% endfor %}
+    </section>
+
+    <section>
+      <h2>Resumen de indicadores ({{ card.signals.summary.buy_count }} compra · {{ card.signals.summary.sell_count }} venta · {{ card.signals.summary.neutral_count }} neutral)</h2>
+      <table>
+        <thead><tr><th>Indicador</th><th>Valor</th><th>Señal</th></tr></thead>
+        <tbody>
+          {% for ind in card.signals.indicators %}
+          <tr>
+            <td>{{ ind.name }}</td>
+            <td>{{ ind.value }}</td>
+            <td class="{% if ind.signal == 'COMPRA' %}buy{% elif ind.signal == 'VENTA' %}sell{% else %}neutral{% endif %}">{{ ind.signal }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <div class="cols">
+      <section>
+        <h2>Soportes y resistencias</h2>
+        <table>
+          <thead><tr><th>Nivel</th><th>Precio (USD)</th><th>Distancia</th></tr></thead>
+          <tbody>
+            {% for r in card.support_resistance.resistances reversed %}
+            <tr><td class="sell">Resistencia</td><td>{{ r.level }}</td><td>{{ r.distance_pct }}%</td></tr>
+            {% endfor %}
+            {% for s in card.support_resistance.supports %}
+            <tr><td class="buy">Soporte</td><td>{{ s.level }}</td><td>{{ s.distance_pct }}%</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if not card.support_resistance.supports and not card.support_resistance.resistances %}
+        <p class="muted">Sin niveles de pivote relevantes en el periodo analizado.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Retrocesos de Fibonacci ({{ card.fibonacci.direction }})</h2>
+        <table>
+          <thead><tr><th>Retroceso</th><th>Precio (USD)</th></tr></thead>
+          <tbody>
+            <tr><td>Máximo (0%)</td><td>{{ card.fibonacci.swing_high }}</td></tr>
+            {% for level in card.fibonacci.levels %}
+            <tr><td>{{ level.label }}</td><td>{{ level.price }}</td></tr>
+            {% endfor %}
+            <tr><td>Mínimo (100%)</td><td>{{ card.fibonacci.swing_low }}</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    {% if other_assets %}
+    <section>
+      <h2>Otras criptomonedas analizadas</h2>
+      <div class="links">
+        {% for o in other_assets %}
+          <a href="{{ base_url }}/cripto/{{ o.slug }}">{{ o.name }} ({{ o.symbol }})</a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <footer>
+      <p>
+        Datos: {{ card.data_source }} · Generado el {{ card.generated_at }} ·
+        <a href="{{ app_url }}">Ver gráfico interactivo, alertas y backtesting en CryptoWorld</a>
+      </p>
+      <p>
+        Este contenido se genera automáticamente a partir de datos de mercado con fines
+        informativos y educativos. No constituye asesoramiento financiero ni una
+        recomendación de compra o venta. Invertir en criptoactivos conlleva riesgo.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

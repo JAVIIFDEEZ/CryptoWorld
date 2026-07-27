@@ -61,6 +61,7 @@ export type PreferredCurrency = 'usd' | 'eur' | 'gbp'
 export interface UserMeResponse {
   id: number
   email: string
+  pending_email: string | null
   username: string
   is_active: boolean
   is_email_verified: boolean
@@ -70,13 +71,16 @@ export interface UserMeResponse {
   preferred_currency: PreferredCurrency
   notify_price_alerts: boolean
   notify_market_digest: boolean
+  notify_risk_digest: boolean
   recovery_codes_remaining: number
 }
 
 export interface UpdatePreferencesPayload {
+  username?: string
   preferred_currency?: PreferredCurrency
   notify_price_alerts?: boolean
   notify_market_digest?: boolean
+  notify_risk_digest?: boolean
 }
 
 export interface Setup2FAResponse {
@@ -190,11 +194,39 @@ export const authService = {
   },
 
   /**
-   * Actualizar preferencias de cuenta (moneda, notificaciones).
+   * Actualizar nombre de usuario y preferencias de cuenta.
    * PATCH /api/auth/me/
    */
   async updatePreferences(payload: UpdatePreferencesPayload): Promise<UserMeResponse> {
     const { data } = await apiClient.patch<UserMeResponse>('/auth/me/', payload)
+    return data
+  },
+
+  /**
+   * Solicitar el cambio de email: envía un enlace de confirmación a la
+   * NUEVA dirección; el email de login no cambia hasta confirmar.
+   * POST /api/auth/change-email/
+   */
+  async requestEmailChange(
+    new_email: string,
+    password: string,
+  ): Promise<{ message: string; pending_email: string }> {
+    const { data } = await apiClient.post<{ message: string; pending_email: string }>(
+      '/auth/change-email/',
+      { new_email, password },
+    )
+    return data
+  },
+
+  /**
+   * Confirmar el cambio de email con el token recibido en el nuevo correo.
+   * POST /api/auth/change-email/confirm/
+   */
+  async confirmEmailChange(token: string): Promise<{ message: string }> {
+    const { data } = await apiClient.post<{ message: string }>(
+      '/auth/change-email/confirm/',
+      { token },
+    )
     return data
   },
 

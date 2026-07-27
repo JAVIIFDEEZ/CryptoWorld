@@ -194,6 +194,32 @@ def send_market_digest(self) -> dict:
 
 
 @shared_task(
+    name="core.tasks.send_email_change_email",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def send_email_change_email(self, user_id: int) -> dict:
+    """
+    Envía el enlace de confirmación de cambio de email a la dirección
+    pendiente (pending_email) del usuario. Despachado con dispatch_task
+    desde ChangeEmailRequestView.
+    """
+    try:
+        from core.application.use_cases.change_email import RequestEmailChangeUseCase
+
+        RequestEmailChangeUseCase.send_confirmation_email(user_id)
+        logger.info("send_email_change_email: enviado para user_id=%d", user_id)
+        return {"status": "sent", "user_id": user_id}
+    except ValueError as exc:
+        logger.warning("send_email_change_email: ValueError user_id=%d — %s", user_id, exc)
+        return {"status": "skipped", "reason": str(exc)}
+    except Exception as exc:
+        logger.error("send_email_change_email error user_id=%d: %s", user_id, exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
     name="core.tasks.send_password_reset_email",
     bind=True,
     max_retries=3,
@@ -218,4 +244,599 @@ def send_password_reset_email(self, email: str) -> dict:
         return {"status": "processed", "email": email}
     except Exception as exc:
         logger.error("send_password_reset_email error email=%s: %s", email, exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Suite de robustez de backtest — cientos de backtests, va en background
+# ─────────────────────────────────────────────────────────────────
+
+@shared_task(
+    name="core.tasks.run_robust_backtest",
+    bind=True,
+    max_retries=0,
+)
+def run_robust_backtest(
+    self,
+    asset_symbol: str,
+    strategy: str,
+    interval: str = "1d",
+    limit: int = 365,
+    initial_capital: float = 10000.0,
+    objective: str = "sharpe",
+    preset: str = "balanced",
+) -> dict:
+    """
+    Ejecuta la suite de robustez completa (walk-forward, Optuna, Monte Carlo,
+    DSR, PBO y detectores de sesgo) y devuelve el informe con el veredicto.
+
+    Lanzada con .delay() desde RobustBacktestLaunchView; el cliente consulta
+    el resultado con el job_id (AsyncResult). No reintenta: es costosa y un
+    fallo de datos ya se devuelve como payload {"error": ...}.
+    """
+    try:
+        from core.application.use_cases.run_robust_backtest import (
+            RunRobustBacktestUseCase,
+        )
+
+        result = RunRobustBacktestUseCase().execute(
+            asset_symbol=asset_symbol,
+            strategy=strategy,
+            interval=interval,
+            limit=limit,
+            initial_capital=initial_capital,
+            objective=objective,
+            preset=preset,
+        )
+        logger.info(
+            "run_robust_backtest: %s/%s → %s",
+            asset_symbol, strategy, result.get("verdict", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error(
+            "run_robust_backtest error %s/%s: %s",
+            asset_symbol, strategy, exc, exc_info=True,
+        )
+        raise
+
+
+@shared_task(
+    name="core.tasks.compare_strategies_robustness",
+    bind=True,
+    max_retries=0,
+)
+def compare_strategies_robustness(
+    self,
+    asset_symbol: str,
+    interval: str = "1d",
+    objective: str = "sharpe",
+    preset: str = "fast",
+) -> dict:
+    """
+    Evalúa la robustez de las 5 estrategias y devuelve el ranking por
+    Robustness Score. Reutiliza la caché por estrategia.
+    """
+    try:
+        from core.application.use_cases.run_robust_backtest import (
+            CompareStrategiesUseCase,
+        )
+
+        result = CompareStrategiesUseCase().execute(
+            asset_symbol=asset_symbol, interval=interval,
+            objective=objective, preset=preset,
+        )
+        logger.info(
+            "compare_strategies_robustness: %s → mejor %s",
+            asset_symbol, result.get("best", {}).get("strategy", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error("compare_strategies_robustness error %s: %s", asset_symbol, exc, exc_info=True)
+        raise
+
+
+# ─────────────────────────────────────────────────────────────────
+# Generador genético de estrategias — evolución + gating, va en background
+# ─────────────────────────────────────────────────────────────────
+
+@shared_task(
+    name="core.tasks.generate_strategies",
+    bind=True,
+    max_retries=0,
+)
+def generate_strategies(
+    self,
+    asset_symbol: str,
+    interval: str = "1d",
+    limit: int = 730,
+    initial_capital: float = 10000.0,
+    preset: str = "balanced",
+    optimizer: str = "single",
+    seed: int | None = None,
+) -> dict:
+    """
+    Genera estrategias por algoritmo genético: evoluciona StrategySpecs con
+    fitness robustez-aware (Sharpe OOS walk-forward), pasa los finalistas por el
+    gating de robustez (PBO, lookahead, Monte Carlo, eficiencia) y los re-evalúa
+    en el tramo de validación final intacto. Persiste el ranking como
+    StrategyDefinition.
+
+    Telemetría en vivo: cada generación publica en cache (Redis) un snapshot con
+    la convergencia y las curvas de equity de los mejores candidatos bajo
+    `strategy_gen_progress:<job_id>`; StrategyGenerateStatusView lo sirve al
+    frontend mientras el job corre.
+
+    Lanzada con .delay() desde StrategyGenerateLaunchView; el cliente consulta el
+    resultado con el job_id (AsyncResult). No reintenta: es costosa y un fallo de
+    datos ya se devuelve como payload {"error": ...}.
+    """
+    try:
+        from django.core.cache import cache as django_cache
+        from core.application.use_cases.generate_strategies import (
+            GenerateStrategiesUseCase,
+        )
+
+        job_id = getattr(self.request, "id", None)
+
+        def publish(snapshot: dict) -> None:
+            if job_id:
+                django_cache.set(f"strategy_gen_progress:{job_id}", snapshot, 3600)
+
+        result = GenerateStrategiesUseCase().execute(
+            asset_symbol=asset_symbol,
+            interval=interval,
+            limit=limit,
+            initial_capital=initial_capital,
+            preset=preset,
+            optimizer=optimizer,
+            seed=seed,
+            progress_cb=publish if job_id else None,
+        )
+        logger.info(
+            "generate_strategies: %s → %s finalistas robustos",
+            asset_symbol, result.get("summary", {}).get("passed_gating", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error("generate_strategies error %s: %s", asset_symbol, exc, exc_info=True)
+        raise
+
+
+@shared_task(
+    name="core.tasks.analyze_spec_robustness",
+    bind=True,
+    max_retries=0,
+)
+def analyze_spec_robustness(
+    self,
+    spec: dict,
+    asset_symbol: str,
+    interval: str = "1d",
+    limit: int = 365,
+    preset: str = "balanced",
+) -> dict:
+    """
+    Análisis profundo de robustez de un StrategySpec generado: suite completa
+    (PBO, DSR, Monte Carlo, permutación, lookahead) sobre el activo principal +
+    validación cruzada en varios activos. Lanzada con .delay() desde
+    SpecRobustnessLaunchView; el resultado se consulta con el job_id.
+    """
+    try:
+        from core.application.use_cases.run_spec_robustness import RunSpecRobustnessUseCase
+
+        result = RunSpecRobustnessUseCase().execute(
+            spec=spec, asset_symbol=asset_symbol, interval=interval, limit=limit, preset=preset,
+        )
+        logger.info(
+            "analyze_spec_robustness: %s → %s",
+            asset_symbol, result.get("verdict", result.get("error")),
+        )
+        return result
+    except Exception as exc:
+        logger.error("analyze_spec_robustness error %s: %s", asset_symbol, exc, exc_info=True)
+        raise
+
+
+@shared_task(
+    name="core.tasks.resolve_predictions",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def resolve_predictions(self) -> dict:
+    """
+    Verifica las predicciones cuyo horizonte ya transcurrió: trae el precio real
+    de la fecha de resolución y las marca acierto/fallo. Es el bucle de mejora
+    continua del modelo ML. Programada por celery beat (cada 30 min).
+    """
+    try:
+        from core.application.use_cases.track_predictions import ResolvePredictionsUseCase
+
+        result = ResolvePredictionsUseCase().execute()
+        logger.info("resolve_predictions: %d resueltas, %d aciertos",
+                    result["resolved"], result["correct"])
+        return result
+    except Exception as exc:
+        logger.error("resolve_predictions error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.warm_ml_predictions",
+    bind=True,
+    max_retries=0,
+)
+def warm_ml_predictions(self) -> dict:
+    """
+    Precalienta la caché de la predicción ML (1h, horizonte 5 — la combinación
+    por defecto de la UI) para los activos de mayor capitalización. El cálculo
+    es el mismo que dispararía el usuario; aquí se paga en segundo plano para
+    que la pestaña de predicción responda al instante. No registra predicciones
+    (log=False): solo las peticiones reales de usuarios alimentan el historial.
+    Programada por celery beat (cada 10 min; la caché dura 15).
+    """
+    from core.application.dto.asset_dto import PredictionRequestDTO
+    from core.application.use_cases.predict_price import PredictPriceUseCase
+    from core.infrastructure.persistence.models import CryptoAsset
+
+    symbols = list(
+        CryptoAsset.objects.exclude(market_cap__isnull=True)
+        .order_by("-market_cap")
+        .values_list("symbol", flat=True)[:8]
+    )
+    warmed, failed = 0, 0
+    use_case = PredictPriceUseCase()
+    for symbol in symbols:
+        try:
+            out = use_case.execute(
+                PredictionRequestDTO(asset_symbol=symbol, interval="1h", horizon=5),
+                owner=None, log=False,
+            )
+            warmed += int("error" not in out)
+            failed += int("error" in out)
+        except Exception as exc:  # noqa: BLE001 — un activo caído no frena al resto
+            failed += 1
+            logger.warning("warm_ml_predictions: %s falló: %s", symbol, exc)
+    logger.info("warm_ml_predictions: %d precalentadas, %d fallidas", warmed, failed)
+    return {"warmed": warmed, "failed": failed, "symbols": symbols}
+
+
+@shared_task(
+    name="core.tasks.evaluate_monitored_strategies",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+)
+def evaluate_monitored_strategies(self) -> dict:
+    """
+    Reevalúa las estrategias generadas activas y notifica los cambios de señal a
+    sus dueños. Programada por celery beat (cada 15 min).
+    """
+    try:
+        from core.application.use_cases.monitor_strategies import (
+            EvaluateMonitoredStrategiesUseCase,
+        )
+
+        result = EvaluateMonitoredStrategiesUseCase().execute()
+        logger.info(
+            "evaluate_monitored_strategies: %d evaluadas, %d notificadas",
+            result["evaluated"], result["notified"],
+        )
+        return result
+    except Exception as exc:
+        logger.error("evaluate_monitored_strategies error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.evaluate_paper_trading",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+)
+def evaluate_paper_trading(self) -> dict:
+    """
+    Reevalúa las carteras de paper trading activas y ejecuta sus señales (abrir/
+    cerrar posición con costes), registrando el P&L realizado. Verifica hacia
+    delante, en vivo y sin riesgo, las estrategias generadas. Programada por
+    celery beat (cada 15 min).
+    """
+    try:
+        from core.application.use_cases.paper_trading import EvaluatePaperTradingUseCase
+
+        result = EvaluatePaperTradingUseCase().execute()
+        logger.info("evaluate_paper_trading: %d carteras, %d operaciones",
+                    result["evaluated"], result["trades"])
+        # Decadencia detectada → reoptimizar ese activo ya, sin esperar al ciclo
+        # semanal (cierre del bucle drift→reoptimización).
+        for symbol, interval in result.get("decayed_pairs", []):
+            reoptimize_asset.delay(symbol, interval)
+        return result
+    except Exception as exc:
+        logger.error("evaluate_paper_trading error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.monitor_watched_addresses",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def monitor_watched_addresses(self) -> dict:
+    """
+    Revisa las direcciones on-chain vigiladas por los usuarios y crea alertas
+    cuando su saldo nativo varía por encima del umbral (whale tracking ligero).
+    Programada por celery beat (cada 30 min).
+    """
+    try:
+        from core.application.use_cases.watchlist import MonitorWatchedAddressesUseCase
+
+        result = MonitorWatchedAddressesUseCase().execute()
+        logger.info("monitor_watched_addresses: %d revisadas, %d alertas",
+                    result["checked"], result["alerts"])
+        return result
+    except Exception as exc:
+        logger.error("monitor_watched_addresses error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.scan_whale_movements",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def scan_whale_movements(self) -> dict:
+    """
+    Escanea los mayores movimientos on-chain recientes y los persiste
+    clasificados por dirección respecto a exchanges (depósito/retirada). Nutre
+    el histórico del indicador de presión on-chain. Programada por celery beat
+    (cada 15 min).
+    """
+    try:
+        from core.application.use_cases.onchain_pressure import (
+            DetectPressureSignalUseCase, ScanWhaleMovementsUseCase,
+        )
+
+        result = ScanWhaleMovementsUseCase().execute()
+        # Tras nutrir el histórico, detectar cambios de régimen (señal global
+        # que alimenta el centro de notificaciones).
+        signals = DetectPressureSignalUseCase().execute()
+        result["signals_created"] = signals["created"]
+        logger.info("scan_whale_movements: %d redes, %d nuevos, %d señales",
+                    result["chains_scanned"], result["created"], signals["created"])
+        return result
+    except Exception as exc:
+        logger.error("scan_whale_movements error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.reoptimize_asset",
+    bind=True,
+    max_retries=0,
+)
+def reoptimize_asset(self, symbol: str, interval: str) -> dict:
+    """
+    Reoptimiza un único activo (regenera con datos frescos) cuando su estrategia
+    se ha degradado en vivo. Se dispara desde el paper trading al detectar
+    decadencia, para no esperar al ciclo semanal.
+    """
+    try:
+        from core.application.use_cases.reoptimize_strategies import ReoptimizeStrategiesUseCase
+
+        result = ReoptimizeStrategiesUseCase().execute(pairs=[(symbol.upper(), interval)])
+        logger.info("reoptimize_asset %s/%s: %d nuevas", symbol, interval, result["new_strategies"])
+        return result
+    except Exception as exc:
+        logger.error("reoptimize_asset %s/%s error: %s", symbol, interval, exc, exc_info=True)
+        return {"error": str(exc)}
+
+
+@shared_task(
+    name="core.tasks.reoptimize_strategies",
+    bind=True,
+    max_retries=0,
+)
+def reoptimize_strategies(self) -> dict:
+    """
+    Reoptimiza (regenera con datos frescos) las estrategias de los activos que el
+    usuario sigue —paper trading activo o monitorización— y persiste solo las
+    nuevas. Mantiene fresca la "mejor estrategia por activo" frente al drift.
+    Programada por celery beat (semanal: lunes 03:00 UTC, fuera de horas punta).
+    """
+    try:
+        from core.application.use_cases.reoptimize_strategies import ReoptimizeStrategiesUseCase
+
+        result = ReoptimizeStrategiesUseCase().execute()
+        logger.info("reoptimize_strategies: %d pares, %d nuevas",
+                    result["regenerated"], result["new_strategies"])
+        return result
+    except Exception as exc:
+        logger.error("reoptimize_strategies error: %s", exc, exc_info=True)
+        return {"error": str(exc)}
+
+
+@shared_task(
+    name="core.tasks.fill_strategy_stable",
+    bind=True,
+    max_retries=0,
+)
+def fill_strategy_stable(self) -> dict:
+    """
+    Establo nocturno: genera una campeona validada para los activos que importan
+    (watchlists + top por capitalización) y que NO tienen estrategia validada
+    fresca. Tope de 2 activos por noche: el establo se llena solo en unos días y
+    después la tarea es casi gratuita. Programada por celery beat (diaria 04:00
+    UTC, tras la reoptimización semanal y fuera de horas punta).
+    """
+    try:
+        from core.application.use_cases.reoptimize_strategies import FillStrategyStableUseCase
+
+        result = FillStrategyStableUseCase().execute()
+        logger.info("fill_strategy_stable: %d huecos, %d nuevas para %s",
+                    result["gaps"], result["new_strategies"], result["generated_for"])
+        return result
+    except Exception as exc:
+        logger.error("fill_strategy_stable error: %s", exc, exc_info=True)
+        return {"error": str(exc)}
+
+
+@shared_task(
+    name="core.tasks.sync_ohlcv_history",
+    bind=True,
+    max_retries=0,
+)
+def sync_ohlcv_history(self) -> dict:
+    """
+    Mantiene al día el almacén histórico OHLCV propio: para los activos
+    relevantes (top por capitalización + los que tienen paper trading activo)
+    y los marcos de trabajo (1h, 4h, 1d), trae las velas recientes y las
+    persiste (solo cerradas; idempotente). Programada por celery beat (30 min).
+    """
+    from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
+    from core.application.use_cases.ohlcv_store import persist_candles
+    from core.infrastructure.persistence.models import CryptoAsset, PaperTradingAccount
+
+    top = list(
+        CryptoAsset.objects.exclude(market_cap__isnull=True)
+        .order_by("-market_cap").values_list("symbol", flat=True)[:8]
+    )
+    active = list(
+        PaperTradingAccount.objects.filter(is_active=True)
+        .values_list("asset_symbol", flat=True).distinct()
+    )
+    symbols = list(dict.fromkeys(top + active))   # únicos, conservando orden
+    synced = created = 0
+    for symbol in symbols:
+        for interval in ("1h", "4h", "1d"):
+            try:
+                res = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=200)
+                if res is None or res.df.empty or res.source == "store":
+                    continue   # el fetcher ya persiste lo remoto; store = ya al día
+                synced += 1
+                created += persist_candles(symbol, interval, res.df, source=res.source)
+            except Exception as exc:  # noqa: BLE001 — un símbolo caído no frena el resto
+                logger.warning("sync_ohlcv %s %s: %s", symbol, interval, exc)
+    logger.info("sync_ohlcv_history: %d combinaciones, %d velas nuevas", synced, created)
+    return {"symbols": symbols, "synced": synced, "created": created}
+
+
+@shared_task(
+    name="core.tasks.backfill_ohlcv",
+    bind=True,
+    max_retries=0,
+)
+def backfill_ohlcv(self, symbol: str, interval: str = "1d",
+                   target_candles: int = 3000) -> dict:
+    """
+    Retro-carga profunda del histórico de un símbolo+marco (bajo demanda desde
+    el endpoint de cobertura). Idempotente y reanudable por tandas.
+    """
+    from core.application.use_cases.ohlcv_store import BackfillOhlcvUseCase
+
+    result = BackfillOhlcvUseCase().execute(
+        symbol=symbol, interval=interval, target_candles=target_candles,
+    )
+    logger.info("backfill_ohlcv %s %s: %s", symbol, interval, result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.resolve_confluence_snapshots",
+    bind=True,
+    max_retries=0,
+)
+def resolve_confluence_snapshots(self) -> dict:
+    """
+    Resuelve las lecturas de confluencia vencidas contra el precio real. Es el
+    combustible del aprendizaje de pesos del motor 360°. Beat: cada 30 min.
+    """
+    from core.application.use_cases.get_confluence import ResolveConfluenceSnapshotsUseCase
+
+    result = ResolveConfluenceSnapshotsUseCase().execute()
+    logger.info("resolve_confluence_snapshots: %s", result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.evaluate_confluence",
+    bind=True,
+    max_retries=0,
+)
+def evaluate_confluence(self) -> dict:
+    """
+    Evalúa el motor de confluencia 360° para los activos relevantes: alimenta
+    el aprendizaje continuo de pesos y registra los cambios de veredicto como
+    eventos (centro de notificaciones). Beat: cada 30 min.
+    """
+    from core.application.use_cases.get_confluence import EvaluateConfluenceUseCase
+
+    result = EvaluateConfluenceUseCase().execute()
+    logger.info("evaluate_confluence: %s", result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.reconcile_live_positions",
+    bind=True,
+    max_retries=0,
+)
+def reconcile_live_positions(self) -> dict:
+    """
+    OMS: reconcilia la posición esperada de cada promoción activa con el
+    balance real del exchange; las discrepancias se registran y notifican.
+    Beat: cada hora.
+    """
+    from core.application.use_cases.paper_trading import ReconcileLivePositionsUseCase
+
+    result = ReconcileLivePositionsUseCase().execute()
+    logger.info("reconcile_live_positions: %s", result)
+    return result
+
+
+@shared_task(
+    name="core.tasks.send_risk_digest",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=300,
+)
+def send_risk_digest(self) -> dict:
+    """
+    Envía a diario el resumen de riesgo de cartera a los usuarios suscritos
+    (notify_risk_digest=True). Programado por celery beat (lunes-viernes 07:00).
+    """
+    try:
+        from core.application.use_cases.send_risk_digest import SendRiskDigestUseCase
+
+        sent = SendRiskDigestUseCase().execute()
+        logger.info("send_risk_digest: %d emails enviados", sent)
+        return {"sent": sent}
+    except Exception as exc:
+        logger.error("send_risk_digest error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.tasks.evaluate_quant_alerts",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+)
+def evaluate_quant_alerts(self):
+    """
+    Evalúa todas las alertas cuantitativas activas (multi-métrica, disparo por
+    flanco con cooldown) y notifica los disparos. Beat: cada 3 min.
+    """
+    try:
+        from core.application.use_cases.evaluate_quant_alerts import EvaluateQuantAlertsUseCase
+
+        result = EvaluateQuantAlertsUseCase().execute()
+        logger.info("evaluate_quant_alerts: %d disparadas de %d evaluadas",
+                    result["fired"], result["evaluated"])
+        return result
+    except Exception as exc:
+        logger.error("evaluate_quant_alerts error: %s", exc, exc_info=True)
         raise self.retry(exc=exc)

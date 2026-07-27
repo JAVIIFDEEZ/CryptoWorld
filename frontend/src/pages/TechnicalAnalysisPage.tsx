@@ -1,36 +1,35 @@
 import { useEffect, useState } from 'react'
-import { analysisService, type CryptoAsset } from '@/services/analysisService'
-import AnalysisPanel from '@/components/AnalysisPanel'
+import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+import { useAssets } from '@/hooks/queries/useMarketData'
+import AnalysisPanel from '@/components/analysis/AnalysisPanel'
+import ConfluencePanel from '@/components/analysis/ConfluencePanel'
+import QuantTerminal from '@/components/analysis/QuantTerminal'
+import DerivativesPanel from '@/components/analysis/DerivativesPanel'
+import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function TechnicalAnalysisPage() {
-  const [assets, setAssets] = useState<CryptoAsset[]>([])
+  const { t } = useTranslation()
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
-  const [isLoadingAssets, setIsLoadingAssets] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // Catálogo desde la caché compartida (TanStack Query): si vienes de Mercado,
+  // no se re-pide la lista.
+  const { data: assetsData, isLoading: isLoadingAssets, isError: error } = useAssets()
+  const assets = assetsData ?? []
 
   useEffect(() => {
-    async function loadAssets() {
-      try {
-        const data = await analysisService.getAssets()
-        setAssets(data)
-        if (data.length > 0) setSelectedSymbol(data[0].symbol)
-      } catch {
-        setError('No se pudieron cargar los activos.')
-      } finally {
-        setIsLoadingAssets(false)
-      }
+    if (assets.length > 0) {
+      setSelectedSymbol((cur) => (assets.some((a) => a.symbol === cur) ? cur : assets[0].symbol))
     }
-    loadAssets()
-  }, [])
+  }, [assets])
 
   return (
     <section className="space-y-6">
       <header className="flex flex-col sm:flex-row sm:items-end gap-4">
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-white">Análisis Técnico</h1>
+          <h1 className="text-2xl font-bold text-white">{t('analysis.title')}</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Indicadores, señales, predicción ML, patrones de velas y backtesting sobre datos reales de mercado.
+            {t('analysis.subtitle')}
           </p>
         </div>
 
@@ -63,7 +62,7 @@ function TechnicalAnalysisPage() {
           {/* Selector de activo */}
           {!isLoadingAssets && assets.length > 0 && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 uppercase">Activo</span>
+              <span className="text-xs text-slate-500 uppercase">{t('analysis.asset')}</span>
               <select
                 value={selectedSymbol}
                 onChange={(e) => setSelectedSymbol(e.target.value)}
@@ -93,12 +92,36 @@ function TechnicalAnalysisPage() {
 
       {error && (
         <div className="bg-red-900/30 border border-red-700 rounded-xl p-4 text-red-300 text-sm">
-          {error}
+          {t('analysis.loadError')}
         </div>
       )}
 
       {!isLoadingAssets && assets.length > 0 && (
-        <AnalysisPanel symbol={selectedSymbol} />
+        <>
+          {/* Terminal cuantitativa: fotografía institucional del estado del activo */}
+          <QuantTerminal symbol={selectedSymbol} />
+          {/* Microestructura de derivados: funding, basis e interés abierto */}
+          <DerivativesPanel symbol={selectedSymbol} />
+          {/* Confluencia 360°: el resumen ejecutivo antes del detalle por pestañas */}
+          <ConfluencePanel symbol={selectedSymbol} />
+          <AnalysisPanel symbol={selectedSymbol} />
+          <RobustnessPanel symbol={selectedSymbol} />
+
+          {/* Puente al generador genético: descubrir estrategias nuevas */}
+          <Link
+            to="/strategies"
+            className="group flex items-center gap-4 bg-gradient-to-r from-blue-600/10 to-purple-600/10 hover:from-blue-600/20 hover:to-purple-600/20 border border-blue-500/30 rounded-xl p-4 transition-colors"
+          >
+            <span className="text-2xl">🧬</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white">{t('analysis.ctaTitle')}</p>
+              <p className="text-xs text-slate-400">
+                {t('analysis.ctaBody', { symbol: selectedSymbol })}
+              </p>
+            </div>
+            <span className="text-blue-300 group-hover:translate-x-0.5 transition-transform shrink-0">{t('analysis.ctaAction')}</span>
+          </Link>
+        </>
       )}
     </section>
   )

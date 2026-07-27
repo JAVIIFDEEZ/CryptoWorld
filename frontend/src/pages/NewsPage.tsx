@@ -5,9 +5,14 @@
  * Fuente: CryptoCompare News API (a través del backend).
  */
 
-import { useState, useEffect, useCallback } from 'react'
-import { newsService, type NewsItem } from '../services/newsService'
+import { useState, useEffect, useCallback, lazy } from 'react'
+import { useTranslation } from 'react-i18next'
+import { newsService, type NewsItem, type NewsGlobe } from '../services/newsService'
 import EmptyState from '../components/ui/EmptyState'
+import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
+import GeoNews2D from '@/components/news/GeoNews2D'
+import { CATEGORY_COLORS, CATEGORY_NAMES } from '@/components/news/NewsGlobe3D'
+const NewsGlobe3D = lazy(() => import('@/components/news/NewsGlobe3D'))
 
 const IconNews = () => (
   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -19,7 +24,7 @@ type Sentiment = 'positive' | 'negative' | 'neutral' | ''
 
 const SENTIMENT_CONFIG = {
   positive: {
-    label: 'Positivo',
+    labelKey: 'news.positive',
     icon: '↑',
     badge: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
     stat: 'text-emerald-400',
@@ -28,7 +33,7 @@ const SENTIMENT_CONFIG = {
     filter: 'bg-emerald-600 text-white border-emerald-600',
   },
   negative: {
-    label: 'Negativo',
+    labelKey: 'news.negative',
     icon: '↓',
     badge: 'bg-red-500/20 text-red-400 border-red-500/40',
     stat: 'text-red-400',
@@ -37,7 +42,7 @@ const SENTIMENT_CONFIG = {
     filter: 'bg-red-600 text-white border-red-600',
   },
   neutral: {
-    label: 'Neutral',
+    labelKey: 'news.neutral',
     icon: '→',
     badge: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
     stat: 'text-slate-300',
@@ -60,6 +65,7 @@ function formatDate(iso: string): string {
 }
 
 function SentimentBadge({ sentiment, size = 'sm' }: { sentiment: string; size?: 'sm' | 'md' }) {
+  const { t } = useTranslation()
   const cfg = SENTIMENT_CONFIG[sentiment as keyof typeof SENTIMENT_CONFIG] ?? SENTIMENT_CONFIG.neutral
   return (
     <span
@@ -67,7 +73,7 @@ function SentimentBadge({ sentiment, size = 'sm' }: { sentiment: string; size?: 
         size === 'md' ? 'text-xs px-3 py-1' : 'text-xs px-2 py-0.5'
       } ${cfg.badge}`}
     >
-      {cfg.icon} {cfg.label}
+      {cfg.icon} {t(cfg.labelKey)}
     </span>
   )
 }
@@ -209,12 +215,19 @@ const INITIAL_DISPLAY = 13
 const LOAD_MORE_STEP = 12
 
 export default function NewsPage() {
+  const { t } = useTranslation()
   const [allItems, setAllItems] = useState<NewsItem[]>([])
   const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY)
+  const [globe, setGlobe] = useState<NewsGlobe | null>(null)
+  const [globeRegion, setGlobeRegion] = useState<string | null>(null)
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    newsService.getNewsGlobe().then((g) => { if (!g.error) setGlobe(g) }).catch(() => { /* sin globo */ })
+  }, [])
   const [activeSentiment, setActiveSentiment] = useState<Sentiment>('')
 
   const fetchNews = useCallback(async () => {
@@ -255,11 +268,56 @@ export default function NewsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-white">Noticias cripto</h1>
+        <h1 className="text-2xl font-bold text-white">{t('news.title')}</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Fuente: CryptoCompare
-          {!loading && allItems.length > 0 && (
-            <span className="ml-2 text-slate-500">· {allItems.length} artículos</span>
+          {t('news.source')}
+    
+      {/* Globo terráqueo: noticias importantes por región del mundo */}
+      {globe && globe.markers.length > 0 && (
+        <div className="space-y-3">
+          <Viz3DSwitch
+            title="Globo de noticias"
+            hint={`Eventos por región: tipos de interés, conflictos, salidas a bolsa, regulación… · ${globe.located} localizadas · ${globe.unlocated} globales`}
+            threeD={<NewsGlobe3D markers={globe.markers} selected={globeRegion} onSelect={(r) => setGlobeRegion(globeRegion === r ? null : r)} />}
+            twoD={<GeoNews2D markers={globe.markers} selected={globeRegion} onSelect={(r) => setGlobeRegion(globeRegion === r ? null : r)} />}
+          />
+          {globeRegion && (() => {
+            const m = globe.markers.find((x) => x.region === globeRegion)
+            if (!m) return null
+            return (
+              <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: CATEGORY_COLORS[m.top_category] ?? '#94a3b8' }} />
+                  <h4 className="text-sm font-semibold text-white">{m.name}</h4>
+                  <span className="text-[10px] text-slate-500">{m.count} noticias</span>
+                  <button onClick={() => setGlobeRegion(null)} className="ml-auto text-slate-500 hover:text-white text-xs">×</button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {Object.entries(m.categories).map(([cat, n]) => (
+                    <span key={cat} className="text-[10px] px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">
+                      <span style={{ color: CATEGORY_COLORS[cat] ?? '#94a3b8' }}>●</span> {CATEGORY_NAMES[cat] ?? cat}: {n}
+                    </span>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  {m.items.map((it) => (
+                    <a key={it.url + it.title} href={it.url} target="_blank" rel="noopener noreferrer"
+                       className="block text-xs text-slate-300 hover:text-blue-300 transition-colors truncate">
+                      <span className="text-[9px] font-bold uppercase mr-1.5" style={{ color: CATEGORY_COLORS[it.category] ?? '#94a3b8' }}>
+                        {CATEGORY_NAMES[it.category] ?? it.category}
+                      </span>
+                      {it.title}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {!loading && allItems.length > 0 && (
+            <span className="ml-2 text-slate-500">{t('news.articles', { count: allItems.length })}</span>
           )}
           {source && <span className="ml-1 text-slate-600">({source})</span>}
         </p>
@@ -272,7 +330,7 @@ export default function NewsPage() {
           </span>
           <input
             type="text"
-            placeholder="Buscar: Bitcoin, DeFi, Ethereum…"
+            placeholder={t('news.searchPlaceholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-9 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
@@ -302,7 +360,7 @@ export default function NewsPage() {
                     : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700 hover:border-slate-500'
                 }`}
               >
-                {s === '' ? 'Todos' : `${cfg!.icon} ${cfg!.label}`}
+                {s === '' ? t('news.filterAll') : `${cfg!.icon} ${t(cfg!.labelKey)}`}
               </button>
             )
           })}
@@ -324,7 +382,7 @@ export default function NewsPage() {
                 }`}
               >
                 <p className={`text-xl font-bold ${cfg.stat}`}>{count}</p>
-                <p className="text-xs text-slate-400 mb-2">{cfg.label}s</p>
+                <p className="text-xs text-slate-400 mb-2">{t(cfg.labelKey)}s</p>
                 <div className="h-1 rounded-full bg-slate-700/80 overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-700 ${cfg.bar}`}
@@ -357,7 +415,7 @@ export default function NewsPage() {
         <EmptyState
           icon={<IconNews />}
           title="Sin resultados"
-          description="No hay noticias para los filtros seleccionados."
+          description={t('news.emptyDescription')}
         />
       )}
 
@@ -377,7 +435,7 @@ export default function NewsPage() {
                 onClick={() => setDisplayCount(c => c + LOAD_MORE_STEP)}
                 className="px-8 py-3 rounded-xl bg-slate-800 border border-slate-700 hover:border-slate-500 hover:bg-slate-700/80 text-slate-300 hover:text-white text-sm font-medium transition-all"
               >
-                Cargar más · {allItems.length - displayCount} restantes
+                {t('news.loadMore', { count: allItems.length - displayCount })}
               </button>
             </div>
           )}

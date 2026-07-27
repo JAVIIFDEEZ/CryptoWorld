@@ -34,6 +34,8 @@ pandas==2.2.2
 numpy==1.26.4
 ta==0.11.0                      # Technical Analysis library (indicadores)
 scikit-learn==1.5.1             # ML para predicción de precio
+scipy==1.13.1                   # Estadística para la suite de robustez (DSR, tests)
+optuna==3.6.1                   # Optimización de hiperparámetros (walk-forward, PBO)
 
 # ── Testing ───────────────────────────────────────────────────────
 pytest==8.2.2
@@ -53,3 +55,13 @@ django-anymail[sendgrid]==10.3  # Integración API nativa SendGrid (mejor que SM
 celery==5.4.0
 redis==5.0.8                    # Cliente Redis para Python (broker/backend)
 django-celery-beat==2.6.0       # Scheduler persistente en BD para celery beat
+
+# ── Tiempo real — WebSockets vía Django Channels (ASGI) ────────────
+channels==4.3.2                 # Capa ASGI + consumers WebSocket
+channels-redis==4.3.0           # Channel layer sobre Redis (broadcast multi-proceso)
+daphne==4.2.2                   # Servidor ASGI (runserver WS en dev + producción)
+
+# ── Trading real — conexión multi-exchange ─────────────────────────
+ccxt==4.5.63                    # API unificada de exchanges (Binance, Kraken, Coinbase…)
+cryptography>=41.0.7            # Cifrado Fernet de las claves API por usuario
+pywebpush==2.0.0  # Web Push (PWA); opcional — sin él las notificaciones push se desactivan solas

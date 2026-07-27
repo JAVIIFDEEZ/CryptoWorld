@@ -187,6 +187,8 @@ class CheckAlertsUseCase:
                     update_fields=["is_triggered", "triggered_at", "is_active", "updated_at"]
                 )
                 self._notify_by_email(alert)
+                from core.interfaces.ws.broadcast import broadcast_notification
+                broadcast_notification(alert.user_id, {"kind": "price"})
                 triggered.append(_to_dto(alert))
                 logger.info(
                     "Alerta disparada: %s %s %s @ %s (precio actual: %s)",

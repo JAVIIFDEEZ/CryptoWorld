@@ -1,3 +1,17 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/cripto/:slug*",
+      "destination": "https://cryptoworld-production.up.railway.app/cripto/:slug*"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "https://cryptoworld-production.up.railway.app/sitemap.xml"
+    },
+    {
+      "source": "/robots.txt",
+      "destination": "https://cryptoworld-production.up.railway.app/robots.txt"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
