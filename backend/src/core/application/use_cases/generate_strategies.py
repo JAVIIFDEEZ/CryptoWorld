@@ -114,7 +114,118 @@ def _json_safe(value):
     return value
 
 
-def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs, on_generation=None):
+class TrialRegistry:
+    """
+    Muestra de las series de retorno de los genomas que la búsqueda evalúa.
+
+    Es la entrada que faltaba para que el PBO y el Deflated Sharpe midan lo que
+    dicen medir. Sin ella, ambos se calculaban sobre perturbaciones de la
+    campeona ya elegida —casi clones entre sí—, y de ahí que el DSR saliera ≈1
+    para cualquier estrategia: la varianza entre pruebas tendía a cero y con ella
+    el umbral que hay que superar.
+
+    Dos decisiones deliberadas:
+
+    · **Muestreo de reservorio, no los mejores.** Quedarse con los top-M
+      subestimaría la varianza entre pruebas, que es justo el término que eleva
+      el umbral del DSR — se acabaría reproduciendo el mismo sesgo optimista con
+      otra forma. El reservorio da una muestra uniforme de TODO lo evaluado.
+    · **`total_seen` cuenta aparte del reservorio.** La deflación usa el nº real
+      de pruebas (que puede ser miles), mientras el reservorio solo acota la
+      memoria y aporta la varianza.
+    """
+
+    def __init__(self, capacity: int = 300, seed: int = 42) -> None:
+        self._capacity = max(2, capacity)
+        self._rng = np.random.default_rng(seed)
+        self._reservoir: list[list[float]] = []
+        self._hashes: set[str] = set()
+        self.total_seen = 0
+
+    def add(self, spec_hash_value: str, bar_returns) -> None:
+        """Registra un genoma distinto. Repetir el mismo hash no cuenta: el GA
+        cachea por hash y una reevaluación no es una prueba nueva."""
+        if spec_hash_value in self._hashes:
+            return
+        self._hashes.add(spec_hash_value)
+        self.total_seen += 1
+
+        series = list(bar_returns) if bar_returns is not None else []
+        if len(series) < 8:
+            return          # sin serie utilizable, cuenta como prueba pero no entra
+
+        if len(self._reservoir) < self._capacity:
+            self._reservoir.append(series)
+            return
+        # Reservorio (algoritmo R): la prueba k-ésima entra con probabilidad
+        # capacity/k, sustituyendo a una al azar. Muestra uniforme sin conocer N.
+        j = int(self._rng.integers(0, self.total_seen))
+        if j < self._capacity:
+            self._reservoir[j] = series
+
+    @property
+    def returns(self) -> list:
+        return self._reservoir
+
+    def summary(self) -> dict:
+        return {
+            "evaluated": self.total_seen,
+            "sampled": len(self._reservoir),
+            "capacity": self._capacity,
+        }
+
+
+def _overfitting_summary(registry: "TrialRegistry", finalists: list) -> dict:
+    """
+    Resumen de multiplicidad de la ejecución: cuántas configuraciones se
+    probaron, cuántas son realmente independientes y qué Sharpe alcanzaría el
+    azar con ese número de intentos.
+
+    Se calcula una sola vez por ejecución (no por finalista) porque el nº de
+    pruebas es una propiedad de la búsqueda, no de la estrategia elegida.
+    """
+    from core.domain.services import backtest_robustness as robustness
+
+    sampled = registry.returns
+    effective = robustness.effective_number_of_trials(sampled)
+
+    # La varianza entre pruebas la aporta cualquier finalista ya evaluada: el
+    # bloque de sobreajuste que devuelve gate_spec la trae calculada.
+    variance = 0.0
+    best_dsr = None
+    best_sharpe = None
+    for f in finalists:
+        block = f.get("gating", {}).get("metrics", {}).get("overfitting")
+        if not block or block.get("source") != "search_trials":
+            continue
+        dsr = block.get("deflated_sharpe", {})
+        variance = dsr.get("trial_sr_variance", 0.0) or 0.0
+        if dsr.get("dsr") is not None and (best_dsr is None or dsr["dsr"] > best_dsr):
+            best_dsr = dsr["dsr"]
+            best_sharpe = dsr.get("sr_per_period")
+        break
+
+    curve = robustness.expected_max_sharpe_curve(
+        variance=variance, n_trials=max(registry.total_seen, 1), observed_sharpe=best_sharpe,
+    )
+
+    return {
+        **registry.summary(),
+        "effective_trials": effective.get("effective_trials"),
+        "best_deflated_sharpe": best_dsr,
+        "expected_max_sharpe_curve": curve,
+        "note": (
+            f"Se evaluaron {registry.total_seen} configuraciones distintas "
+            f"({effective.get('effective_trials')} independientes tras agrupar las "
+            "correlacionadas). Con ese número de intentos, el azar produce por sí solo "
+            f"un Sharpe por periodo de hasta {curve['expected_max_at_n']}: cualquier "
+            "resultado por debajo de ese umbral no se distingue de haber buscado mucho."
+        ),
+    }
+
+
+def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs, on_generation=None,
+              registry: "TrialRegistry | None" = None):
     """
     Optimización multi-objetivo: maximizar Sharpe OOS, minimizar drawdown y
     minimizar sobreajuste. Devuelve los specs de la frontera de Pareto (como
@@ -123,7 +234,10 @@ def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs, on_generation=
     """
     def objectives(spec: dict) -> tuple:
         ev = evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
-                              costs=costs, parsimony=cfg.parsimony)
+                              costs=costs, parsimony=cfg.parsimony,
+                              with_returns=registry is not None)
+        if registry is not None:
+            registry.add(spec_hash(spec), ev.get("bar_returns"))
         if ev["n_trades"] < 8 or ev["efficiency"] == 0:
             return (-99.0, -99.0, -99.0)            # degeneradas: dominadas por todo
         return (ev["mean_oos_sharpe"], -ev["max_drawdown_pct"] / 100.0, -ev["overfit_gap"])
@@ -277,18 +391,29 @@ def generate_strategies(
     # ronda no se reevalúa jamás (cada evaluación es un walk-forward completo).
     fitness_memo: dict[str, float] = {}
 
+    # Registro de las pruebas realmente hechas. Alimenta el PBO (sobreajuste de
+    # selección) y la deflación del Sharpe por el nº de configuraciones probadas.
+    trial_registry = TrialRegistry(seed=cfg.ga.seed)
+
     def fitness_fn(spec: dict) -> float:
         h = spec_hash(spec)
         if h not in fitness_memo:
-            fitness_memo[h] = evaluate_fitness(
+            ev = evaluate_fitness(
                 df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
-                costs=costs, parsimony=cfg.parsimony)["fitness"]
+                costs=costs, parsimony=cfg.parsimony, with_returns=True)
+            trial_registry.add(h, ev.get("bar_returns"))
+            fitness_memo[h] = ev["fitness"]
         return fitness_memo[h]
 
     def _gate_candidate(cand: dict) -> dict:
         """Gating + holdout de una candidata → dict de finalista completo."""
         spec = cand["spec"]
-        gate = gate_spec(df_evo, spec, cfg.gating, ppy=ppy, costs=costs)
+        # Los trials de la búsqueda entran aquí: son los que hacen que el PBO
+        # mida sobreajuste de selección y que el Sharpe se deflacte por el nº
+        # real de configuraciones probadas, no por unos vecinos del campeón.
+        gate = gate_spec(df_evo, spec, cfg.gating, ppy=ppy, costs=costs,
+                         trial_returns=trial_registry.returns,
+                         n_evaluations=trial_registry.total_seen)
         holdout = holdout_performance(df_holdout, spec, ppy=ppy, costs=costs)
         return {
             "spec": spec,
@@ -334,7 +459,8 @@ def generate_strategies(
 
         if cfg.optimizer == "nsga":
             candidate_specs, nsga_history, evaluations, pareto_frontier = _run_nsga(
-                df_evo, cfg, ppy, costs, on_generation=_on_generation)
+                df_evo, cfg, ppy, costs, on_generation=_on_generation,
+                registry=trial_registry)
             ga_history = nsga_history
         else:
             from dataclasses import replace as _dc_replace
@@ -509,6 +635,10 @@ def generate_strategies(
             "best_fitness": max((c["fitness"] for c in candidate_specs), default=0.0),
             "islands": n_islands,
         },
+        # Control de multiplicidad a nivel de ejecución: cuántas pruebas se
+        # hicieron de verdad y qué umbral de Sharpe produce el puro azar con ese
+        # número. Es el contexto sin el cual cualquier Sharpe es incomparable.
+        "overfitting_control": _overfitting_summary(trial_registry, finalists),
         "hall_of_fame": hall_of_fame,
         "pareto_frontier": pareto_frontier,
         "summary": {

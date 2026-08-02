@@ -25,6 +25,7 @@ import {
 } from '@/services/strategyGeneratorService'
 import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
 import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
+import MultipleTestingCard from '@/components/generator/MultipleTestingCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -408,6 +409,12 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
       {/* Radiografía de estabilidad temporal del campeón */}
       {winner && report.walk_forward_matrix && (
         <WalkForwardMatrixCard matrix={report.walk_forward_matrix} championDesc={winner.description} />
+      )}
+
+      {/* Cuántas configuraciones se probaron y qué Sharpe da el azar con ese número.
+          Sin ese contexto, el Sharpe de la campeona no es interpretable. */}
+      {report.overfitting_control && (
+        <MultipleTestingCard control={report.overfitting_control} />
       )}
 
       <Generator3DPanel

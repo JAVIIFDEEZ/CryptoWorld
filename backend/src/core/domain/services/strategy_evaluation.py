@@ -174,6 +174,7 @@ def evaluate_fitness(
     target_trades: int = 25,
     costs: CostModel | None = None,
     parsimony: float = 0.0,
+    with_returns: bool = False,
 ) -> dict:
     """
     Fitness robustez-aware (NO retorno in-sample): Sharpe OOS del walk-forward
@@ -182,6 +183,11 @@ def evaluate_fitness(
     `parsimony` > 0 añade presión de simplicidad al estilo StrategyQuant: cada
     condición por encima de 3 resta `parsimony` al fitness (a igual rendimiento,
     gana la estrategia más simple — menos grados de libertad, menos sobreajuste).
+
+    `with_returns=True` añade `bar_returns` al resultado. El backtest ya la ha
+    calculado, así que devolverla es gratis y evita repetirlo: es lo que permite
+    al buscador quedarse con las series de los genomas que evalúa y alimentar
+    con ellas el PBO y el Deflated Sharpe.
     """
     full = _segment_backtest(df, spec, costs)
     n_trades = full["total_trades"]
@@ -198,7 +204,7 @@ def evaluate_fitness(
     if n_trades < min_trades or wf["n_folds"] == 0:
         fitness -= 3.0  # estrategias degeneradas (casi sin operar) mueren
 
-    return {
+    result = {
         "fitness": round(float(fitness), 4),
         "mean_oos_sharpe": mean_oos,
         "mean_is_sharpe": wf["mean_is_sharpe"],
@@ -211,28 +217,141 @@ def evaluate_fitness(
         "cost_drag_pct": full["total_commission_pct"],
         "complexity": spec_complexity(spec),
     }
+    if with_returns:
+        result["bar_returns"] = full["bar_returns"]
+    return result
 
 
-def _neighborhood_returns(df, spec: dict, k: int, rng: np.random.Generator) -> list:
-    """Lista de series de retorno por vela del spec y de k−1 vecinos jitter,
-    recortadas a longitud común. Base del PBO (matriz) y del Deflated Sharpe
-    (lista de trials)."""
-    columns = [_segment_backtest(df, spec)["bar_returns"]]
+def _neighborhood_returns(df, spec: dict, k: int, rng: np.random.Generator,
+                          costs: CostModel | None = None) -> list:
+    """Series de retorno del spec y de k−1 vecinos con parámetros perturbados.
+
+    OJO con qué es y qué no es esto. Son perturbaciones ±% de UNA estrategia ya
+    elegida, es decir casi clones entre sí: sirven para medir **sensibilidad
+    paramétrica** (¿el resultado depende de haber acertado el parámetro exacto?),
+    que es un test de robustez legítimo y el que StrategyQuant llama
+    *randomize parameters*.
+
+    Lo que NO son es la población de pruebas del *False Strategy Theorem*. Al ser
+    casi idénticas su varianza de Sharpe tiende a 0, y con ella el umbral
+    E[max SR₀] → 0, de modo que el Deflated Sharpe calculado sobre ellas sale
+    ≈1 para casi cualquier estrategia: no mide nada. Esa deflación necesita las
+    series de los genomas que el GA evaluó de verdad, que llegan a `gate_spec`
+    por `trial_returns`.
+    """
+    columns = [_segment_backtest(df, spec, costs)["bar_returns"]]
     for _ in range(k - 1):
         neighbor = jitter_params(spec, rng)
-        columns.append(_segment_backtest(df, neighbor)["bar_returns"])
+        columns.append(_segment_backtest(df, neighbor, costs)["bar_returns"])
     length = min(len(c) for c in columns)
     if length < 8 or len(columns) < 2:
         return []
     return [list(c[:length]) for c in columns]
 
 
-def _neighborhood_matrix(df, spec: dict, k: int, rng: np.random.Generator):
-    """Matriz (T, k) de retornos por vela de k vecinos del spec (PBO/CSCV)."""
-    columns = _neighborhood_returns(df, spec, k, rng)
-    if not columns:
+def _stack_returns(columns: list):
+    """Lista de series de igual longitud → matriz (T, N); None si no da."""
+    if not columns or len(columns) < 2:
         return None
-    return np.column_stack(columns)
+    length = min(len(c) for c in columns)
+    if length < 8:
+        return None
+    return np.column_stack([np.asarray(c[:length], dtype=float) for c in columns])
+
+
+def _overfitting_control(df, spec: dict, spec_returns, th, rng, ppy: float,
+                         costs: CostModel | None, trial_returns: list | None,
+                         n_evaluations: int | None) -> dict:
+    """
+    Bloque de control de sobreajuste: PBO (CSCV) + Deflated Sharpe + la curva
+    E[max SR₀] frente al nº de pruebas.
+
+    La fuente de la matriz decide qué significan los números, así que se declara
+    explícitamente en `source`:
+      · `search_trials` — series de los genomas realmente evaluados. El PBO mide
+        sobreajuste de selección y el DSR se deflacta por el N real. Es el modo
+        institucional.
+      · `parameter_jitter` — perturbaciones del propio spec, cuando quien llama
+        no aporta trials (uso suelto de `gate_spec`). Mide estabilidad local; el
+        DSR resultante es optimista por construcción y se marca como tal.
+    """
+    sampled = [tr for tr in (trial_returns or []) if tr is not None and len(tr) >= 8]
+    source = "search_trials" if len(sampled) >= 2 else "parameter_jitter"
+
+    if source == "parameter_jitter":
+        sampled = _neighborhood_returns(df, spec, th.pbo_neighbors, rng, costs)
+
+    matrix = _stack_returns(sampled)
+    pbo = (robustness.probability_of_backtest_overfitting(matrix)
+           if matrix is not None else {"pbo": None, "note": "Trials insuficientes para PBO."})
+
+    dsr = robustness.deflated_sharpe_ratio(
+        spec_returns, sampled,
+        # El recuento declarado solo tiene sentido con los trials de la búsqueda:
+        # con jitter, N es literalmente el nº de vecinos generados.
+        n_trials=n_evaluations if source == "search_trials" else None,
+    )
+    effective = robustness.effective_number_of_trials(sampled)
+
+    curve = robustness.expected_max_sharpe_curve(
+        variance=dsr.get("trial_sr_variance", 0.0) or 0.0,
+        n_trials=dsr.get("n_trials", 1) or 1,
+        observed_sharpe=dsr.get("sr_per_period"),
+    )
+
+    return {
+        "source": source,
+        "pbo": pbo,
+        "deflated_sharpe": dsr,
+        "effective_trials": effective,
+        "expected_max_sharpe_curve": curve,
+        "note": (
+            "PBO y Deflated Sharpe calculados sobre los genomas realmente "
+            "evaluados por la búsqueda: miden sobreajuste de selección y "
+            "deflactan por el nº de pruebas."
+            if source == "search_trials" else
+            "Sin trials de búsqueda disponibles: PBO y DSR se calculan sobre "
+            "perturbaciones del propio spec. Miden estabilidad paramétrica, NO "
+            "sobreajuste de selección, y el DSR es optimista por construcción."
+        ),
+    }
+
+
+def parameter_sensitivity(df, spec: dict, k: int = 12, ppy: float = 365.0,
+                          seed: int = 42, costs: CostModel | None = None) -> dict:
+    """
+    Sensibilidad paramétrica: ¿cuánto se degrada la estrategia si sus parámetros
+    se mueven un poco? Una estrategia con edge real tolera el zarandeo; una
+    sobreajustada vive en un pico estrecho y se desploma.
+
+    Es el uso correcto del jitter que antes alimentaba al PBO. Se reporta la
+    dispersión del Sharpe entre vecinos y qué fracción de ellos sigue en
+    positivo — no un veredicto de sobreajuste de selección, que es otra cosa.
+    """
+    rng = np.random.default_rng(seed)
+    columns = _neighborhood_returns(df, spec, max(2, k), rng, costs)
+    if not columns:
+        return {"n_neighbors": 0, "note": "Serie insuficiente para el análisis de sensibilidad."}
+
+    sharpes = np.array([metrics.sharpe_ratio(c, ppy) for c in columns], dtype=float)
+    base = float(sharpes[0])          # la primera columna es el spec sin perturbar
+    neighbors = sharpes[1:]
+    if neighbors.size == 0:
+        return {"n_neighbors": 0, "note": "Sin vecinos evaluables."}
+
+    return {
+        "n_neighbors": int(neighbors.size),
+        "base_sharpe": round(base, 3),
+        "neighbor_sharpe_mean": round(float(neighbors.mean()), 3),
+        "neighbor_sharpe_std": round(float(neighbors.std(ddof=1)) if neighbors.size > 1 else 0.0, 3),
+        "neighbor_sharpe_p5": round(float(np.percentile(neighbors, 5)), 3),
+        "pct_neighbors_positive": round(float((neighbors > 0).mean() * 100), 1),
+        # Caída relativa del vecino mediano frente al spec elegido: si es grande,
+        # el resultado dependía de haber dado con el parámetro exacto.
+        "median_degradation_pct": round(
+            float((base - np.median(neighbors)) / abs(base) * 100) if abs(base) > 1e-9 else 0.0, 1
+        ),
+    }
 
 
 def spec_permutation_test(
@@ -289,12 +408,26 @@ def gate_spec(
     ppy: float = 365.0,
     seed: int = 42,
     costs: CostModel | None = None,
+    trial_returns: list | None = None,
+    n_evaluations: int | None = None,
 ) -> dict:
     """
     Gating de robustez de una finalista (Módulo 1). Pasa si: sin lookahead,
     nº de trades ≥ mínimo, eficiencia walk-forward ≥ umbral, PBO ≤ umbral y
     percentil 5 de Monte Carlo > umbral. Devuelve checks + métricas completas.
     Todas las cifras son NETAS de costes y aplican la gestión de riesgo del spec.
+
+    `trial_returns` son las series de retorno de los genomas que el buscador
+    evaluó realmente, y `n_evaluations` cuántos evaluó en total (que puede ser
+    mayor: quien llama muestrea para no guardarlo todo). Con ellas, el PBO mide
+    sobreajuste **de selección** —el riesgo real de elegir a la mejor de muchas—
+    y el Deflated Sharpe se deflacta por el nº de pruebas efectivamente hechas,
+    que es lo que exige el *False Strategy Theorem*.
+
+    Sin ellas se cae a las perturbaciones del propio spec. Ese modo mide
+    estabilidad local, no sobreajuste de selección, y queda marcado como tal en
+    `overfitting.source` para que ninguna superficie lo presente como algo que
+    no es.
     """
     th = thresholds or GatingThresholds()
     rng = np.random.default_rng(seed)
@@ -305,8 +438,10 @@ def gate_spec(
 
     lookahead = bias.detect_lookahead_bias(df, lambda d: compile_signals(d, spec), seed=seed)
 
-    matrix = _neighborhood_matrix(df, spec, th.pbo_neighbors, rng)
-    pbo = robustness.probability_of_backtest_overfitting(matrix) if matrix is not None else {"pbo": None}
+    overfitting = _overfitting_control(
+        df, spec, full["bar_returns"], th, rng, ppy, costs, trial_returns, n_evaluations
+    )
+    pbo = overfitting["pbo"]
 
     mc = robustness.monte_carlo_simulation(
         [t["pnl_pct"] for t in full["trades"]], n_sims=th.mc_sims, seed=seed
@@ -334,6 +469,12 @@ def gate_spec(
             "wf_efficiency": wf["efficiency"],
             "mean_oos_sharpe": wf["mean_oos_sharpe"],
             "pbo": pbo.get("pbo"),
+            # Control de sobreajuste completo: de dónde salen los números, el
+            # Sharpe deflactado por el nº real de pruebas, el N efectivo tras
+            # agrupar genomas correlacionados y la curva E[max SR₀] vs N.
+            # Se reporta, no bloquea: el gating sigue decidiéndose por PBO.
+            "overfitting": overfitting,
+            "deflated_sharpe": overfitting["deflated_sharpe"].get("dsr"),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
             "exit_reasons": full["exit_reasons"],

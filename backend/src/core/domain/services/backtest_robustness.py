@@ -14,6 +14,9 @@ estrategia está sobreajustada:
                                 de retorno y drawdown con percentiles.
   - permutation_test:           ¿el edge es significativo o suerte?
   - deflated_sharpe_ratio:      Sharpe corregido por nº de trials, skew y kurt.
+  - expected_max_sharpe:        E[max SR₀] — el Sharpe que da el azar con N pruebas.
+  - expected_max_sharpe_curve:  esa curva frente a N, para situar la campeona.
+  - effective_number_of_trials: N independiente agrupando pruebas correlacionadas.
   - probability_of_backtest_overfitting (PBO): CSCV sobre la matriz de trials.
 
 Determinista: todas las fuentes de aleatoriedad reciben semilla.
@@ -327,11 +330,99 @@ def _per_period_sharpe(returns) -> float:
     return float(r.mean() / sd) if sd > 0 else 0.0
 
 
-def deflated_sharpe_ratio(returns, trial_returns_list) -> dict:
+def expected_max_sharpe(variance: float, n_trials: int) -> float:
+    """
+    E[max SR₀] — el Sharpe máximo esperado entre `n_trials` pruebas SIN edge real.
+
+    Es el núcleo del *False Strategy Theorem* (Bailey & López de Prado): probar
+    más configuraciones sube el mejor Sharpe aunque ninguna tenga edge, y ese
+    ascenso depende de cuántas pruebas se hicieron y de cuánto varían entre sí.
+    Este es el umbral contra el que hay que comparar un Sharpe observado; un
+    Sharpe de 2 sacado de 5 pruebas y uno sacado de 5.000 no significan lo mismo.
+
+    Aproximación estándar por el valor esperado del máximo de N normales:
+        E[max] ≈ √V · [(1−γ)·Z(1−1/N) + γ·Z(1−1/(N·e))]
+    con γ la constante de Euler-Mascheroni.
+    """
+    if n_trials <= 1 or variance <= 0:
+        return 0.0
+    z1 = norm.ppf(1 - 1.0 / n_trials)
+    z2 = norm.ppf(1 - 1.0 / (n_trials * np.e))
+    return float(np.sqrt(variance) * ((1 - _EULER_MASCHERONI) * z1 + _EULER_MASCHERONI * z2))
+
+
+def effective_number_of_trials(trial_returns_list, threshold: float = 0.9) -> dict:
+    """
+    Nº de pruebas *independientes*, agrupando las que están muy correlacionadas.
+
+    Un algoritmo genético evalúa muchos genomas casi idénticos: contarlos como
+    pruebas independientes deflactaría de más y penalizaría a una campeona
+    legítima por el simple hecho de que el GA exploró a fondo un vecindario.
+    Se agrupan por correlación de sus series de retorno (enlace simple, umbral
+    `threshold`) y el nº de grupos es la estimación de pruebas independientes.
+
+    Enlace simple con unión-búsqueda: dos trials caen en el mismo grupo si hay
+    una cadena de correlaciones altas entre ellos. Es O(M²) en el nº de trials,
+    de ahí que quien llama muestree en lugar de pasar decenas de miles.
+    """
+    series = [np.asarray(tr, dtype=float) for tr in trial_returns_list if len(tr) >= 2]
+    n = len(series)
+    if n == 0:
+        return {"n_trials": 0, "effective_trials": 0, "clustered": False}
+    if n == 1:
+        return {"n_trials": 1, "effective_trials": 1, "clustered": False}
+
+    length = min(s.size for s in series)
+    matrix = np.column_stack([s[:length] for s in series])
+
+    # Las columnas constantes no correlacionan con nada: quedan como grupos propios.
+    sd = matrix.std(axis=0, ddof=1)
+    varying = sd > 0
+    corr = np.eye(n)
+    if varying.sum() >= 2:
+        sub = np.corrcoef(matrix[:, varying], rowvar=False)
+        sub = np.nan_to_num(sub, nan=0.0)
+        idx = np.flatnonzero(varying)
+        corr[np.ix_(idx, idx)] = sub
+
+    parent = list(range(n))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if abs(corr[i, j]) >= threshold:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    effective = len({find(i) for i in range(n)})
+    return {
+        "n_trials": n,
+        "effective_trials": effective,
+        "clustered": effective < n,
+        "corr_threshold": threshold,
+    }
+
+
+def deflated_sharpe_ratio(returns, trial_returns_list, n_trials: int | None = None) -> dict:
     """
     DSR: probabilidad de que el Sharpe observado sea real una vez corregido
     por el nº de configuraciones probadas y la no-normalidad (skew/kurtosis)
     de los retornos. DSR alto (→1) = fiable; bajo (→0) = probable sobreajuste.
+
+    `trial_returns_list` aporta la **varianza** entre pruebas; `n_trials`
+    permite declarar el **recuento real** de pruebas cuando quien llama solo
+    pudo conservar una muestra de las series. Ambas cosas son distintas y las
+    dos importan: un GA que evalúa 3.000 genomas pero de los que solo guardamos
+    300 series debe deflactar por 3.000, no por 300 — si no, el umbral sale
+    artificialmente bajo y el DSR, artificialmente alto.
+
+    Omitir `n_trials` conserva el comportamiento anterior (N = nº de series).
     """
     r = np.asarray(returns, dtype=float)
     T = r.size
@@ -348,18 +439,25 @@ def deflated_sharpe_ratio(returns, trial_returns_list) -> dict:
     if not np.isfinite(ku):
         ku = 3.0
 
+    # Solo las pruebas que llegaron a operar aportan varianza. Un genoma que
+    # nunca abre posición tiene serie constante y NO tiene Sharpe: contarlo como
+    # un 0 sería inventarse un dato, y además ensancharía artificialmente la
+    # dispersión entre pruebas, elevando el umbral y castigando de más a la
+    # campeona. Siguen contando en N (la búsqueda gastó esa evaluación), pero no
+    # en V[{SRₙ}].
     trial_sr = np.array([
-        _per_period_sharpe(tr) for tr in trial_returns_list if len(tr) >= 2
+        _per_period_sharpe(tr) for tr in trial_returns_list
+        if len(tr) >= 2 and np.asarray(tr, dtype=float).std(ddof=1) > 0
     ])
-    n_trials = max(int(trial_sr.size), 1)
-    var_sr = float(trial_sr.var(ddof=1)) if trial_sr.size > 1 else 0.0
+    n_sampled = int(trial_sr.size)
+    var_sr = float(trial_sr.var(ddof=1)) if n_sampled > 1 else 0.0
 
-    if n_trials > 1 and var_sr > 0:
-        z1 = norm.ppf(1 - 1.0 / n_trials)
-        z2 = norm.ppf(1 - 1.0 / (n_trials * np.e))
-        sr0 = np.sqrt(var_sr) * ((1 - _EULER_MASCHERONI) * z1 + _EULER_MASCHERONI * z2)
-    else:
-        sr0 = 0.0
+    # El recuento declarado manda sobre el tamaño de la muestra, y nunca puede
+    # ser menor que ella (guardamos como mucho tantas series como pruebas hubo).
+    effective_n = max(int(n_trials), n_sampled) if n_trials else n_sampled
+    effective_n = max(effective_n, 1)
+
+    sr0 = expected_max_sharpe(var_sr, effective_n)
 
     denom = 1 - sk * sr_hat + ((ku - 1) / 4.0) * sr_hat ** 2
     if denom <= 0:
@@ -371,9 +469,54 @@ def deflated_sharpe_ratio(returns, trial_returns_list) -> dict:
         "dsr": round(dsr, 4),
         "sr_per_period": round(sr_hat, 4),
         "sr0_threshold": round(float(sr0), 4),
-        "n_trials": n_trials,
+        "n_trials": effective_n,
+        "n_trials_sampled": n_sampled,
+        "trial_sr_variance": round(var_sr, 6),
         "skew": round(sk, 3),
         "kurtosis": round(ku, 3),
+    }
+
+
+def expected_max_sharpe_curve(
+    variance: float, n_trials: int, observed_sharpe: float | None = None, points: int = 24
+) -> dict:
+    """
+    Curva E[max SR₀] frente al nº de pruebas — «la curva más importante de las
+    finanzas cuantitativas».
+
+    Muestra a partir de cuántas pruebas el Sharpe observado deja de ser
+    distinguible del mejor resultado que produciría el puro azar. Si la
+    campeona queda por debajo de la curva en su propio N, el edge es
+    indistinguible de haber buscado mucho.
+
+    Devuelve puntos espaciados logarítmicamente hasta `n_trials` y, si se pasa
+    `observed_sharpe`, el N a partir del cual el azar lo alcanza.
+    """
+    if n_trials < 1:
+        n_trials = 1
+    hi = max(n_trials, 2)
+    grid = np.unique(np.round(np.geomspace(1, hi, num=max(2, points))).astype(int))
+    curve = [
+        {"trials": int(n), "expected_max_sharpe": round(expected_max_sharpe(variance, int(n)), 4)}
+        for n in grid
+    ]
+
+    crossover = None
+    if observed_sharpe is not None and variance > 0:
+        for point in curve:
+            if point["expected_max_sharpe"] >= observed_sharpe:
+                crossover = point["trials"]
+                break
+
+    return {
+        "curve": curve,
+        "variance": round(float(variance), 6),
+        "n_trials": int(n_trials),
+        "observed_sharpe": round(float(observed_sharpe), 4) if observed_sharpe is not None else None,
+        "expected_max_at_n": round(expected_max_sharpe(variance, int(n_trials)), 4),
+        # Nº de pruebas a partir del cual el azar iguala al Sharpe observado.
+        # None = ni siquiera con todas las pruebas hechas lo alcanza (buena señal).
+        "trials_to_match_by_chance": crossover,
     }
 
 

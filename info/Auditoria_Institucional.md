@@ -1,5 +1,9 @@
 # Auditoría técnica — CryptoWorld
 
+> **Motor cuantitativo.** El control de multiplicidad del generador de
+> estrategias (brecha G1) se documenta aparte, en
+> [`Motor_Cuantitativo_G1.md`](Motor_Cuantitativo_G1.md).
+
 **Alcance:** backend Django/DRF (~31 300 LOC), frontend React/TypeScript
 (~29 500 LOC), infraestructura de despliegue (Docker, Nginx, Railway) y
 canalización de integración continua.

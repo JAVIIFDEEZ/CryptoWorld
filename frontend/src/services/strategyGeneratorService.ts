@@ -66,6 +66,51 @@ export interface GatingChecks {
   mc_p5_positive: boolean
 }
 
+/** Punto de la curva E[max Sharpe] frente al número de pruebas. */
+export interface ExpectedMaxSharpePoint {
+  trials: number
+  expected_max_sharpe: number
+}
+
+export interface ExpectedMaxSharpeCurve {
+  curve: ExpectedMaxSharpePoint[]
+  variance: number
+  n_trials: number
+  observed_sharpe: number | null
+  expected_max_at_n: number
+  /** Pruebas a partir de las cuales el azar iguala el Sharpe observado. null = nunca. */
+  trials_to_match_by_chance: number | null
+}
+
+export interface DeflatedSharpe {
+  dsr: number | null
+  sr_per_period?: number
+  sr0_threshold?: number
+  n_trials?: number
+  n_trials_sampled?: number
+  trial_sr_variance?: number
+  note?: string
+}
+
+/**
+ * Control de sobreajuste de una finalista.
+ *
+ * `source` es lo que decide qué significan estos números:
+ *   · `search_trials`    — calculados sobre los genomas que la búsqueda evaluó
+ *     de verdad: miden sobreajuste de selección y deflactan por el nº real de
+ *     pruebas. Es el modo válido.
+ *   · `parameter_jitter` — calculados sobre perturbaciones de la propia
+ *     estrategia: miden estabilidad paramétrica, NO sobreajuste de selección.
+ */
+export interface OverfittingControl {
+  source: 'search_trials' | 'parameter_jitter'
+  pbo: { pbo: number | null; n_configs?: number; note?: string }
+  deflated_sharpe: DeflatedSharpe
+  effective_trials: { n_trials: number; effective_trials: number; clustered: boolean }
+  expected_max_sharpe_curve: ExpectedMaxSharpeCurve
+  note: string
+}
+
 export interface GatingMetrics {
   n_trades: number
   total_return_pct: number
@@ -76,6 +121,8 @@ export interface GatingMetrics {
   wf_efficiency: number
   mean_oos_sharpe: number
   pbo: number | null
+  overfitting?: OverfittingControl
+  deflated_sharpe?: number | null
   turnover?: number
   cost_drag_pct?: number
   exit_reasons?: Record<string, number>
@@ -159,6 +206,16 @@ export interface GenerationReport {
   gating_thresholds: Record<string, number>
   optimizer?: 'single' | 'nsga'
   ga_evolution: { history: GenerationHistoryPoint[]; evaluations: number; best_fitness: number; islands?: number }
+  /** Control de multiplicidad de la ejecución: cuántas pruebas y qué da el azar con ellas. */
+  overfitting_control?: {
+    evaluated: number
+    sampled: number
+    capacity: number
+    effective_trials: number | null
+    best_deflated_sharpe: number | null
+    expected_max_sharpe_curve: ExpectedMaxSharpeCurve
+    note: string
+  }
   hall_of_fame?: { spec_hash: string; description: string; fitness: number }[]
   pareto_frontier?: ParetoPoint[]
   summary: {
