@@ -134,7 +134,7 @@ class BlockchainDotComClient:
         except requests.exceptions.Timeout:
             raise BlockchainDotComClientError(
                 "Timeout al conectar con Blockchain.com."
-            )
+            ) from None
         except requests.exceptions.RequestException as exc:
             raise BlockchainDotComClientError(f"Error de red: {exc}") from exc
 

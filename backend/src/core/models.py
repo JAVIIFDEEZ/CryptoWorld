@@ -11,12 +11,12 @@ No añadir lógica aquí. Este archivo es solo un adaptador de importación.
 """
 
 from core.infrastructure.persistence.models import (  # noqa: F401
-    UserManager,
-    User,
+    AnalysisExecution,
     CryptoAsset,
     MarketDataSnapshot,
     PortfolioAsset,
-    AnalysisExecution,
+    User,
+    UserManager,
     UserWatchlist,
 )
 

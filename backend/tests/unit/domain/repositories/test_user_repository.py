@@ -10,11 +10,12 @@ Patrón usado: In-memory repository stub para tests sin base de datos.
 Ejecutar: pytest tests/unit/domain/repositories/test_user_repository.py -v
 """
 
-import pytest
 from typing import Optional
-from core.domain.repositories.user_repository import IUserRepository
-from core.domain.entities.user import UserEntity
 
+import pytest
+
+from core.domain.entities.user import UserEntity
+from core.domain.repositories.user_repository import IUserRepository
 
 # ── Implementación stub in-memory ─────────────────────────────────
 

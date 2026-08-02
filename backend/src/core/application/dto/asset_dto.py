@@ -2,7 +2,7 @@
 asset_dto.py — DTOs para operaciones con activos criptográficos y análisis técnico.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 

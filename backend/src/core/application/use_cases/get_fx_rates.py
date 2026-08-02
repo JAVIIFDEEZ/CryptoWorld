@@ -11,7 +11,7 @@ estáticas aproximadas marcadas como source="fallback" para no romper la UI.
 """
 
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from core.infrastructure.external_apis.coingecko_client import (
     CoinGeckoClient,

@@ -10,12 +10,13 @@ No necesitan base de datos real ni Django.
 Ejecutar: pytest tests/unit/domain/services/test_user_domain_service.py -v
 """
 
-import pytest
 from typing import Optional
-from core.domain.services.user_domain_service import UserDomainService
-from core.domain.repositories.user_repository import IUserRepository
-from core.domain.entities.user import UserEntity
 
+import pytest
+
+from core.domain.entities.user import UserEntity
+from core.domain.repositories.user_repository import IUserRepository
+from core.domain.services.user_domain_service import UserDomainService
 
 # ── Stub del repositorio ───────────────────────────────────────────
 

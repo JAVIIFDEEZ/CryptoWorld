@@ -2,10 +2,9 @@
 portfolio_dto.py — DTOs para el módulo de Portfolio.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
-from datetime import datetime
 
 
 @dataclass(frozen=True)

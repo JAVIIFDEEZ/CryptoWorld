@@ -7,6 +7,7 @@ La implementación concreta que usa Django ORM está en infrastructure/.
 
 from abc import ABC, abstractmethod
 from typing import List, Optional
+
 from core.domain.entities.crypto_asset import CryptoAssetEntity
 
 

@@ -11,12 +11,14 @@ Marcados con @pytest.mark.unit para poder ejecutarlos aislados:
   pytest -m unit
 """
 
-import pytest
+from dataclasses import FrozenInstanceError
 from decimal import Decimal
-from core.domain.entities.user import UserEntity
-from core.domain.entities.crypto_asset import CryptoAssetEntity
-from core.domain.value_objects.email import Email, CryptoSymbol
 
+import pytest
+
+from core.domain.entities.crypto_asset import CryptoAssetEntity
+from core.domain.entities.user import UserEntity
+from core.domain.value_objects.email import CryptoSymbol, Email
 
 # ── UserEntity ─────────────────────────────────────────────────────
 
@@ -102,7 +104,9 @@ class TestEmailValueObject:
     @pytest.mark.unit
     def test_email_is_immutable(self):
         email = Email("user@example.com")
-        with pytest.raises(Exception):
+        # La excepcion concreta importa: `Exception` tambien aprobaria el
+        # test si la asignacion fallara por un motivo distinto.
+        with pytest.raises(FrozenInstanceError):
             email.value = "other@example.com"
 
 

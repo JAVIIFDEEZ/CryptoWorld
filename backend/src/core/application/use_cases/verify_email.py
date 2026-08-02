@@ -7,8 +7,8 @@ para validar que el link de verificación es genuino y no ha expirado.
 
 from django.core import signing
 
-from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import VerifyEmailInputDTO
+from core.infrastructure.persistence.models import User as UserModel
 
 # Tiempo de validez del token: 3 días en segundos
 VERIFICATION_MAX_AGE = 60 * 60 * 24 * 3
@@ -46,14 +46,14 @@ class VerifyEmailUseCase:
         try:
             user_pk = signer.unsign(dto.token, max_age=VERIFICATION_MAX_AGE)
         except signing.SignatureExpired:
-            raise ValueError("El enlace de verificación ha expirado (válido 3 días).")
+            raise ValueError("El enlace de verificación ha expirado (válido 3 días).") from None
         except signing.BadSignature:
-            raise ValueError("Enlace de verificación inválido.")
+            raise ValueError("Enlace de verificación inválido.") from None
 
         try:
             user = UserModel.objects.get(pk=user_pk)
         except UserModel.DoesNotExist:
-            raise ValueError("Enlace de verificación inválido.")
+            raise ValueError("Enlace de verificación inválido.") from None
 
         user.is_email_verified = True
         user.save(update_fields=["is_email_verified"])

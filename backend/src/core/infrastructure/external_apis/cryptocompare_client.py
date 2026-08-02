@@ -13,12 +13,12 @@ Principio aplicado: Adapter Pattern (Arquitectura Hexagonal).
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import requests
+from django.conf import settings
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class CryptoCompareClient:
         except CryptoCompareClientError:
             raise
         except requests.exceptions.Timeout:
-            raise CryptoCompareClientError("Timeout al conectar con CryptoCompare.")
+            raise CryptoCompareClientError("Timeout al conectar con CryptoCompare.") from None
         except requests.exceptions.RequestException as exc:
             raise CryptoCompareClientError(f"Error de red: {exc}") from exc
 

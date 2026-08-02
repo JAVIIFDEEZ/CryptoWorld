@@ -7,9 +7,9 @@ Si el código es correcto, is_2fa_enabled pasa a True.
 
 import pyotp
 
-from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import Enable2FADTO
 from core.application.use_cases.recovery_codes import generate_recovery_codes
+from core.infrastructure.persistence.models import User as UserModel
 
 
 class Enable2FAUseCase:

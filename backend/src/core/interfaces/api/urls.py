@@ -18,8 +18,7 @@ from drf_spectacular.views import (
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from core.interfaces.api import views
-from core.interfaces.api import admin_views
+from core.interfaces.api import admin_views, views
 
 urlpatterns = [
     # ── Documentación de la API (OpenAPI 3) ────────────────────────
@@ -130,6 +129,11 @@ urlpatterns = [
 
     # ── Admin ───────────────────────────────────────────────────────
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-user-list"),
+    path(
+        "admin/users/stats/",
+        admin_views.AdminUserStatsView.as_view(),
+        name="admin-user-stats",
+    ),
     path("admin/users/<int:user_id>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),
     path(
         "admin/users/<int:user_id>/resend-verification/",

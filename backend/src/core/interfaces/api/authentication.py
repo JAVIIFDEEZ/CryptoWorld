@@ -6,16 +6,26 @@ saber que las credenciales del usuario cambiaron después de emitir el
 token: un access token robado sigue funcionando hasta agotar su vida
 útil aunque la víctima ya haya cambiado la contraseña.
 
-Esta subclase añade esa comprobación: si el token se emitió (`iat`) antes
-de `user.credentials_changed_at`, se rechaza. Es la mitad que le faltaba
-a la blacklist de refresh tokens para que la revocación sea completa.
-"""
+Esta subclase añade esa comprobación. Cada token emitido lleva el claim
+`cred_epoch` con la marca de revocación vigente en ese momento; si el
+usuario ha revocado sus sesiones después, su marca es mayor que la del
+token y este se rechaza.
 
-from datetime import datetime, timezone as dt_timezone
+Es la mitad que le faltaba a la blacklist de refresh tokens para que la
+revocación sea completa: la blacklist corta la renovación, el claim corta
+los access tokens que ya están en circulación.
+"""
 
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
+
+from core.application.services.sessions import CREDENTIAL_EPOCH_CLAIM
+
+_REVOKED_MESSAGE = (
+    "La sesión ha caducado porque las credenciales de la cuenta han "
+    "cambiado. Vuelve a iniciar sesión."
+)
 
 
 class CredentialEpochJWTAuthentication(JWTAuthentication):
@@ -26,29 +36,18 @@ class CredentialEpochJWTAuthentication(JWTAuthentication):
 
         changed_at = getattr(user, "credentials_changed_at", None)
         if changed_at is None:
+            # La cuenta nunca ha revocado sesiones: nada que comprobar.
             return user
 
-        issued_at_raw = validated_token.get("iat")
-        if issued_at_raw is None:
-            # Un token sin `iat` no se puede fechar; con una revocación
-            # vigente sobre la cuenta, la única respuesta segura es
-            # rechazarlo.
-            raise AuthenticationFailed(
-                "La sesión ya no es válida. Vuelve a iniciar sesión.",
-                code="session_revoked",
-            )
+        token_epoch = validated_token.get(CREDENTIAL_EPOCH_CLAIM)
+        if token_epoch is None:
+            # Token emitido antes de que existiera el claim, o manipulado
+            # para omitirlo. Con una revocación vigente sobre la cuenta, la
+            # única respuesta segura es rechazarlo.
+            raise AuthenticationFailed(_REVOKED_MESSAGE, code="session_revoked")
 
-        issued_at = datetime.fromtimestamp(int(issued_at_raw), tz=dt_timezone.utc)
-        if issued_at < changed_at.replace(microsecond=0):
-            # Se compara contra el segundo exacto porque `iat` tiene
-            # resolución de segundo: sin truncar los microsegundos, el
-            # token recién emitido en el mismo segundo que el cambio se
-            # rechazaría a sí mismo.
-            raise AuthenticationFailed(
-                "La sesión ha caducado porque las credenciales han cambiado. "
-                "Vuelve a iniciar sesión.",
-                code="session_revoked",
-            )
+        if float(token_epoch) < changed_at.timestamp():
+            raise AuthenticationFailed(_REVOKED_MESSAGE, code="session_revoked")
 
         return user
 

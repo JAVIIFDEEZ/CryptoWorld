@@ -10,7 +10,7 @@ La entidad solo sabe sobre sí misma, no sobre cómo se persiste.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Optional
 
 

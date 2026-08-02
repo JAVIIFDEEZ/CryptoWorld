@@ -19,6 +19,6 @@ class DeleteTradeUseCase:
         try:
             trade = TradeHistory.objects.get(pk=trade_id, user=user)
         except TradeHistory.DoesNotExist:
-            raise ValueError(f"Operación {trade_id} no encontrada.")
+            raise ValueError(f"Operación {trade_id} no encontrada.") from None
 
         trade.delete()

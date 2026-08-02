@@ -17,21 +17,55 @@ export interface AdminUser {
   is_active: boolean
   is_email_verified: boolean
   is_2fa_enabled: boolean
+  /** Puede operar el panel. */
+  is_staff: boolean
+  /** Además, puede conceder y revocar privilegios. */
+  is_superuser: boolean
+  /** `is_staff || is_superuser` — atajo para pintar el badge de admin. */
   is_admin: boolean
   date_joined: string
   last_login: string | null
+}
+
+/** Envolvente de paginación que devuelven los listados de la API. */
+export interface Paginated<T> {
+  count: number
+  page: number
+  page_size: number
+  total_pages: number
+  next: string | null
+  previous: string | null
+  results: T[]
 }
 
 export interface CreateAdminPayload {
   email: string
   username: string
   password: string
+  /**
+   * Conceder también privilegios de superusuario. Por omisión la cuenta
+   * se crea solo como staff: el privilegio máximo se pide explícitamente.
+   */
+  is_superuser?: boolean
 }
 
 export interface UpdateUserPayload {
   is_active?: boolean
-  is_admin?: boolean
+  /** Requiere ser superusuario. */
+  is_staff?: boolean
+  /** Requiere ser superusuario. */
+  is_superuser?: boolean
   is_email_verified?: boolean
+}
+
+/** Contadores globales de usuarios (GET /api/admin/users/stats/). */
+export interface AdminUserStats {
+  total: number
+  verified: number
+  admins: number
+  superusers: number
+  blocked: number
+  with_2fa: number
 }
 
 export interface MarketSyncResult {
@@ -46,7 +80,8 @@ export interface SystemHealth {
   status: 'ok' | 'degraded'
   version: string
   service: string
-  components: {
+  /** Solo presente para administradores. */
+  components?: {
     database: 'ok' | 'error'
     cache: 'ok' | 'error'
     celery_broker: 'ok' | 'error'
@@ -59,12 +94,32 @@ export interface SystemHealth {
 export const adminService = {
   /**
    * Listar usuarios del sistema, con búsqueda opcional por email/username.
-   * GET /api/admin/users/?search=
+   * GET /api/admin/users/?search=&page=
+   *
+   * El endpoint va paginado: devuelve la envolvente completa para que el
+   * panel pueda mostrar el total y navegar entre páginas en lugar de
+   * asumir que la primera respuesta contiene todos los usuarios.
    */
-  async listUsers(search = ''): Promise<AdminUser[]> {
-    const { data } = await apiClient.get<AdminUser[]>('/admin/users/', {
-      params: search ? { search } : undefined,
+  async listUsers(search = '', page = 1, pageSize = 50): Promise<Paginated<AdminUser>> {
+    const { data } = await apiClient.get<Paginated<AdminUser>>('/admin/users/', {
+      params: {
+        ...(search ? { search } : {}),
+        page,
+        page_size: pageSize,
+      },
     })
+    return data
+  },
+
+  /**
+   * Contadores globales de usuarios.
+   * GET /api/admin/users/stats/
+   *
+   * Necesario desde que el listado va paginado: los totales ya no se
+   * pueden derivar en el cliente a partir de la página cargada.
+   */
+  async getUserStats(): Promise<AdminUserStats> {
+    const { data } = await apiClient.get<AdminUserStats>('/admin/users/stats/')
     return data
   },
 

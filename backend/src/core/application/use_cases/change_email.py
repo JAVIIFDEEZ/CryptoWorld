@@ -126,14 +126,14 @@ class ConfirmEmailChangeUseCase:
                 token, salt=EMAIL_CHANGE_SALT, max_age=EMAIL_CHANGE_MAX_AGE
             )
         except signing.SignatureExpired:
-            raise ValueError("El enlace ha expirado (válido 24 horas). Solicita el cambio de nuevo.")
+            raise ValueError("El enlace ha expirado (válido 24 horas). Solicita el cambio de nuevo.") from None
         except signing.BadSignature:
-            raise ValueError("Enlace de confirmación inválido.")
+            raise ValueError("Enlace de confirmación inválido.") from None
 
         try:
             user = UserModel.objects.get(pk=payload.get("user_id"))
         except UserModel.DoesNotExist:
-            raise ValueError("Enlace de confirmación inválido.")
+            raise ValueError("Enlace de confirmación inválido.") from None
 
         new_email = payload.get("new_email", "")
         if not user.pending_email or user.pending_email != new_email:

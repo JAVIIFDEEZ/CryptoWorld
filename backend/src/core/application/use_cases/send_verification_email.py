@@ -4,10 +4,10 @@ use_cases/send_verification_email.py — Enviar email de verificación al regist
 Puede llamarse también manualmente si el usuario solicita reenviar el email.
 """
 
+from django.conf import settings
 from django.core import signing
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.conf import settings
 
 from core.application.use_cases.verify_email import EMAIL_VERIFICATION_SALT
 from core.infrastructure.persistence.models import User as UserModel

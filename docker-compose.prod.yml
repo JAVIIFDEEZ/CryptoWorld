@@ -71,6 +71,14 @@ services:
     # Solo expone al interior de la red Docker, nginx hace el proxy
     expose:
       - "8000"
+    healthcheck:
+      # Sonda de vitalidad: no consulta BD ni Redis, de modo que una caida
+      # de una dependencia no provoca el reinicio en bucle del proceso web.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/live/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,7 +121,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "cd src && celery -A config worker --loglevel=info --concurrency=2 --uid=nobody --gid=nogroup"
+      sh -c "cd src && celery -A config worker --loglevel=info --concurrency=2"
     networks:
       - internal
 

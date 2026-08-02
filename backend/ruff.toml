@@ -1,0 +1,53 @@
+# ruff.toml — Linter y formateador del backend.
+#
+# Ruff sustituye a flake8 + isort + pyupgrade con una sola herramienta y
+# sin tiempo de espera apreciable, lo que importa: un linter lento acaba
+# desactivado.
+
+line-length = 100
+target-version = "py311"
+
+exclude = [
+    ".venv",
+    "migrations",       # Código generado por Django; no se edita a mano.
+    "staticfiles",
+]
+
+[lint]
+select = [
+    "E",      # pycodestyle — errores
+    "W",      # pycodestyle — avisos
+    "F",      # pyflakes — nombres sin usar, imports muertos
+    "I",      # isort — orden de imports
+    "B",      # flake8-bugbear — trampas comunes de Python
+    "C4",     # comprensiones innecesarias
+    "DJ",     # flake8-django
+    "S",      # bandit — patrones inseguros
+    "T20",    # print() olvidado en el código
+]
+
+# `UP` (pyupgrade) queda fuera a propósito. El código usa de forma
+# consistente `Optional[X]` y `List[X]`, y reescribir noventa
+# anotaciones a la sintaxis PEP 604 sería puro ruido: no corrige ningún
+# defecto y sepultaría los cambios que sí importan. Es una decisión de
+# estilo, no de calidad, y conviene tomarla aparte.
+
+ignore = [
+    "E501",   # Longitud de línea: la controla el formateador.
+    "B008",   # Llamadas en argumentos por defecto (patrón habitual en DRF).
+    "S101",   # `assert`: legítimo en los tests.
+    "DJ001",  # null=True en CharField: decisión ya tomada en el esquema.
+]
+
+[lint.per-file-ignores]
+# Los tests usan asserts, credenciales de prueba y datos fijos.
+"tests/**" = ["S105", "S106", "S107", "T20"]
+# settings.py importa de forma condicional y lee el entorno.
+"src/config/settings.py" = ["E402"]
+
+[lint.isort]
+known-first-party = ["core", "config"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

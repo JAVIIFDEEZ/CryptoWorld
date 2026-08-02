@@ -2,7 +2,7 @@
 infrastructure/persistence/models.py — Modelos ORM de Django.
 
 Esta capa es el adaptador de la base de datos.
-Los modelos de Django aquí son adaptadores de infraestructura: 
+Los modelos de Django aquí son adaptadores de infraestructura:
 traducen entre el esquema relacional de PostgreSQL y las entidades del dominio.
 
 IMPORTANTE: estos modelos NO son las entidades del dominio.
@@ -13,9 +13,8 @@ Principio aplicado: Separación de responsabilidades (SRP).
 Un modelo no tiene lógica de negocio; esa lógica vive en las entidades.
 """
 
-from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-
+from django.db import models
 
 # ── Gestión de usuarios personalizados ────────────────────────────
 
@@ -38,7 +37,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         return self.create_user(email, username, password, **extra_fields)
-                                                                          
+
 
 class User(AbstractBaseUser, PermissionsMixin):
     """

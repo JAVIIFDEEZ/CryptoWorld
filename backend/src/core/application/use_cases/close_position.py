@@ -2,12 +2,12 @@
 close_position.py — Caso de uso: Cerrar parcial o totalmente una posición.
 """
 
-from decimal import Decimal
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from core.application.dto.portfolio_dto import ClosePositionInputDTO, PositionDTO
-from core.infrastructure.persistence.models import Position, TradeHistory, User
 from core.application.use_cases.open_position import _build_position_dto
+from core.infrastructure.persistence.models import Position, TradeHistory, User
 
 
 class ClosePositionUseCase:
@@ -26,7 +26,7 @@ class ClosePositionUseCase:
                 pk=position_id, user=user
             )
         except Position.DoesNotExist:
-            raise ValueError("Posición no encontrada.")
+            raise ValueError("Posición no encontrada.") from None
 
         if position.status == "CLOSED":
             raise ValueError("La posición ya está cerrada.")
@@ -49,7 +49,7 @@ class ClosePositionUseCase:
         try:
             executed_at = datetime.fromisoformat(dto.executed_at)
         except ValueError:
-            raise ValueError("Formato de fecha inválido. Usa ISO 8601.")
+            raise ValueError("Formato de fecha inválido. Usa ISO 8601.") from None
 
         if executed_at.tzinfo is None:
             executed_at = executed_at.replace(tzinfo=timezone.utc)

@@ -17,14 +17,18 @@ import { useAuth } from '@/hooks/useAuth'
 import {
   adminService,
   type AdminUser,
+  type AdminUserStats,
   type MarketSyncResult,
   type SystemHealth,
 } from '@/services/adminService'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import PasswordInput from '@/components/ui/PasswordInput'
+import { apiErrorMessage } from '@/utils/apiError'
 
 const PAGE_SIZE = 10
+// Retardo antes de consultar al servidor mientras se escribe la busqueda.
+const SEARCH_DEBOUNCE_MS = 300
 
 type PendingAction =
   | { kind: 'toggle-admin'; user: AdminUser }
@@ -72,6 +76,9 @@ function SystemHealthPanel({ health }: { health: SystemHealth | null }) {
   if (!health) return null
 
   const { components } = health
+  // El desglose solo lo devuelve la API a administradores; si faltara
+  // (sesión degradada), el panel se oculta en lugar de romper.
+  if (!components) return null
   const emailReal = components.email_backend !== 'console'
 
   return (
@@ -126,9 +133,13 @@ export default function AdminDashboardPage() {
   const [loadError, setLoadError] = useState(false)
   const [health, setHealth] = useState<SystemHealth | null>(null)
 
-  // Búsqueda y paginación (client-side)
+  // Búsqueda y paginación (resueltas en el servidor: el listado ya no
+  // devuelve la tabla entera, así que filtrar en cliente solo vería la
+  // página cargada y daría resultados incompletos).
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [stats, setStats] = useState<AdminUserStats | null>(null)
 
   // Confirmaciones y acciones en curso
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
@@ -146,20 +157,51 @@ export default function AdminDashboardPage() {
   const [createError, setCreateError] = useState('')
   const [isCreating, setIsCreating] = useState(false)
 
+  // Carga de la página actual. La búsqueda se envía al servidor con un
+  // pequeño retardo para no lanzar una petición por cada tecla.
+  useEffect(() => {
+    let cancelled = false
+    const timer = setTimeout(() => {
+      setLoading(true)
+      adminService
+        .listUsers(search, page, PAGE_SIZE)
+        .then((data) => {
+          if (cancelled) return
+          setUsers(data.results)
+          setTotalPages(Math.max(1, data.total_pages))
+          setLoadError(false)
+        })
+        .catch(() => {
+          if (!cancelled) setLoadError(true)
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, search ? SEARCH_DEBOUNCE_MS : 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [search, page])
+
+  // Al cambiar el criterio de búsqueda se vuelve a la primera página:
+  // mantenerse en la 5 con un filtro nuevo mostraría una lista vacía.
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
+  // Contadores globales y estado de infraestructura: se piden una vez.
   useEffect(() => {
     let cancelled = false
     adminService
-      .listUsers()
+      .getUserStats()
       .then((data) => {
-        if (!cancelled) setUsers(data)
+        if (!cancelled) setStats(data)
       })
       .catch(() => {
-        if (!cancelled) setLoadError(true)
+        // Los contadores son informativos; el panel funciona sin ellos.
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    // Estado de infraestructura: informativo, no bloquea el panel si falla
     adminService
       .getSystemHealth()
       .then((data) => {
@@ -173,29 +215,8 @@ export default function AdminDashboardPage() {
     }
   }, [])
 
-  // ── Derivados: filtro + paginación ─────────────────────────────────
-
-  const filteredUsers = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    if (!term) return users
-    return users.filter(
-      (u) => u.email.toLowerCase().includes(term) || u.username.toLowerCase().includes(term),
-    )
-  }, [users, search])
-
-  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
-  const pageUsers = filteredUsers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-
-  const stats = useMemo(
-    () => ({
-      total: users.length,
-      verified: users.filter((u) => u.is_email_verified).length,
-      admins: users.filter((u) => u.is_admin).length,
-      blocked: users.filter((u) => !u.is_active).length,
-    }),
-    [users],
-  )
+  const pageUsers = users
 
   // ── Acciones ───────────────────────────────────────────────────────
 
@@ -209,7 +230,9 @@ export default function AdminDashboardPage() {
     try {
       if (pendingAction.kind === 'toggle-admin') {
         const u = pendingAction.user
-        const updated = await adminService.updateUser(u.id, { is_admin: !u.is_admin })
+        // `is_staff` es el nivel de operacion del panel. Conceder
+        // superusuario es una accion aparte y deliberada.
+        const updated = await adminService.updateUser(u.id, { is_staff: !u.is_admin })
         replaceUser(updated)
         showToast(
           updated.is_admin
@@ -235,8 +258,7 @@ export default function AdminDashboardPage() {
         showToast('Sincronización de mercado completada.', 'success')
       }
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      showToast(axiosErr.response?.data?.error || 'La operación ha fallado.', 'error')
+      showToast(apiErrorMessage(err, 'La operación ha fallado.'), 'error')
     } finally {
       setIsExecutingAction(false)
       setIsSyncing(false)
@@ -250,8 +272,7 @@ export default function AdminDashboardPage() {
       const { message } = await adminService.resendVerification(u.id)
       showToast(message, 'success')
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      showToast(axiosErr.response?.data?.error || 'No se pudo reenviar la verificación.', 'error')
+      showToast(apiErrorMessage(err, 'No se pudo reenviar la verificación.'), 'error')
     } finally {
       setResendingUserId(null)
     }
@@ -268,8 +289,7 @@ export default function AdminDashboardPage() {
       setFormData({ email: '', username: '', password: '' })
       showToast(`Administrador ${newUser.username} creado correctamente.`, 'success')
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      setCreateError(axiosErr.response?.data?.error || 'Error al crear el administrador.')
+      setCreateError(apiErrorMessage(err, 'Error al crear el administrador.'))
     } finally {
       setIsCreating(false)
     }
@@ -365,10 +385,10 @@ export default function AdminDashboardPage() {
 
       {/* Tarjetas de resumen */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard label="Usuarios registrados" value={stats.total} />
-        <StatCard label="Emails verificados" value={stats.verified} accent="text-emerald-400" />
-        <StatCard label="Administradores" value={stats.admins} accent="text-fuchsia-400" />
-        <StatCard label="Bloqueados" value={stats.blocked} accent="text-red-400" />
+        <StatCard label="Usuarios registrados" value={stats?.total ?? 0} />
+        <StatCard label="Emails verificados" value={stats?.verified ?? 0} accent="text-emerald-400" />
+        <StatCard label="Administradores" value={stats?.admins ?? 0} accent="text-fuchsia-400" />
+        <StatCard label="Bloqueados" value={stats?.blocked ?? 0} accent="text-red-400" />
       </div>
 
       {/* Estado de la infraestructura (BD, Redis, Celery, email) */}
@@ -469,7 +489,7 @@ export default function AdminDashboardPage() {
             <p className="text-red-400 text-sm">
               No se pudo cargar la lista de usuarios. Recarga la página o inténtalo más tarde.
             </p>
-          ) : filteredUsers.length === 0 ? (
+          ) : pageUsers.length === 0 ? (
             <p className="text-slate-400 text-sm text-center py-8">
               {search ? `Sin resultados para "${search}".` : 'No hay usuarios registrados.'}
             </p>
@@ -565,7 +585,7 @@ export default function AdminDashboardPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-700">
                   <p className="text-xs text-slate-500">
-                    {filteredUsers.length} usuario(s) · página {currentPage} de {totalPages}
+                    {stats?.total ?? pageUsers.length} usuario(s) · página {currentPage} de {totalPages}
                   </p>
                   <div className="flex gap-2">
                     <button

@@ -11,7 +11,6 @@ Diferencia clave:
 """
 
 from core.domain.repositories.user_repository import IUserRepository
-from core.domain.entities.user import UserEntity
 
 
 class UserDomainService:

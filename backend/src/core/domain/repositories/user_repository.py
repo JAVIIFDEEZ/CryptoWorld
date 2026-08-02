@@ -10,6 +10,7 @@ Principio aplicado: Inversión de Dependencias (DIP).
 
 from abc import ABC, abstractmethod
 from typing import Optional
+
 from core.domain.entities.user import UserEntity
 
 

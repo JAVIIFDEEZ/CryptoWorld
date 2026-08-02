@@ -7,9 +7,9 @@ acceso temporal a la sesión pueda desactivar la protección.
 
 import pyotp
 
-from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import Disable2FADTO
 from core.application.use_cases.recovery_codes import delete_recovery_codes
+from core.infrastructure.persistence.models import User as UserModel
 
 
 class Disable2FAUseCase:

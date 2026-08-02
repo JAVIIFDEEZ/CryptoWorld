@@ -10,7 +10,7 @@ Si alguna fuente falla, devuelve el último valor conocido o "—".
 """
 
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Optional
 
 import requests

@@ -8,10 +8,9 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-
-from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import ChangePasswordDTO
 from core.application.services.sessions import issue_session, revoke_all_sessions
+from core.infrastructure.persistence.models import User as UserModel
 
 
 class ChangePasswordUseCase:

@@ -5,10 +5,12 @@ Los fixtures son configuraciones reutilizables entre tests.
 Este archivo es detectado automáticamente por pytest.
 """
 
+import logging
+
 import pytest
-from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from rest_framework.test import APIClient
 
 User = get_user_model()
 
@@ -24,7 +26,13 @@ def _clear_cache():
     try:
         cache.clear()
     except Exception:
-        pass  # Sin Redis disponible los tests que no lo usan deben poder correr
+        # Sin Redis los tests que no dependen de la cache deben poder
+        # correr igualmente, pero el motivo se registra: un fallo mudo
+        # aquí explicaría después resultados desconcertantes en los
+        # tests de throttling.
+        logging.getLogger(__name__).warning(
+            "Cache no disponible al preparar el test", exc_info=True
+        )
     yield
 
 
@@ -47,8 +55,8 @@ def test_user(db):
 @pytest.fixture
 def authenticated_client(api_client, test_user):
     """Cliente HTTP con JWT del usuario de prueba ya configurado."""
-    from rest_framework_simplejwt.tokens import RefreshToken
-    refresh = RefreshToken.for_user(test_user)
+    from core.application.services.sessions import build_refresh_token
+    refresh = build_refresh_token(test_user)
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
     return api_client
 
@@ -69,8 +77,8 @@ def admin_user(db):
 @pytest.fixture
 def admin_client(admin_user):
     """Cliente HTTP con JWT del administrador de prueba."""
-    from rest_framework_simplejwt.tokens import RefreshToken
+    from core.application.services.sessions import build_refresh_token
     client = APIClient()
-    refresh = RefreshToken.for_user(admin_user)
+    refresh = build_refresh_token(admin_user)
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
     return client

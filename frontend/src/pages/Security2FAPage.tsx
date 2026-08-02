@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react'
 import { authService } from '@/services/authService'
 import { useToast } from '@/components/ui/Toast'
+import { apiErrorMessage } from '@/utils/apiError'
 
 function RecoveryCodesPanel({ codes }: { codes: string[] }) {
   const { showToast } = useToast()
@@ -120,8 +121,7 @@ function Security2FAPage() {
       setQrCodeBase64(data.qr_code_base64)
       setMessage('QR generado. Escanéalo en tu app y confirma con un código de 6 dígitos.')
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } }
-      setError(axiosError?.response?.data?.error ?? 'No se pudo iniciar la configuración 2FA.')
+      setError(apiErrorMessage(err, 'No se pudo iniciar la configuración 2FA.'))
     } finally {
       setIsLoading(false)
     }
@@ -140,8 +140,7 @@ function Security2FAPage() {
       setRemainingCodes(response.recovery_codes.length)
       showToast('2FA activado correctamente.', 'success')
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } }
-      setError(axiosError?.response?.data?.error ?? 'No se pudo activar 2FA.')
+      setError(apiErrorMessage(err, 'No se pudo activar 2FA.'))
     } finally {
       setIsLoading(false)
     }
@@ -158,8 +157,7 @@ function Security2FAPage() {
       setRemainingCodes(response.recovery_codes.length)
       showToast('Códigos regenerados. Los anteriores ya no son válidos.', 'success')
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } }
-      setError(axiosError?.response?.data?.error ?? 'No se pudieron regenerar los códigos.')
+      setError(apiErrorMessage(err, 'No se pudieron regenerar los códigos.'))
     } finally {
       setIsLoading(false)
     }
@@ -177,8 +175,7 @@ function Security2FAPage() {
       setRemainingCodes(0)
       setMessage(response.message)
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } }
-      setError(axiosError?.response?.data?.error ?? 'No se pudo desactivar 2FA.')
+      setError(apiErrorMessage(err, 'No se pudo desactivar 2FA.'))
     } finally {
       setIsLoading(false)
     }

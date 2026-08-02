@@ -15,6 +15,8 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { authService } from '@/services/authService'
 import PasswordInput from '@/components/ui/PasswordInput'
+import { apiErrorFor } from '@/utils/apiError'
+import { PASSWORD_HINT, PASSWORD_MIN_LENGTH, checkPasswordLength } from '@/utils/authPolicy'
 
 const AUTH_INPUT_CLASSES =
   'w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 pr-10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition'
@@ -43,8 +45,9 @@ function ResetPasswordPage() {
       return
     }
 
-    if (newPassword.length < 8) {
-      setError('La contraseña debe tener al menos 8 caracteres.')
+    const lengthError = checkPasswordLength(newPassword)
+    if (lengthError) {
+      setError(lengthError)
       return
     }
 
@@ -56,12 +59,15 @@ function ResetPasswordPage() {
         state: { message: 'Contraseña restablecida correctamente. Ya puedes iniciar sesión.' },
       })
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string; new_password?: string[] } } }
-      const backendError =
-        axiosError?.response?.data?.error ??
-        axiosError?.response?.data?.new_password?.[0] ??
-        'No se pudo restablecer la contraseña. El enlace puede haber expirado.'
-      setError(backendError)
+      // Si la política de contraseña rechaza la nueva, el motivo llega en
+      // `details.new_password`; si no, el mensaje general (enlace caducado).
+      setError(
+        apiErrorFor(
+          err,
+          'new_password',
+          'No se pudo restablecer la contraseña. El enlace puede haber expirado.',
+        ),
+      )
     } finally {
       setIsLoading(false)
     }
@@ -119,7 +125,7 @@ function ResetPasswordPage() {
             <>
               <h2 className="text-xl font-semibold text-white mb-1">Nueva contraseña</h2>
               <p className="text-slate-400 text-sm mb-6">
-                Elige una contraseña segura de al menos 8 caracteres.
+                {PASSWORD_HINT}
               </p>
 
               {error && (
@@ -138,7 +144,7 @@ function ResetPasswordPage() {
                     value={newPassword}
                     onChange={setNewPassword}
                     required
-                    minLength={8}
+                    minLength={PASSWORD_MIN_LENGTH}
                     autoComplete="new-password"
                     placeholder="••••••••"
                     inputClassName={AUTH_INPUT_CLASSES}
@@ -154,7 +160,7 @@ function ResetPasswordPage() {
                     value={confirmPassword}
                     onChange={setConfirmPassword}
                     required
-                    minLength={8}
+                    minLength={PASSWORD_MIN_LENGTH}
                     autoComplete="new-password"
                     placeholder="••••••••"
                     inputClassName={AUTH_INPUT_CLASSES}

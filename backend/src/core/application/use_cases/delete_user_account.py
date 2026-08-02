@@ -1,5 +1,7 @@
-from typing import Dict, Any
+from typing import Any, Dict
+
 from core.domain.repositories.user_repository import IUserRepository
+
 
 class DeleteUserAccountUseCase:
     def __init__(self, user_repository: IUserRepository):
@@ -9,6 +11,6 @@ class DeleteUserAccountUseCase:
         user = self.user_repository.get_by_id(user_id)
         if not user:
             return {"success": False, "error": "User not found"}
-        
+
         self.user_repository.delete(user_id)
         return {"success": True}

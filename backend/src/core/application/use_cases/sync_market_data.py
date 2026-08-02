@@ -11,7 +11,7 @@ o desde un cron job en el futuro.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 

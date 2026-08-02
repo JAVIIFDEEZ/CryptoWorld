@@ -14,7 +14,6 @@ En lugar de usar strings crudos, el dominio usa tipos con significado.
 import re
 from dataclasses import dataclass
 
-
 # Expresión regular para validar formato de email (soporta subdominios)
 _EMAIL_REGEX = re.compile(r"^[\w.+-]+@([\w-]+\.)+[a-zA-Z]{2,}$")
 

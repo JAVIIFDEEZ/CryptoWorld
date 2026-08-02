@@ -11,14 +11,15 @@ El flujo completo es:
 Este use case gestiona el paso 2.
 """
 
-import pyotp
 from datetime import timedelta
 
-from rest_framework_simplejwt.tokens import RefreshToken, Token
+import pyotp
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import Token
 
+from core.application.dto.auth_dto import AuthTokenOutputDTO, Verify2FALoginDTO
+from core.application.services.sessions import build_refresh_token
 from core.infrastructure.persistence.models import User as UserModel
-from core.application.dto.auth_dto import Verify2FALoginDTO, AuthTokenOutputDTO
 
 
 class PreAuthToken(Token):
@@ -28,7 +29,10 @@ class PreAuthToken(Token):
     Es un token especial con type='pre_2fa' que solo sirve para
     completar el segundo factor. No puede usarse como access token.
     """
-    token_type = "pre_2fa"
+    # No es una credencial: es el discriminante de tipo del JWT que
+    # SimpleJWT verifica para que un access token no sirva como
+    # pre-autenticacion.
+    token_type = "pre_2fa"  # noqa: S105
     lifetime = timedelta(minutes=5)
 
 
@@ -79,8 +83,8 @@ class Verify2FALoginUseCase:
         else:
             raise ValueError("Debes proporcionar un código TOTP o de recuperación.")
 
-        # Emitir tokens JWT completos
-        refresh = RefreshToken.for_user(user)
+        # Emitir tokens JWT completos con el claim de revocación.
+        refresh = build_refresh_token(user)
 
         return AuthTokenOutputDTO(
             access_token=str(refresh.access_token),

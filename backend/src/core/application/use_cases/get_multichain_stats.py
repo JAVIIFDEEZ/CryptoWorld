@@ -12,11 +12,11 @@ import logging
 from typing import Optional
 
 from core.infrastructure.external_apis.blockchair_client import (
-    BlockchairClient,
-    BlockchairClientError,
-    SUPPORTED_SYMBOLS,
     COMMON_FIELDS,
     ETH_EXTRA_FIELDS,
+    SUPPORTED_SYMBOLS,
+    BlockchairClient,
+    BlockchairClientError,
 )
 
 logger = logging.getLogger(__name__)

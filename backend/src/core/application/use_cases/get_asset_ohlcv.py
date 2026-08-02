@@ -16,21 +16,21 @@ Docs CoinGecko OHLC:
 """
 
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Optional
 
 from core.application.dto.market_intelligence_dto import OhlcvCandleOutputDTO
 from core.infrastructure.external_apis.binance_client import (
-    BinancePublicClient,
     BinanceClientError,
-)
-from core.infrastructure.external_apis.kucoin_client import (
-    KuCoinPublicClient,
-    KuCoinClientError,
+    BinancePublicClient,
 )
 from core.infrastructure.external_apis.coingecko_client import (
     CoinGeckoClient,
     CoinGeckoClientError,
+)
+from core.infrastructure.external_apis.kucoin_client import (
+    KuCoinClientError,
+    KuCoinPublicClient,
 )
 from core.infrastructure.persistence.repositories_impl import DjangoCryptoAssetRepository
 

@@ -5,8 +5,8 @@ Añade el refresh_token a la blacklist de SimpleJWT.
 Tras esto, ese token ya no puede usarse para obtener nuevos access tokens.
 """
 
-from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.application.dto.auth_dto import LogoutInputDTO
 

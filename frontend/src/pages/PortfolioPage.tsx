@@ -25,6 +25,7 @@ import PortfolioInsights from '../components/PortfolioInsights'
 import EmptyState from '../components/ui/EmptyState'
 import AnimatedNumber from '../components/ui/AnimatedNumber'
 import Skeleton from '../components/ui/Skeleton'
+import { apiErrorMessage } from '@/utils/apiError'
 
 // -- Iconos para estados vacíos --
 
@@ -144,7 +145,7 @@ function OpenPositionModal({
       onCreated()
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      const msg = apiErrorMessage(err)
       setError(msg ?? 'Error al abrir la posición')
     } finally {
       setLoading(false)
@@ -299,7 +300,7 @@ function AddToPositionModal({
       onDone()
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      const msg = apiErrorMessage(err)
       setError(msg ?? 'Error al ampliar la posición')
     } finally {
       setLoading(false)
@@ -419,7 +420,7 @@ function ClosePositionModal({
       onDone()
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      const msg = apiErrorMessage(err)
       setError(msg ?? 'Error al cerrar la posición')
     } finally {
       setLoading(false)

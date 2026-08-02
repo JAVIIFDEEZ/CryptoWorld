@@ -5,8 +5,8 @@ get_positions.py — Caso de uso: Obtener posiciones del usuario.
 from decimal import Decimal
 
 from core.application.dto.portfolio_dto import PositionDTO, PositionSummaryDTO
-from core.infrastructure.persistence.models import Position, User
 from core.application.use_cases.open_position import _build_position_dto
+from core.infrastructure.persistence.models import Position, User
 
 
 class GetPositionsUseCase:

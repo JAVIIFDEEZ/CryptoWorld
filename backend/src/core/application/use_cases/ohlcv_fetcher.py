@@ -15,16 +15,16 @@ from typing import Optional
 import pandas as pd
 
 from core.infrastructure.external_apis.binance_client import (
-    BinancePublicClient,
     BinanceClientError,
-)
-from core.infrastructure.external_apis.kucoin_client import (
-    KuCoinPublicClient,
-    KuCoinClientError,
+    BinancePublicClient,
 )
 from core.infrastructure.external_apis.coingecko_client import (
     CoinGeckoClient,
     CoinGeckoClientError,
+)
+from core.infrastructure.external_apis.kucoin_client import (
+    KuCoinClientError,
+    KuCoinPublicClient,
 )
 from core.infrastructure.persistence.repositories_impl import DjangoCryptoAssetRepository
 

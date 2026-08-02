@@ -145,7 +145,7 @@ class BlockchairClient:
             return payload.get("data", {})
 
         except requests.exceptions.Timeout:
-            raise BlockchairClientError("Timeout al conectar con Blockchair.")
+            raise BlockchairClientError("Timeout al conectar con Blockchair.") from None
         except requests.exceptions.RequestException as exc:
             raise BlockchairClientError(f"Error de red: {exc}") from exc
 

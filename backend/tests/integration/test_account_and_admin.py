@@ -63,7 +63,7 @@ class TestAdminProtections:
         """El listado va paginado: nunca vuelca la tabla entera."""
         response = admin_client.get("/api/admin/users/")
         assert response.status_code == 200
-        assert set(["count", "page", "page_size", "results"]) <= set(response.data)
+        assert {"count", "page", "page_size", "results"} <= set(response.data)
         assert "date_joined" in response.data["results"][0]
 
     @pytest.mark.integration
@@ -292,6 +292,7 @@ class TestEmailChange:
     @pytest.mark.integration
     def test_confirm_swaps_email_and_verifies(self, authenticated_client, test_user, api_client):
         from django.core import signing
+
         from core.application.use_cases.change_email import EMAIL_CHANGE_SALT
 
         # Peticion previa que deja la direccion pendiente
@@ -318,6 +319,7 @@ class TestEmailChange:
     @pytest.mark.integration
     def test_confirm_rejects_token_without_pending_request(self, api_client, test_user):
         from django.core import signing
+
         from core.application.use_cases.change_email import EMAIL_CHANGE_SALT
 
         # Token bien firmado pero sin peticion pendiente en BD

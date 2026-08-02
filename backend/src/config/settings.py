@@ -8,10 +8,11 @@ base de datos, autenticación, middleware, apps instaladas, etc.
 No contiene lógica de negocio. Solo configuración del framework.
 """
 
-from pathlib import Path
-from datetime import timedelta
 import os
 import re
+from datetime import timedelta
+from pathlib import Path
+
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv

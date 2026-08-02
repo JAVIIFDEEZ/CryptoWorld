@@ -11,8 +11,10 @@ No necesitan base de datos ni Django. Solo lógica pura.
 Ejecutar: pytest tests/unit/domain/entities/test_user.py -v
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
+
 from core.domain.entities.user import UserEntity
 
 

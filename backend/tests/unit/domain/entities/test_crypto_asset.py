@@ -10,13 +10,15 @@ No necesitan base de datos ni Django.
 Ejecutar: pytest tests/unit/domain/entities/test_crypto_asset.py -v
 """
 
-import pytest
 from decimal import Decimal
+
+import pytest
+
 from core.domain.entities.crypto_asset import (
+    AnalysisExecutionEntity,
     CryptoAssetEntity,
     MarketDataSnapshotEntity,
     PortfolioAssetEntity,
-    AnalysisExecutionEntity,
 )
 
 

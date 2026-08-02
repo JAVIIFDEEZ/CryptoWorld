@@ -66,7 +66,7 @@ def check_price_alerts(self):
         return {"triggered": len(triggered)}
     except Exception as exc:
         logger.error("check_price_alerts error: %s", exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(
@@ -98,7 +98,7 @@ def sync_prices_quick(self):
         }
     except Exception as exc:
         logger.error("sync_prices_quick error: %s", exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(
@@ -131,7 +131,7 @@ def sync_market_prices(self):
         }
     except Exception as exc:
         logger.error("sync_market_prices error: %s", exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ def send_verification_email(self, user_id: int) -> dict:
         return {"status": "skipped", "reason": str(exc)}
     except Exception as exc:
         logger.error("send_verification_email error user_id=%d: %s", user_id, exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(
@@ -190,7 +190,7 @@ def send_market_digest(self) -> dict:
         return {"sent": sent}
     except Exception as exc:
         logger.error("send_market_digest error: %s", exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(
@@ -216,7 +216,7 @@ def send_email_change_email(self, user_id: int) -> dict:
         return {"status": "skipped", "reason": str(exc)}
     except Exception as exc:
         logger.error("send_email_change_email error user_id=%d: %s", user_id, exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(name="core.tasks.purge_old_market_snapshots", bind=True, max_retries=1)
@@ -232,9 +232,10 @@ def purge_old_market_snapshots(self) -> dict:
     El borrado se hace por lotes para no mantener un bloqueo largo ni una
     transacción enorme sobre la tabla en producción.
     """
+    from datetime import timedelta
+
     from django.conf import settings
     from django.utils import timezone
-    from datetime import timedelta
 
     from core.infrastructure.persistence.models import MarketDataSnapshot
 
@@ -272,9 +273,10 @@ def purge_audit_log(self) -> dict:
     guardarla más de lo necesario es a la vez coste y exposición de datos
     personales (IP y user-agent). El periodo se configura por entorno.
     """
+    from datetime import timedelta
+
     from django.conf import settings
     from django.utils import timezone
-    from datetime import timedelta
 
     from core.infrastructure.persistence.models import AuditLog
 
@@ -305,14 +307,14 @@ def send_password_reset_email(self, email: str) -> dict:
     termina silenciosamente (sin error) para evitar timing attacks.
     """
     try:
+        from core.application.dto.auth_dto import PasswordResetRequestDTO
         from core.application.use_cases.request_password_reset import (
             RequestPasswordResetUseCase,
         )
-        from core.application.dto.auth_dto import PasswordResetRequestDTO
 
         RequestPasswordResetUseCase().execute(PasswordResetRequestDTO(email=email))
         logger.info("send_password_reset_email: procesado para email=%s", email)
         return {"status": "processed", "email": email}
     except Exception as exc:
         logger.error("send_password_reset_email error email=%s: %s", email, exc, exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc

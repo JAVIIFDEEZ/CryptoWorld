@@ -5,7 +5,7 @@ Obtiene datos OHLCV (Binance → CoinGecko) y calcula el indicador solicitado.
 
 import logging
 
-from core.application.dto.asset_dto import AnalysisRequestInputDTO, AnalysisOutputDTO
+from core.application.dto.asset_dto import AnalysisOutputDTO, AnalysisRequestInputDTO
 from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
 from core.domain.services.technical_analysis_service import calculate_indicator
 

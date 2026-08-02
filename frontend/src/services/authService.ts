@@ -15,6 +15,7 @@
  */
 
 import apiClient from './api'
+import { tokenStorage } from './tokenStorage'
 
 // ── Tipos de las respuestas del backend ────────────────────────────
 
@@ -79,6 +80,20 @@ export interface UpdatePreferencesPayload {
   preferred_currency?: PreferredCurrency
   notify_price_alerts?: boolean
   notify_market_digest?: boolean
+}
+
+/**
+ * Respuesta de POST /api/auth/change-password/.
+ *
+ * Incluye tokens nuevos porque el servidor revoca todas las sesiones al
+ * cambiar la contraseña: son los que mantienen viva la del dispositivo
+ * que ha hecho el cambio.
+ */
+export interface ChangePasswordResponse {
+  message: string
+  access_token?: string
+  refresh_token?: string
+  sessions_revoked?: boolean
 }
 
 export interface Setup2FAResponse {
@@ -182,12 +197,25 @@ export const authService = {
    * El backend espera current_password + new_password + new_password_confirm
    * (ChangePasswordSerializer); enviar otros nombres provoca un 400.
    */
-  async changePassword(current_password: string, new_password: string): Promise<{ message: string }> {
-    const { data } = await apiClient.post<{ message: string }>('/auth/change-password/', {
+  async changePassword(
+    current_password: string,
+    new_password: string,
+  ): Promise<ChangePasswordResponse> {
+    const { data } = await apiClient.post<ChangePasswordResponse>('/auth/change-password/', {
       current_password,
       new_password,
       new_password_confirm: new_password,
     })
+
+    // El backend revoca todas las sesiones al cambiar la contraseña y
+    // devuelve un par de tokens nuevo. Hay que guardarlo aquí mismo: los
+    // tokens que tenía este navegador acaban de quedar invalidados y, sin
+    // reemplazarlos, la siguiente petición expulsaría al usuario que
+    // justo acaba de cambiar su contraseña correctamente.
+    if (data.access_token && data.refresh_token) {
+      tokenStorage.setTokens(data.access_token, data.refresh_token)
+    }
+
     return data
   },
 

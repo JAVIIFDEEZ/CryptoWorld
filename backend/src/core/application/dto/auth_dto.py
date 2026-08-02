@@ -8,8 +8,6 @@ NO contienen lógica de negocio. Solo estructura y tipos.
 """
 
 from dataclasses import dataclass
-from typing import Optional
-
 
 # ── Entrada ────────────────────────────────────────────────────────
 

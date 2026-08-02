@@ -9,7 +9,7 @@ o de palabras clave en el título (fallback).
 """
 
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Optional
 
 from core.application.dto.market_intelligence_dto import NewsItemOutputDTO

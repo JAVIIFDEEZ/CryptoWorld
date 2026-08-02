@@ -8,7 +8,7 @@ import logging
 
 from core.application.dto.asset_dto import BacktestRequestDTO
 from core.application.use_cases.ohlcv_fetcher import fetch_ohlcv_dataframe
-from core.domain.services.technical_analysis_service import run_backtest, STRATEGIES
+from core.domain.services.technical_analysis_service import STRATEGIES, run_backtest
 
 logger = logging.getLogger(__name__)
 

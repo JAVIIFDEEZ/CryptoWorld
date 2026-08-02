@@ -417,15 +417,15 @@ def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
     patterns_found = []
     o = df["open"].values
     h = df["high"].values
-    l = df["low"].values
+    lo = df["low"].values
     c = df["close"].values
 
     # Trabajamos sobre las últimas 5 velas
     for i in range(max(len(df) - 5, 2), len(df)):
         body = abs(c[i] - o[i])
         upper_wick = h[i] - max(c[i], o[i])
-        lower_wick = min(c[i], o[i]) - l[i]
-        total_range = h[i] - l[i]
+        lower_wick = min(c[i], o[i]) - lo[i]
+        total_range = h[i] - lo[i]
         if total_range == 0:
             continue
         body_pct = body / total_range
@@ -499,8 +499,8 @@ def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
         if i >= 2:
             body_prev2 = abs(c[i - 2] - o[i - 2])
             body_prev1 = abs(c[i - 1] - o[i - 1])
-            range_prev2 = h[i - 2] - l[i - 2] or 1
-            range_prev1 = h[i - 1] - l[i - 1] or 1
+            range_prev2 = h[i - 2] - lo[i - 2] or 1
+            range_prev1 = h[i - 1] - lo[i - 1] or 1
             if (c[i - 2] < o[i - 2] and  # Primera: bajista grande
                     body_prev2 / range_prev2 > 0.5 and
                     body_prev1 / range_prev1 < 0.3 and  # Segunda: cuerpo pequeño
@@ -517,8 +517,8 @@ def detect_candle_patterns(df: pd.DataFrame) -> list[dict]:
         if i >= 2:
             body_prev2 = abs(c[i - 2] - o[i - 2])
             body_prev1 = abs(c[i - 1] - o[i - 1])
-            range_prev2 = h[i - 2] - l[i - 2] or 1
-            range_prev1 = h[i - 1] - l[i - 1] or 1
+            range_prev2 = h[i - 2] - lo[i - 2] or 1
+            range_prev1 = h[i - 1] - lo[i - 1] or 1
             if (c[i - 2] > o[i - 2] and  # Primera: alcista grande
                     body_prev2 / range_prev2 > 0.5 and
                     body_prev1 / range_prev1 < 0.3 and  # Segunda: cuerpo pequeño
@@ -680,7 +680,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     # Feature importance
     importances = model.feature_importances_
     top_features = sorted(
-        zip(feature_cols, importances),
+        zip(feature_cols, importances, strict=False),
         key=lambda x: x[1],
         reverse=True,
     )[:8]

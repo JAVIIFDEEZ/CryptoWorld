@@ -15,9 +15,7 @@
 
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 
-const TOKEN_KEY = 'cw_access_token'
-const REFRESH_KEY = 'cw_refresh_token'
-const USER_KEY = 'cw_user'
+import { tokenStorage } from './tokenStorage'
 
 /**
  * Instancia de Axios configurada para el backend CryptoWorld.
@@ -40,7 +38,7 @@ const apiClient: AxiosInstance = axios.create({
  */
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem(TOKEN_KEY)
+    const token = tokenStorage.getAccessToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -59,7 +57,7 @@ apiClient.interceptors.request.use(
 let refreshPromise: Promise<string | null> | null = null
 
 async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = localStorage.getItem(REFRESH_KEY)
+  const refreshToken = tokenStorage.getRefreshToken()
   if (!refreshToken) return null
   try {
     const { data } = await axios.post<{ access: string; refresh?: string }>(
@@ -67,9 +65,10 @@ async function refreshAccessToken(): Promise<string | null> {
       { refresh: refreshToken },
       { timeout: 10_000 },
     )
-    localStorage.setItem(TOKEN_KEY, data.access)
     if (data.refresh) {
-      localStorage.setItem(REFRESH_KEY, data.refresh)
+      tokenStorage.setTokens(data.access, data.refresh)
+    } else {
+      tokenStorage.setAccessToken(data.access)
     }
     return data.access
   } catch {
@@ -78,9 +77,7 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 function clearSessionAndRedirect(): void {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(REFRESH_KEY)
-  localStorage.removeItem(USER_KEY)
+  tokenStorage.clear()
   if (window.location.pathname !== '/login') {
     window.location.href = '/login'
   }

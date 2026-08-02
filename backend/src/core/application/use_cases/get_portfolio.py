@@ -5,11 +5,11 @@ Calcula posiciones abiertas y métricas PnL a partir del historial de trades.
 """
 
 import logging
-from decimal import Decimal, InvalidOperation
 from collections import defaultdict
+from decimal import Decimal
 
 from core.application.dto.portfolio_dto import PortfolioPositionDTO, PortfolioSummaryDTO
-from core.infrastructure.persistence.models import TradeHistory, CryptoAsset
+from core.infrastructure.persistence.models import CryptoAsset, TradeHistory
 
 logger = logging.getLogger(__name__)
 

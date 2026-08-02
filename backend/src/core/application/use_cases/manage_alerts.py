@@ -3,16 +3,14 @@ manage_alerts.py — Casos de uso: CRUD de alertas de precio.
 """
 
 import logging
-from decimal import Decimal
-from datetime import datetime, UTC
-from typing import Optional
+from datetime import UTC, datetime
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
-from core.application.dto.alerts_dto import CreateAlertInputDTO, AlertOutputDTO
-from core.infrastructure.persistence.models import PriceAlert, CryptoAsset
+from core.application.dto.alerts_dto import AlertOutputDTO, CreateAlertInputDTO
+from core.infrastructure.persistence.models import CryptoAsset, PriceAlert
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +44,7 @@ class CreateAlertUseCase:
         try:
             asset = CryptoAsset.objects.get(symbol=symbol)
         except CryptoAsset.DoesNotExist:
-            raise ValueError(f"Activo '{symbol}' no encontrado.")
+            raise ValueError(f"Activo '{symbol}' no encontrado.") from None
 
         if dto.condition not in ("ABOVE", "BELOW"):
             raise ValueError("condition debe ser 'ABOVE' o 'BELOW'.")
@@ -87,7 +85,7 @@ class DeleteAlertUseCase:
         try:
             alert = PriceAlert.objects.get(pk=alert_id, user=user)
         except PriceAlert.DoesNotExist:
-            raise ValueError(f"Alerta {alert_id} no encontrada.")
+            raise ValueError(f"Alerta {alert_id} no encontrada.") from None
         alert.delete()
 
 
@@ -100,7 +98,7 @@ class ToggleAlertUseCase:
         try:
             alert = PriceAlert.objects.get(pk=alert_id, user=user)
         except PriceAlert.DoesNotExist:
-            raise ValueError(f"Alerta {alert_id} no encontrada.")
+            raise ValueError(f"Alerta {alert_id} no encontrada.") from None
 
         alert.is_active = not alert.is_active
         # Si se reactiva, resetear triggered

@@ -12,15 +12,15 @@ Si en el futuro quisiéramos cambiar a MongoDB, solo se cambia
 esta implementación, sin tocar ni el dominio ni los casos de uso.
 """
 
-from typing import Optional, List
 from decimal import Decimal
+from typing import List, Optional
 
-from core.domain.repositories.user_repository import IUserRepository
-from core.domain.repositories.crypto_asset_repository import ICryptoAssetRepository
-from core.domain.entities.user import UserEntity
 from core.domain.entities.crypto_asset import CryptoAssetEntity
-from core.infrastructure.persistence.models import User as UserModel
+from core.domain.entities.user import UserEntity
+from core.domain.repositories.crypto_asset_repository import ICryptoAssetRepository
+from core.domain.repositories.user_repository import IUserRepository
 from core.infrastructure.persistence.models import CryptoAsset as CryptoAssetModel
+from core.infrastructure.persistence.models import User as UserModel
 
 
 class DjangoUserRepository(IUserRepository):

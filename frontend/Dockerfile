@@ -13,7 +13,10 @@ WORKDIR /app
 
 # Copiar manifests primero (cache de capas de Docker)
 COPY package*.json ./
-RUN npm install
+# `npm ci` respeta package-lock.json al pie de la letra; `npm install`
+# puede resolver versiones distintas y hace que la imagen construida hoy
+# no sea la misma que la de ayer.
+RUN npm ci
 
 # Copiar código y compilar
 COPY . .
@@ -25,8 +28,10 @@ RUN npm run build
 # ── Stage 2: Serve ─────────────────────────────────────────────────
 FROM nginx:alpine AS runtime
 
-# Configuración de nginx para SPA (redirige todo a index.html)
+# Configuración de nginx para SPA (redirige todo a index.html) y el
+# fichero de cabeceras que los bloques `location` incluyen.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/conf.d/security-headers.conf
 
 # Copiar archivos compilados del stage anterior
 COPY --from=builder /app/dist /usr/share/nginx/html

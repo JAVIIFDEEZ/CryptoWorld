@@ -12,10 +12,10 @@ from typing import Optional
 
 from core.application.dto.market_intelligence_dto import OnChainMetricPointOutputDTO
 from core.infrastructure.external_apis.blockchain_dot_com_client import (
+    METRIC_LABELS,
+    METRIC_MAP,
     BlockchainDotComClient,
     BlockchainDotComClientError,
-    METRIC_MAP,
-    METRIC_LABELS,
 )
 
 logger = logging.getLogger(__name__)

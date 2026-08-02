@@ -27,10 +27,10 @@ import logging
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import serializers, status
-from rest_framework.permissions import IsAdminUser, BasePermission
+from rest_framework.permissions import BasePermission, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -244,6 +244,35 @@ class AdminUserListView(APIView):
         )
 
 
+class AdminUserStatsView(APIView):
+    """
+    GET /api/admin/users/stats/ — Contadores globales de usuarios.
+
+    Existe porque el listado va paginado: el panel ya no recibe todos los
+    usuarios y no puede calcular los totales en el cliente. Cuatro
+    agregados en la base de datos son mucho más baratos —y correctos—
+    que transferir la tabla entera solo para contarla.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    @extend_schema(
+        summary="Contadores de usuarios",
+        responses={200: OpenApiResponse(description="Totales de usuarios por estado.")},
+        tags=["Administración"],
+    )
+    def get(self, request):
+        aggregates = User.objects.aggregate(
+            total=Count("pk"),
+            verified=Count("pk", filter=Q(is_email_verified=True)),
+            admins=Count("pk", filter=Q(is_staff=True) | Q(is_superuser=True)),
+            superusers=Count("pk", filter=Q(is_superuser=True)),
+            blocked=Count("pk", filter=Q(is_active=False)),
+            with_2fa=Count("pk", filter=Q(is_2fa_enabled=True)),
+        )
+        return Response(aggregates, status=status.HTTP_200_OK)
+
+
 class AdminUserDetailView(APIView):
     """
     PATCH /api/admin/users/<user_id>/ — Actualizar el estado de un usuario.
@@ -280,7 +309,7 @@ class AdminUserDetailView(APIView):
                 "Usuario no encontrado.",
                 code="not_found",
                 status_code=status.HTTP_404_NOT_FOUND,
-            )
+            ) from None
 
         touches_privileges = any(field in changes for field in self._PRIVILEGE_FIELDS)
         if touches_privileges and not request.user.is_superuser:
@@ -386,7 +415,7 @@ class AdminResendVerificationView(APIView):
                 "Usuario no encontrado.",
                 code="not_found",
                 status_code=status.HTTP_404_NOT_FOUND,
-            )
+            ) from None
 
         if user.is_email_verified:
             raise DomainError(

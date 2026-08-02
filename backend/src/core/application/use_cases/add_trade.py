@@ -4,10 +4,9 @@ add_trade.py — Caso de uso: Registrar una operación en el portfolio.
 
 import logging
 from datetime import datetime
-from decimal import Decimal
 
 from core.application.dto.portfolio_dto import AddTradeInputDTO, TradeOutputDTO
-from core.infrastructure.persistence.models import TradeHistory, CryptoAsset
+from core.infrastructure.persistence.models import CryptoAsset, TradeHistory
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class AddTradeUseCase:
         try:
             asset = CryptoAsset.objects.get(symbol=symbol)
         except CryptoAsset.DoesNotExist:
-            raise ValueError(f"Activo '{symbol}' no encontrado en el catálogo.")
+            raise ValueError(f"Activo '{symbol}' no encontrado en el catálogo.") from None
 
         # El DTO ya transporta Decimal (el serializer valida con
         # DecimalField); no hay conversion desde float que redondee.
@@ -48,7 +47,7 @@ class AddTradeUseCase:
         except ValueError:
             raise ValueError(
                 f"Formato de fecha inválido: '{dto.executed_at}'. Usa ISO 8601."
-            )
+            ) from None
 
         trade = TradeHistory.objects.create(
             user=user,

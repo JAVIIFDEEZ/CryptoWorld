@@ -9,8 +9,8 @@ Solo describe QUÉ ES un activo y QUÉ PUEDE HACER.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 from decimal import Decimal
+from typing import Optional
 
 
 @dataclass

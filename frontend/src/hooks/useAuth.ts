@@ -19,6 +19,7 @@ import React, {
   type ReactNode,
 } from 'react'
 import { authService } from '@/services/authService'
+import { tokenStorage } from '@/services/tokenStorage'
 
 // ── Tipos ──────────────────────────────────────────────────────────
 
@@ -52,19 +53,14 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // ── Provider ───────────────────────────────────────────────────────
 
-const TOKEN_KEY = 'cw_access_token'
-const REFRESH_KEY = 'cw_refresh_token'
-const USER_KEY = 'cw_user'
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
-    // Restaurar usuario desde localStorage al iniciar
-    const stored = localStorage.getItem(USER_KEY)
-    return stored ? (JSON.parse(stored) as AuthUser) : null
+    // Restaurar usuario desde el almacenamiento local al iniciar
+    return tokenStorage.getUser<AuthUser>()
   })
 
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem(TOKEN_KEY)
+    return tokenStorage.getAccessToken()
   })
 
   const [isLoading, setIsLoading] = useState(false)
@@ -72,10 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function applyAuthenticatedSession(accessToken: string, refreshToken: string, authUser: AuthUser) {
     setToken(accessToken)
     setUser(authUser)
-    localStorage.setItem(TOKEN_KEY, accessToken)
     // El refresh token permite renovar la sesión sin volver a pedir credenciales
-    localStorage.setItem(REFRESH_KEY, refreshToken)
-    localStorage.setItem(USER_KEY, JSON.stringify(authUser))
+    tokenStorage.setTokens(accessToken, refreshToken)
+    tokenStorage.setUser(authUser)
   }
 
   /**
@@ -137,7 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => {
       if (!prev) return prev
       const next = { ...prev, ...partial }
-      localStorage.setItem(USER_KEY, JSON.stringify(next))
+      tokenStorage.setUser(next)
       return next
     })
   }, [])
@@ -148,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * el logout local no debe bloquearse si la red falla.
    */
   const logout = useCallback(() => {
-    const refreshToken = localStorage.getItem(REFRESH_KEY)
+    const refreshToken = tokenStorage.getRefreshToken()
     if (refreshToken) {
       authService.logout(refreshToken).catch(() => {
         // El token expirará solo; el logout local ya se ha completado
@@ -156,9 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(null)
     setToken(null)
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(REFRESH_KEY)
-    localStorage.removeItem(USER_KEY)
+    tokenStorage.clear()
   }, [])
 
   return React.createElement(

@@ -7,8 +7,8 @@ transforma en DTOs de salida para la capa de interfaces.
 
 from typing import List
 
-from core.domain.repositories.crypto_asset_repository import ICryptoAssetRepository
 from core.application.dto.asset_dto import CryptoAssetOutputDTO
+from core.domain.repositories.crypto_asset_repository import ICryptoAssetRepository
 
 
 class GetAssetsUseCase:

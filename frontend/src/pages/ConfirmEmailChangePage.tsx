@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { authService } from '@/services/authService'
+import { apiErrorMessage } from '@/utils/apiError'
 
 function ConfirmEmailChangePage() {
   const [searchParams] = useSearchParams()
@@ -31,9 +32,8 @@ function ConfirmEmailChangePage() {
         setStatus('success')
         setMessage(response.message)
       } catch (err: unknown) {
-        const axiosError = err as { response?: { data?: { error?: string } } }
         setStatus('error')
-        setMessage(axiosError?.response?.data?.error ?? 'No se pudo confirmar el cambio de email.')
+        setMessage(apiErrorMessage(err, 'No se pudo confirmar el cambio de email.'))
       }
     }
 

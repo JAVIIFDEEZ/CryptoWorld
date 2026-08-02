@@ -28,8 +28,31 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
-from rest_framework_simplejwt.tokens import RefreshToken
 
+from core.application.dto.alerts_dto import CreateAlertInputDTO
+from core.application.dto.asset_dto import (
+    AnalysisRequestInputDTO,
+    BacktestRequestDTO,
+    PatternsRequestDTO,
+    PredictionRequestDTO,
+    SignalsRequestDTO,
+)
+from core.application.dto.auth_dto import (
+    ChangePasswordDTO,
+    Disable2FADTO,
+    Enable2FADTO,
+    LogoutInputDTO,
+    PasswordResetConfirmDTO,
+    RegisterUserInputDTO,
+    Verify2FALoginDTO,
+    VerifyEmailInputDTO,
+)
+from core.application.dto.portfolio_dto import (
+    AddToPositionInputDTO,
+    AddTradeInputDTO,
+    ClosePositionInputDTO,
+    OpenPositionInputDTO,
+)
 from core.application.services import audit
 from core.application.services.login_guard import (
     PASSWORD_POLICY,
@@ -37,13 +60,108 @@ from core.application.services.login_guard import (
     AccountLockedError,
     ensure_not_locked,
     register_failure,
+)
+from core.application.services.login_guard import (
     reset as reset_login_attempts,
 )
-from core.application.services.sessions import revoke_all_sessions
+from core.application.services.sessions import build_refresh_token
+from core.application.use_cases.add_trade import AddTradeUseCase
+from core.application.use_cases.change_password import ChangePasswordUseCase
+from core.application.use_cases.close_position import ClosePositionUseCase
+from core.application.use_cases.confirm_password_reset import ConfirmPasswordResetUseCase
+from core.application.use_cases.delete_trade import DeleteTradeUseCase
+from core.application.use_cases.delete_user_account import DeleteUserAccountUseCase
+from core.application.use_cases.detect_patterns import DetectPatternsUseCase
+from core.application.use_cases.disable_2fa import Disable2FAUseCase
+from core.application.use_cases.enable_2fa import Enable2FAUseCase
+from core.application.use_cases.get_asset_ohlcv import GetAssetOhlcvUseCase
+from core.application.use_cases.get_assets import GetAssetsUseCase
+from core.application.use_cases.get_market_overview import GetMarketOverviewUseCase
+from core.application.use_cases.get_multichain_stats import GetMultiChainStatsUseCase
+from core.application.use_cases.get_news_feed import GetNewsFeedUseCase
+from core.application.use_cases.get_onchain_metrics import GetOnChainMetricsUseCase
+from core.application.use_cases.get_portfolio import GetPortfolioUseCase
+from core.application.use_cases.get_positions import GetPositionsUseCase
+from core.application.use_cases.get_signals_dashboard import GetSignalsDashboardUseCase
+from core.application.use_cases.get_trade_history import GetTradeHistoryUseCase
+from core.application.use_cases.logout import LogoutUseCase
+from core.application.use_cases.manage_alerts import (
+    CreateAlertUseCase,
+    DeleteAlertUseCase,
+    ListAlertsUseCase,
+    ToggleAlertUseCase,
+)
+from core.application.use_cases.open_position import OpenPositionUseCase
+from core.application.use_cases.predict_price import PredictPriceUseCase
+from core.application.use_cases.register_user import RegisterUserUseCase
+from core.application.use_cases.run_analysis import RunAnalysisUseCase
+from core.application.use_cases.run_backtest import RunBacktestUseCase
+from core.application.use_cases.scale_position import ScalePositionUseCase
+from core.application.use_cases.setup_2fa import Setup2FAUseCase
+from core.application.use_cases.verify_2fa_login import PreAuthToken, Verify2FALoginUseCase
+from core.application.use_cases.verify_email import VerifyEmailUseCase
+from core.domain.services.user_domain_service import UserDomainService
 from core.infrastructure.persistence.models import AuditLog
+from core.infrastructure.persistence.models import CryptoAsset as CryptoAssetModel
+from core.infrastructure.persistence.models import MarketDataSnapshot as MarketDataSnapshotModel
+from core.infrastructure.persistence.models import Position as PositionModel
+from core.infrastructure.persistence.models import User as UserModel
+from core.infrastructure.persistence.models import UserWatchlist as UserWatchlistModel
+from core.infrastructure.persistence.repositories_impl import (
+    DjangoCryptoAssetRepository,
+    DjangoUserRepository,
+)
 from core.interfaces.api.authentication import CredentialEpochJWTAuthentication
 from core.interfaces.api.exception_handler import DomainError
-from core.interfaces.api.pagination import paginate_list
+from core.interfaces.api.serializers import (
+    AddToPositionSerializer,
+    AddTradeSerializer,
+    AlertOutputSerializer,
+    AnalysisOutputSerializer,
+    AnalysisRequestSerializer,
+    BacktestRequestSerializer,
+    CalculateAnalysisSerializer,
+    ChangeEmailConfirmSerializer,
+    ChangeEmailRequestSerializer,
+    ChangePasswordSerializer,
+    ClosePositionSerializer,
+    CreateAlertSerializer,
+    CryptoAssetSerializer,
+    DeleteAccountSerializer,
+    Disable2FASerializer,
+    Enable2FASerializer,
+    LoginSerializer,
+    LogoutSerializer,
+    MarketOverviewSerializer,
+    NewsItemSerializer,
+    NewsQuerySerializer,
+    OhlcvCandleSerializer,
+    OhlcvQuerySerializer,
+    OnChainQuerySerializer,
+    OpenPositionSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    PatternsRequestSerializer,
+    PortfolioPositionSerializer,
+    PositionOutputSerializer,
+    PositionsQuerySerializer,
+    PositionSummaryOutputSerializer,
+    PredictionRequestSerializer,
+    RegisterSerializer,
+    ResendVerificationRequestSerializer,
+    SignalsRequestSerializer,
+    TradeHistoryQuerySerializer,
+    TradeOutputSerializer,
+    UpdatePositionSerializer,
+    UpdatePreferencesSerializer,
+    Verify2FALoginSerializer,
+    VerifyEmailSerializer,
+    WatchlistAddSerializer,
+    WatchlistItemSerializer,
+)
+from core.tasks import dispatch_task
+from core.tasks import send_password_reset_email as send_password_reset_email_task
+from core.tasks import send_verification_email as send_verification_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -51,130 +169,6 @@ logger = logging.getLogger(__name__)
 # entorno para que coincida con la imagen desplegada en lugar de quedar
 # congelada en el código (antes estaba fijada a "1.0.0").
 APP_VERSION = getattr(settings, "APP_VERSION", "1.139.0")
-
-from core.interfaces.api.serializers import (
-    RegisterSerializer,
-    LoginSerializer,
-    LogoutSerializer,
-    VerifyEmailSerializer,
-    UpdatePreferencesSerializer,
-    ChangeEmailRequestSerializer,
-    ChangeEmailConfirmSerializer,
-    PasswordResetRequestSerializer,
-    ResendVerificationRequestSerializer,
-    PasswordResetConfirmSerializer,
-    ChangePasswordSerializer,
-    Enable2FASerializer,
-    Disable2FASerializer,
-    Verify2FALoginSerializer,
-    CryptoAssetSerializer,
-    AnalysisRequestSerializer,
-    AnalysisOutputSerializer,
-    MarketOverviewSerializer,
-    OhlcvQuerySerializer,
-    OhlcvCandleSerializer,
-    OnChainQuerySerializer,
-    OnChainMetricPointSerializer,
-    NewsQuerySerializer,
-    NewsItemSerializer,
-    DeleteAccountSerializer,
-    CalculateAnalysisSerializer,
-    SignalsRequestSerializer,
-    PredictionRequestSerializer,
-    PatternsRequestSerializer,
-    BacktestRequestSerializer,
-    AddTradeSerializer,
-    TradeOutputSerializer,
-    PortfolioPositionSerializer,
-    TradeHistoryQuerySerializer,
-    CreateAlertSerializer,
-    AlertOutputSerializer,
-    OpenPositionSerializer,
-    ClosePositionSerializer,
-    AddToPositionSerializer,
-    UpdatePositionSerializer,
-    PositionOutputSerializer,
-    PositionSummaryOutputSerializer,
-    PositionsQuerySerializer,
-    WatchlistItemSerializer,
-    WatchlistAddSerializer,
-)
-from core.application.use_cases.register_user import RegisterUserUseCase
-from core.application.use_cases.get_assets import GetAssetsUseCase
-from core.application.use_cases.run_analysis import RunAnalysisUseCase
-from core.application.use_cases.logout import LogoutUseCase
-from core.application.use_cases.verify_email import VerifyEmailUseCase
-from core.application.use_cases.send_verification_email import SendVerificationEmailUseCase
-from core.application.use_cases.request_password_reset import RequestPasswordResetUseCase
-from core.application.use_cases.confirm_password_reset import ConfirmPasswordResetUseCase
-from core.tasks import dispatch_task
-from core.tasks import send_verification_email as send_verification_email_task
-from core.tasks import send_password_reset_email as send_password_reset_email_task
-from core.application.use_cases.change_password import ChangePasswordUseCase
-from core.application.use_cases.setup_2fa import Setup2FAUseCase
-from core.application.use_cases.enable_2fa import Enable2FAUseCase
-from core.application.use_cases.disable_2fa import Disable2FAUseCase
-from core.application.use_cases.verify_2fa_login import Verify2FALoginUseCase, PreAuthToken
-from core.application.use_cases.get_market_overview import GetMarketOverviewUseCase
-from core.application.use_cases.get_asset_ohlcv import GetAssetOhlcvUseCase
-from core.application.use_cases.get_onchain_metrics import GetOnChainMetricsUseCase
-from core.application.use_cases.get_multichain_stats import GetMultiChainStatsUseCase
-from core.application.use_cases.get_news_feed import GetNewsFeedUseCase
-from core.application.use_cases.delete_user_account import DeleteUserAccountUseCase
-from core.application.use_cases.get_signals_dashboard import GetSignalsDashboardUseCase
-from core.application.use_cases.predict_price import PredictPriceUseCase
-from core.application.use_cases.detect_patterns import DetectPatternsUseCase
-from core.application.use_cases.run_backtest import RunBacktestUseCase
-from core.application.use_cases.get_portfolio import GetPortfolioUseCase
-from core.application.use_cases.add_trade import AddTradeUseCase
-from core.application.use_cases.get_trade_history import GetTradeHistoryUseCase
-from core.application.use_cases.delete_trade import DeleteTradeUseCase
-from core.application.use_cases.open_position import OpenPositionUseCase
-from core.application.use_cases.close_position import ClosePositionUseCase
-from core.application.use_cases.scale_position import ScalePositionUseCase
-from core.application.use_cases.get_positions import GetPositionsUseCase
-from core.infrastructure.persistence.models import Position as PositionModel
-from core.infrastructure.persistence.models import UserWatchlist as UserWatchlistModel
-from core.infrastructure.persistence.models import CryptoAsset as CryptoAssetModel
-from core.infrastructure.persistence.models import MarketDataSnapshot as MarketDataSnapshotModel
-from core.application.use_cases.manage_alerts import (
-    CreateAlertUseCase,
-    ListAlertsUseCase,
-    DeleteAlertUseCase,
-    ToggleAlertUseCase,
-)
-from core.application.dto.auth_dto import (
-    RegisterUserInputDTO,
-    LoginInputDTO,
-    LogoutInputDTO,
-    VerifyEmailInputDTO,
-    PasswordResetRequestDTO,
-    PasswordResetConfirmDTO,
-    ChangePasswordDTO,
-    Enable2FADTO,
-    Disable2FADTO,
-    Verify2FALoginDTO,
-)
-from core.application.dto.asset_dto import (
-    AnalysisRequestInputDTO,
-    SignalsRequestDTO,
-    PredictionRequestDTO,
-    PatternsRequestDTO,
-    BacktestRequestDTO,
-)
-from core.application.dto.portfolio_dto import (
-    AddTradeInputDTO,
-    OpenPositionInputDTO,
-    ClosePositionInputDTO,
-    AddToPositionInputDTO,
-)
-from core.application.dto.alerts_dto import CreateAlertInputDTO
-from core.infrastructure.persistence.repositories_impl import (
-    DjangoUserRepository,
-    DjangoCryptoAssetRepository,
-)
-from core.infrastructure.persistence.models import User as UserModel
-from core.domain.services.user_domain_service import UserDomainService
 
 
 # ── Health Check ───────────────────────────────────────────────────
@@ -226,8 +220,8 @@ class ReadinessView(APIView):
 
     @staticmethod
     def _check_components() -> dict:
-        from django.db import connection
         from django.conf import settings as dj_settings
+        from django.db import connection
         from kombu import Connection as BrokerConnection
 
         components = {}
@@ -486,8 +480,9 @@ class LoginView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Sin 2FA: emitir tokens completos
-        refresh = RefreshToken.for_user(user)
+        # Sin 2FA: emitir tokens completos. `build_refresh_token` añade el
+        # claim de revocación que la autenticación comprueba después.
+        refresh = build_refresh_token(user)
         audit.record(AuditLog.Action.LOGIN_SUCCESS, request=request, actor=user)
 
         return Response(
@@ -1026,6 +1021,7 @@ class Regenerate2FARecoveryCodesView(APIView):
     )
     def post(self, request):
         import pyotp
+
         from core.application.use_cases.recovery_codes import generate_recovery_codes
 
         serializer = Enable2FASerializer(data=request.data)
@@ -1250,11 +1246,12 @@ class AssetSparklinesView(APIView):
         responses={200: OpenApiResponse(description="Operación completada.")},
     )
     def get(self, request):
+        from collections import defaultdict
         from datetime import timedelta
-        from django.utils import timezone
+
         from django.db.models import Avg
         from django.db.models.functions import TruncDate
-        from collections import defaultdict
+        from django.utils import timezone
 
         raw = request.query_params.get("symbols", "")
         if not raw:
@@ -2154,13 +2151,14 @@ class PositionDetailView(APIView):
             raise DomainError(
                 "Posición no encontrada.", code="not_found",
                 status_code=status.HTTP_404_NOT_FOUND,
-            )
+            ) from None
 
         pos.label = serializer.validated_data["label"]
         pos.save(update_fields=["label", "updated_at"])
 
-        from core.application.use_cases.open_position import _build_position_dto
         from decimal import Decimal
+
+        from core.application.use_cases.open_position import _build_position_dto
         current_price = Decimal(str(pos.asset.current_price or pos.avg_entry_price))
         dto = _build_position_dto(pos, current_price)
         return Response(PositionOutputSerializer(vars(dto)).data, status=status.HTTP_200_OK)
@@ -2177,7 +2175,7 @@ class PositionDetailView(APIView):
             raise DomainError(
                 "Posición no encontrada.", code="not_found",
                 status_code=status.HTTP_404_NOT_FOUND,
-            )
+            ) from None
 
         if pos.trades.exists():
             return Response(
@@ -2311,7 +2309,7 @@ class WatchlistView(APIView):
             raise DomainError(
                 f"Activo '{symbol}' no encontrado.", code="not_found",
                 status_code=status.HTTP_404_NOT_FOUND,
-            )
+            ) from None
 
         _, created = UserWatchlistModel.objects.get_or_create(
             user=request.user,

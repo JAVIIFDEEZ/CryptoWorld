@@ -10,9 +10,11 @@ No necesitan base de datos ni Django.
 Ejecutar: pytest tests/unit/domain/value_objects/test_email.py -v
 """
 
-import pytest
 from dataclasses import FrozenInstanceError
-from core.domain.value_objects.email import Email, CryptoSymbol
+
+import pytest
+
+from core.domain.value_objects.email import CryptoSymbol, Email
 
 
 class TestEmailValueObject:

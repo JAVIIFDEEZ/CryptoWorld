@@ -12,6 +12,7 @@ import {
   type CreateAlertPayload,
 } from '../services/alertsService'
 import EmptyState from '../components/ui/EmptyState'
+import { apiErrorMessage } from '@/utils/apiError'
 
 const IconBell = () => (
   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -48,7 +49,7 @@ function CreateAlertModal({
       onCreated()
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      const msg = apiErrorMessage(err)
       setError(msg ?? 'Error al crear la alerta')
     } finally {
       setLoading(false)

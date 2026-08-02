@@ -12,8 +12,8 @@ import io
 import pyotp
 import qrcode
 
-from core.infrastructure.persistence.models import User as UserModel
 from core.application.dto.auth_dto import Setup2FAOutputDTO
+from core.infrastructure.persistence.models import User as UserModel
 
 
 class Setup2FAUseCase:

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { authService } from '@/services/authService'
+import { apiErrorMessage } from '@/utils/apiError'
 
 function VerifyEmailPage() {
   const [searchParams] = useSearchParams()
@@ -21,9 +22,8 @@ function VerifyEmailPage() {
         setStatus('success')
         setMessage(response.message)
       } catch (err: unknown) {
-        const axiosError = err as { response?: { data?: { error?: string } } }
         setStatus('error')
-        setMessage(axiosError?.response?.data?.error ?? 'No se pudo verificar el email.')
+        setMessage(apiErrorMessage(err, 'No se pudo verificar el email.'))
       }
     }
 

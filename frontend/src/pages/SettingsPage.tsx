@@ -24,6 +24,8 @@ import { useToast } from '@/components/ui/Toast'
 import { useCurrency } from '@/hooks/useCurrency'
 import PasswordInput from '@/components/ui/PasswordInput'
 import Skeleton from '@/components/ui/Skeleton'
+import { apiErrorMessage } from '@/utils/apiError'
+import { checkPasswordLength } from '@/utils/authPolicy'
 
 const CURRENCY_OPTIONS: { value: PreferredCurrency; label: string }[] = [
   { value: 'usd', label: 'Dólar Estadounidense (USD - $)' },
@@ -178,8 +180,7 @@ export default function SettingsPage() {
       setEditingUsername(false)
       showToast('Nombre de usuario actualizado.', 'success')
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      showToast(axiosErr.response?.data?.error || 'No se pudo actualizar el nombre de usuario.', 'error')
+      showToast(apiErrorMessage(err, 'No se pudo actualizar el nombre de usuario.'), 'error')
     } finally {
       setIsSavingUsername(false)
     }
@@ -199,8 +200,7 @@ export default function SettingsPage() {
       setEmailPassword('')
       showToast('Enlace enviado a la nueva dirección. Revísala para confirmar el cambio.', 'success')
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      setEmailError(axiosErr.response?.data?.error || 'No se pudo solicitar el cambio de email.')
+      setEmailError(apiErrorMessage(err, 'No se pudo solicitar el cambio de email.'))
     } finally {
       setIsRequestingEmail(false)
     }
@@ -229,8 +229,7 @@ export default function SettingsPage() {
       logout()
       navigate('/login', { replace: true })
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      setDeleteError(axiosErr.response?.data?.error || 'Error al eliminar la cuenta. Verifica tu contraseña.')
+      setDeleteError(apiErrorMessage(err, 'Error al eliminar la cuenta. Verifica tu contraseña.'))
     } finally {
       setIsDeleting(false)
     }
@@ -244,8 +243,9 @@ export default function SettingsPage() {
       setPasswordError('Las nuevas contraseñas no coinciden.')
       return
     }
-    if (newPassword.length < 8) {
-      setPasswordError('La nueva contraseña debe tener al menos 8 caracteres.')
+    const lengthError = checkPasswordLength(newPassword)
+    if (lengthError) {
+      setPasswordError(lengthError)
       return
     }
 
@@ -257,8 +257,7 @@ export default function SettingsPage() {
       setNewPassword('')
       setConfirmPassword('')
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } }
-      setPasswordError(axiosErr.response?.data?.error || 'Error al cambiar la contraseña. Revisa tus datos.')
+      setPasswordError(apiErrorMessage(err, 'Error al cambiar la contraseña. Revisa tus datos.'))
     } finally {
       setIsChangingPassword(false)
     }

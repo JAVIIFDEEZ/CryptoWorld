@@ -19,9 +19,9 @@ import logging
 from typing import Any, Optional
 
 import requests
+from django.conf import settings
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 

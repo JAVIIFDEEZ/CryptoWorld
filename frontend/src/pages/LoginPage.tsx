@@ -14,6 +14,7 @@ import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-do
 import { useAuth } from '@/hooks/useAuth'
 import { authService } from '@/services/authService'
 import PasswordInput from '@/components/ui/PasswordInput'
+import { parseApiError } from '@/utils/apiError'
 
 const AUTH_INPUT_CLASSES =
   'w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 pr-10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition'
@@ -71,15 +72,15 @@ function LoginPage() {
       const from = nextPath ?? (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
       navigate(from, { replace: true })
     } catch (err: unknown) {
-      const axiosError = err as { response?: { status?: number; data?: { error?: string; error_code?: string } } }
-      const backendError = axiosError?.response?.data?.error
-      const backendCode = axiosError?.response?.data?.error_code
-
-      if (backendCode) {
-        setErrorCode(backendCode)
-      }
-
-      setError(backendError ?? 'Credenciales incorrectas. Verifica tu email y contraseña.')
+      // El backend expone un código estable junto al mensaje; la interfaz
+      // usa el código para decidir (p. ej. ofrecer reenviar la
+      // verificación) y el mensaje para mostrar.
+      const apiError = parseApiError(
+        err,
+        'Credenciales incorrectas. Verifica tu email y contraseña.',
+      )
+      setErrorCode(apiError.code)
+      setError(apiError.message)
     }
   }
 

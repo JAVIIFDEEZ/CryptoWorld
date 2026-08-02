@@ -7,7 +7,7 @@ solo delega en los routers de la capa interfaces/.
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import include, path
 
 urlpatterns = [
     # Panel de administración de Django (solo para desarrollo/debug)

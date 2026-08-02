@@ -14,6 +14,8 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authService, type RegisterPayload } from '@/services/authService'
 import PasswordInput from '@/components/ui/PasswordInput'
+import { parseApiError } from '@/utils/apiError'
+import { PASSWORD_MIN_LENGTH, checkPasswordLength } from '@/utils/authPolicy'
 
 const AUTH_INPUT_CLASSES =
   'w-full bg-slate-700/70 border border-slate-600 rounded-xl px-3.5 py-2.5 pr-10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition'
@@ -43,8 +45,9 @@ function RegisterPage() {
       return
     }
 
-    if (form.password.length < 8) {
-      setError('La contraseña debe tener al menos 8 caracteres.')
+    const lengthError = checkPasswordLength(form.password)
+    if (lengthError) {
+      setError(lengthError)
       return
     }
 
@@ -61,17 +64,13 @@ function RegisterPage() {
         state: { message: 'Cuenta creada. Verifica tu email antes de iniciar sesión. Luego podras activar 2FA en Seguridad.' },
       })
     } catch (err: unknown) {
-      // El backend puede devolver errores de validación en el cuerpo
-      const axiosError = err as { response?: { data?: Record<string, string[]> } }
-      const data = axiosError?.response?.data
-      if (data) {
-        // Extraer el primer mensaje de error del backend
-        const firstField = Object.keys(data)[0]
-        const msg = Array.isArray(data[firstField]) ? data[firstField][0] : String(data[firstField])
-        setError(msg)
-      } else {
-        setError('No se pudo crear la cuenta. Inténtalo de nuevo.')
-      }
+      // Los fallos de validación llegan campo a campo en `details`. Se
+      // muestra el primero: es el que el usuario tiene que corregir, y en
+      // el registro suele ser la política de contraseña.
+      const apiError = parseApiError(err, 'No se pudo crear la cuenta. Inténtalo de nuevo.')
+      const firstFieldError = Object.values(apiError.details ?? {})[0]
+      const detailMessage = Array.isArray(firstFieldError) ? firstFieldError[0] : firstFieldError
+      setError(detailMessage ?? apiError.message)
     } finally {
       setIsLoading(false)
     }
@@ -152,9 +151,9 @@ function RegisterPage() {
                 value={form.password}
                 onChange={(value: string) => setForm(prev => ({ ...prev, password: value }))}
                 required
-                minLength={8}
+                minLength={PASSWORD_MIN_LENGTH}
                 autoComplete="new-password"
-                placeholder="Mínimo 8 caracteres"
+                placeholder={`Mínimo ${PASSWORD_MIN_LENGTH} caracteres`}
                 inputClassName={AUTH_INPUT_CLASSES}
               />
             </div>

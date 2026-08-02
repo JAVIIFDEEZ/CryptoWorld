@@ -15,7 +15,7 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
-from core.infrastructure.persistence.models import User, CryptoAsset
+from core.infrastructure.persistence.models import CryptoAsset, User
 
 logger = logging.getLogger(__name__)
 

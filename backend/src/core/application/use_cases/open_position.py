@@ -2,8 +2,8 @@
 open_position.py — Caso de uso: Abrir una nueva posición (LONG o SHORT).
 """
 
-from decimal import Decimal
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from core.application.dto.portfolio_dto import OpenPositionInputDTO, PositionDTO
 from core.infrastructure.persistence.models import (
@@ -67,7 +67,7 @@ class OpenPositionUseCase:
         try:
             asset = CryptoAsset.objects.get(symbol=dto.asset_symbol.upper())
         except CryptoAsset.DoesNotExist:
-            raise ValueError(f"El activo '{dto.asset_symbol}' no está disponible en la plataforma.")
+            raise ValueError(f"El activo '{dto.asset_symbol}' no está disponible en la plataforma.") from None
 
         if dto.quantity <= 0:
             raise ValueError("La cantidad debe ser mayor que cero.")
@@ -84,7 +84,7 @@ class OpenPositionUseCase:
         try:
             opened_at = datetime.fromisoformat(dto.opened_at)
         except ValueError:
-            raise ValueError("Formato de fecha inválido. Usa ISO 8601.")
+            raise ValueError("Formato de fecha inválido. Usa ISO 8601.") from None
 
         # Normalizar a UTC aware si no tiene timezone
         if opened_at.tzinfo is None:

@@ -11,10 +11,10 @@ Este caso de uso NO sabe que existe Django, PostgreSQL ni HTTP.
 Solo trabaja con las abstracciones del dominio.
 """
 
+from core.application.dto.auth_dto import RegisterUserInputDTO, UserOutputDTO
 from core.domain.entities.user import UserEntity
 from core.domain.repositories.user_repository import IUserRepository
 from core.domain.services.user_domain_service import UserDomainService
-from core.application.dto.auth_dto import RegisterUserInputDTO, UserOutputDTO
 
 
 class RegisterUserUseCase:

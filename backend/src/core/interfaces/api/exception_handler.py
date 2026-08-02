@@ -24,7 +24,8 @@ traza completa en los logs del servidor, sin filtrarle nada del interior.
 
 import logging
 
-from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
+from django.core.exceptions import PermissionDenied
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
 from rest_framework import exceptions, status
 from rest_framework.response import Response
