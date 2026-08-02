@@ -230,9 +230,12 @@ if not DEBUG:
     # cabecera del proxy es lo que indica que el cliente venía por HTTPS.
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", True)
-    # El healthcheck del orquestador consulta por HTTP dentro de la red
-    # privada: redirigirlo a HTTPS lo haría fallar y tumbaría el servicio.
-    SECURE_REDIRECT_EXEMPT = [r"^api/health/?$"]
+    # Los healthchecks del orquestador consultan por HTTP dentro de la red
+    # privada: redirigirlos a HTTPS los haría fallar y tumbaría el
+    # servicio. El patrón cubre tanto `/api/health/` (readiness) como
+    # `/api/health/live/` (liveness, la que usa el HEALTHCHECK de Docker);
+    # los patrones se comparan contra la ruta sin la barra inicial.
+    SECURE_REDIRECT_EXEMPT = [r"^api/health/"]
 
     SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", str(60 * 60 * 24 * 365)))
     SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool("DJANGO_HSTS_INCLUDE_SUBDOMAINS", True)
