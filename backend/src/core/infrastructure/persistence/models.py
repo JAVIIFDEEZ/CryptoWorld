@@ -954,31 +954,64 @@ class WhaleMovementSnapshot(models.Model):
 
 class LiveOrderRecord(models.Model):
     """
-    Auditoría de cada orden REAL espejada por la promoción paper→real.
+    Auditoría de TODA orden enviada al exchange real del usuario.
 
-    Se registra TODO intento: las enviadas (con el id del broker y el precio de
-    ejecución si el exchange lo devuelve) y las fallidas (con el motivo). Es la
-    trazabilidad que permite comparar el P&L real contra el del paper y auditar
-    qué hizo exactamente la promoción en cada señal.
+    Cubre las dos vías por las que el sistema puede mover dinero real:
+      · `mirror` — la promoción automática paper→real (una señal del motor).
+      · `manual` — una orden lanzada a mano desde el terminal de trading.
+
+    Se registra todo intento: enviadas (con el id del broker y el precio de
+    ejecución si el exchange lo devuelve), fallidas (con el motivo) y
+    bloqueadas por el OMS (con la barrera que las frenó). Es la trazabilidad
+    que permite comparar el P&L real contra el del paper, calcular el TCA y
+    responder a la pregunta de cumplimiento: quién ordenó qué, cuándo y con
+    qué resultado.
+
+    `owner` es la clave de consulta canónica. `account` solo existe en las
+    órdenes espejadas (una orden manual no nace de ninguna cartera de paper).
     """
 
-    STATUS_CHOICES = [("sent", "Enviada"), ("failed", "Fallida"), ("blocked", "Bloqueada")]
+    # `pending` es el estado en el que se reserva el intento ANTES de llamar al
+    # exchange, para que la restricción de idempotencia se aplique de verdad.
+    # Un registro que se quede en `pending` significa "resultado desconocido":
+    # el proceso murió entre el envío y la confirmación, y eso es exactamente
+    # lo que una auditoría debe poder decir en lugar de callarlo.
+    STATUS_CHOICES = [
+        ("pending", "En curso"), ("sent", "Enviada"),
+        ("failed", "Fallida"), ("blocked", "Bloqueada"),
+    ]
+    SOURCE_CHOICES = [("mirror", "Promoción paper→real"), ("manual", "Orden manual")]
 
+    # Dueño de la orden. Nullable a nivel de esquema solo para que la migración
+    # pueda rellenarlo desde `account`; en código siempre se informa.
+    owner = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="live_orders",
+        null=True, blank=True,
+    )
     account = models.ForeignKey(
         "PaperTradingAccount", on_delete=models.CASCADE, related_name="live_orders",
+        null=True, blank=True,
     )
     connection = models.ForeignKey(
         "ExchangeConnection", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="live_orders",
     )
+    source = models.CharField(
+        max_length=10, choices=SOURCE_CHOICES, default="mirror", db_index=True,
+    )
     symbol = models.CharField(max_length=20)         # par unificado (BTC/USDT)
     side = models.CharField(max_length=4)            # buy | sell
+    order_type = models.CharField(max_length=10, default="market")  # market | limit
     amount = models.FloatField()                     # unidades base
-    ref_price = models.FloatField()                  # precio de referencia (vela del paper)
+    ref_price = models.FloatField()                  # precio de referencia (vela del paper / limit)
     fill_price = models.FloatField(null=True, blank=True)  # ejecución real si el broker la devuelve
     notional_usd = models.FloatField(default=0.0)    # amount × ref_price
     is_testnet = models.BooleanField(default=True)
     broker_order_id = models.CharField(max_length=80, blank=True, default="")
+    # Identificador de idempotencia que envía el cliente. Dos peticiones con el
+    # mismo valor son el MISMO intento: la segunda devuelve el resultado de la
+    # primera en lugar de mandar otra orden real al exchange.
+    client_order_id = models.CharField(max_length=64, blank=True, default="")
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, db_index=True)
     error = models.CharField(max_length=300, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -990,7 +1023,33 @@ class LiveOrderRecord(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["account", "-created_at"]),
+            models.Index(fields=["owner", "-created_at"], name="live_order_owner_created_idx"),
         ]
+        constraints = [
+            # La idempotencia se garantiza en la base de datos, no solo en el
+            # código: dos peticiones concurrentes con el mismo client_order_id
+            # no pueden crear dos órdenes reales. El filtro deja fuera el valor
+            # vacío (las órdenes espejadas no lo usan).
+            models.UniqueConstraint(
+                fields=["owner", "client_order_id"],
+                condition=~models.Q(client_order_id=""),
+                name="uniq_live_order_client_id_per_owner",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        """Garantiza el invariante «todo registro de auditoría tiene dueño».
+
+        `owner` es la clave por la que consultan el rastro de cumplimiento, el
+        TCA y el libro de riesgo. Derivarlo aquí de la cartera —y no confiar en
+        que cada llamante se acuerde— es lo que impide que una orden real acabe
+        siendo invisible para esas tres superficies.
+        """
+        if self.owner_id is None and self.account_id is not None:
+            self.owner_id = self.account.owner_id
+            if "update_fields" in kwargs and kwargs["update_fields"] is not None:
+                kwargs["update_fields"] = list(kwargs["update_fields"]) + ["owner"]
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         mode = "testnet" if self.is_testnet else "REAL"

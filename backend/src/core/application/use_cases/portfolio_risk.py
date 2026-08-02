@@ -5,7 +5,9 @@ Reúne la exposición del usuario en sus TRES libros y la mide como un solo
 riesgo, que es como un actor institucional ve su cartera:
   · Posiciones manuales (Position): LONG suma, SHORT resta, valoradas a mercado.
   · Paper trading (PaperTradingAccount): la posición abierta marcada a mercado.
-  · Ejecución real (live_base_position): las unidades compradas en el exchange.
+  · Ejecución real: las unidades compradas en el exchange, tanto las espejadas
+    por la promoción (live_base_position) como las de las órdenes manuales,
+    reconstruidas desde la auditoría de órdenes reales.
 
 Con la exposición firmada por activo, calcula (dominio portfolio_risk):
   · VaR/CVaR 1 día por simulación histórica sobre el almacén OHLCV propio.
@@ -24,6 +26,37 @@ logger = logging.getLogger(__name__)
 
 _HIST_DAYS = 365        # ventana de histórico para VaR/stress
 _HIST_INTERVAL = "1d"
+
+
+def _manual_live_units(owner) -> dict[str, float]:
+    """Unidades base netas por símbolo de las órdenes MANUALES ejecutadas.
+
+    Se reconstruyen desde la auditoría (compras − ventas) porque una orden
+    manual no actualiza ninguna posición persistida. El resultado se acota a
+    cero por abajo: la venta de un activo que ya se tenía en el exchange antes
+    de usar la plataforma dejaría un neto negativo que no es una posición corta.
+    """
+    from core.infrastructure.persistence.models import LiveOrderRecord
+
+    units: dict[str, float] = {}
+    rows = (LiveOrderRecord.objects
+            .filter(owner=owner, status="sent", account__isnull=True)
+            .values_list("symbol", "side", "amount"))
+    for symbol, side, amount in rows:
+        base = (symbol or "").split("/")[0].upper()
+        if not base:
+            continue
+        units[base] = units.get(base, 0.0) + (amount if side == "buy" else -amount)
+    return {s: u for s, u in units.items() if u > 1e-12}
+
+
+def _spot_price(symbol: str) -> float:
+    """Último precio conocido del activo en el catálogo local (0.0 si no hay)."""
+    from core.infrastructure.persistence.models import CryptoAsset
+
+    asset = (CryptoAsset.objects
+             .filter(symbol__iexact=symbol).only("current_price").first())
+    return float(asset.current_price) if asset and asset.current_price else 0.0
 
 
 class PortfolioRiskUseCase:
@@ -114,6 +147,16 @@ class PortfolioRiskUseCase:
                 _add(a.asset_symbol, "paper", float(a.units) * price)
             if a.live_enabled and a.live_base_position and price:
                 _add(a.asset_symbol, "live", float(a.live_base_position) * price)
+
+        # ── Ejecución real MANUAL ──
+        # Las órdenes lanzadas a mano no cuelgan de ninguna cartera de paper,
+        # así que su posición hay que reconstruirla desde la auditoría. Sin
+        # esto el libro real quedaba incompleto y el límite de concentración
+        # medía sobre una exposición menor que la verdadera.
+        for symbol, units in _manual_live_units(owner).items():
+            price = _spot_price(symbol)
+            if units and price:
+                _add(symbol, "live", units * price)
 
         for e in agg.values():
             e["net_usd"] = round(e["net_usd"], 2)

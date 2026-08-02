@@ -101,11 +101,26 @@ nano .env.production
 
 Rellena TODOS los valores en `.env.production`:
 - `DJANGO_SECRET_KEY` → genera con: `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`
+- `CREDENTIALS_ENCRYPTION_KEYS` → genera con:
+  `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 - `DB_PASSWORD` → contraseña fuerte aleatoria
 - `DJANGO_ALLOWED_HOSTS` → tu dominio real
 - `CORS_ALLOWED_ORIGINS` → `https://tudominio.com`
 - `FRONTEND_URL` → `https://tudominio.com`
 - `EMAIL_*` → credenciales SMTP reales
+
+> **El arranque aborta si la configuración es insegura.** Con
+> `DJANGO_DEBUG=False`, Django lanza `ImproperlyConfigured` y no sirve tráfico
+> si `DJANGO_SECRET_KEY` sigue siendo la de ejemplo, mide menos de 32
+> caracteres, o si `DJANGO_ALLOWED_HOSTS` está vacío o contiene `*`. Es
+> deliberado: un despliegue mal configurado debe fallar de forma ruidosa, no
+> quedarse escuchando en un estado vulnerable.
+
+> **Al rotar `DJANGO_SECRET_KEY`:** si ya hay conexiones de exchange guardadas y
+> `CREDENTIALS_ENCRYPTION_KEYS` estaba vacía, esas credenciales están cifradas
+> con la clave derivada de la `SECRET_KEY` **anterior**. Configura primero
+> `CREDENTIALS_ENCRYPTION_KEYS`, deja que se recifren y solo entonces rota la
+> clave de firma.
 
 ### Paso 5 — Configurar el dominio
 
@@ -251,8 +266,10 @@ Configura estas variables en **cada uno de los 3 servicios**. Railway inyecta `D
 |---|---|
 | `DATABASE_URL` | *Auto — vincular al plugin PostgreSQL* |
 | `REDIS_URL` | *Auto — vincular al plugin Redis* |
-| `DJANGO_SECRET_KEY` | Clave secreta larga y aleatoria |
+| `DJANGO_SECRET_KEY` | Clave secreta larga y aleatoria (mínimo 32 caracteres) |
+| `CREDENTIALS_ENCRYPTION_KEYS` | Clave Fernet dedicada al cifrado de las claves API de exchange |
 | `DJANGO_DEBUG` | `False` |
+| `DJANGO_LOG_FORMAT` | `json` si hay agregador de logs; `plain` si no |
 | `DJANGO_ALLOWED_HOSTS` | `*.up.railway.app,tudominio.com` |
 | `CORS_ALLOWED_ORIGINS` | URL del frontend (Vercel, etc.) |
 | `FRONTEND_URL` | URL del frontend — **se usa para construir los links de los emails** |
@@ -336,7 +353,10 @@ la tarea) y el **backend de email** (SendGrid o SMTP). Revisa en este orden:
 - [ ] HTTPS activo (Let's Encrypt)
 - [ ] Puertos de BD (5432) y Redis (6379) NO expuestos al host
 - [ ] Rate limiting en nginx para endpoints de auth
-- [ ] Headers de seguridad (`HSTS`, `X-Frame-Options`, etc.)
+- [ ] Headers de seguridad (`HSTS`, `X-Frame-Options`, `CSP`, etc.)
+- [ ] `CREDENTIALS_ENCRYPTION_KEYS` definida (si no, las claves API de los
+      usuarios dependen de `DJANGO_SECRET_KEY` y rotarla las invalida)
+- [ ] `python src/manage.py check --deploy --fail-level WARNING` sin avisos
 - [ ] Backups automáticos de BD
 - [ ] `collectstatic` ejecutado (para Django Admin y archivos estáticos)
 

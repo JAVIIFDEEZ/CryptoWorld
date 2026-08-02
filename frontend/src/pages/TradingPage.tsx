@@ -130,12 +130,22 @@ export default function TradingPage() {
         amount: Number.parseFloat(amount),
         ...(orderType === 'limit' ? { price: Number.parseFloat(price) } : {}),
       })
-      showToast(`Orden ${r.order.side} ${r.order.symbol} enviada (${r.is_testnet ? 'testnet' : 'REAL'}).`, 'success')
+      const replayed = r.idempotent_replay ? ' (reintento: no se duplicó)' : ''
+      showToast(
+        `Orden ${r.order.side} ${r.order.symbol} enviada (${r.is_testnet ? 'testnet' : 'REAL'})${replayed}.`,
+        'success',
+      )
       setAmount(''); setPrice('')
       reloadBroker()
     } catch (e: unknown) {
-      const resp = (e as { response?: { data?: { error?: string } } })?.response
-      showToast(resp?.data?.error ?? 'No se pudo enviar la orden.', 'error')
+      const resp = (e as { response?: { status?: number; data?: { error?: string; blocked_by?: string } } })?.response
+      // 409 = la orden es válida pero la frena la política de riesgo del propio
+      // usuario. Merece un mensaje distinto de un error de formato o de red.
+      if (resp?.status === 409 && resp.data?.blocked_by === 'oms') {
+        showToast(`Bloqueada por tu límite de riesgo: ${resp.data.error}`, 'error')
+      } else {
+        showToast(resp?.data?.error ?? 'No se pudo enviar la orden.', 'error')
+      }
     } finally {
       setBusy(false)
     }

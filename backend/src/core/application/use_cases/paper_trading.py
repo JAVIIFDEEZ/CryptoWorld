@@ -120,26 +120,42 @@ def _pair_realized_events(records) -> list[dict]:
 
 
 def daily_live_realized_pnl(owner) -> float:
-    """PnL realizado HOY (UTC) en ejecución real, sumando todas las promociones
-    del usuario. Es la métrica del límite de pérdida diaria del OMS: las ventas
-    de hoy se emparejan con el coste de sus compras (aunque fueran de días
-    anteriores), que es como un libro de órdenes real mide su día."""
+    """PnL realizado HOY (UTC) en ejecución real, sumando TODO lo que el usuario
+    haya ejecutado en su exchange. Es la métrica del límite de pérdida diaria
+    del OMS: las ventas de hoy se emparejan con el coste de sus compras (aunque
+    fueran de días anteriores), que es como un libro de órdenes real mide su día.
+
+    Se cuentan dos libros:
+      · las promociones paper→real, emparejadas por cartera (posición única);
+      · las órdenes manuales, emparejadas por símbolo (no cuelgan de ninguna
+        cartera, pero su pérdida es igual de real y debe contar para el límite).
+    """
     from django.utils import timezone
     from core.infrastructure.persistence.models import LiveOrderRecord
 
     today = timezone.now().date()
     total = 0.0
+    sent = LiveOrderRecord.objects.filter(owner=owner, status="sent")
+
     # order_by() vacío: sin él, el ordering por defecto del modelo entra en el
     # DISTINCT y devuelve el mismo account_id repetido (gotcha clásico de Django).
-    account_ids = (LiveOrderRecord.objects.filter(account__owner=owner, status="sent")
+    account_ids = (sent.exclude(account__isnull=True)
                    .order_by().values_list("account_id", flat=True).distinct())
     for account_id in account_ids:
-        records = list(LiveOrderRecord.objects
-                       .filter(account_id=account_id, status="sent")
+        records = list(sent.filter(account_id=account_id).order_by("created_at"))
+        for ev in _pair_realized_events(records):
+            if ev["created_at"].date() == today:
+                total += ev["pnl"]
+
+    manual_symbols = (sent.filter(account__isnull=True)
+                      .order_by().values_list("symbol", flat=True).distinct())
+    for symbol in manual_symbols:
+        records = list(sent.filter(account__isnull=True, symbol=symbol)
                        .order_by("created_at"))
         for ev in _pair_realized_events(records):
             if ev["created_at"].date() == today:
                 total += ev["pnl"]
+
     return round(total, 2)
 
 
@@ -238,7 +254,8 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
         return
 
     record = LiveOrderRecord(
-        account=account, connection=connection, symbol=symbol, side=side,
+        owner_id=account.owner_id, account=account, connection=connection,
+        source="mirror", symbol=symbol, side=side, order_type="market",
         amount=base_amount, ref_price=float(price),
         notional_usd=round(base_amount * float(price), 2),
         is_testnet=connection.is_testnet,

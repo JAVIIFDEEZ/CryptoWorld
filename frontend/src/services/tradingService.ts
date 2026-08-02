@@ -58,6 +58,25 @@ export interface PlaceOrderResult {
   order: BrokerOrder
   is_testnet: boolean
   error?: string
+  /** Id del registro de auditoría del intento (enviado, fallido o bloqueado). */
+  record_id?: number
+  /** Presente cuando el OMS frenó la orden por la política de riesgo del usuario. */
+  blocked_by?: 'oms'
+  /** True si la respuesta reproduce un intento anterior con el mismo client_order_id. */
+  idempotent_replay?: boolean
+}
+
+/**
+ * Identificador de idempotencia de un intento de orden.
+ *
+ * `crypto.randomUUID` está en todos los navegadores objetivo; el respaldo cubre
+ * los contextos no seguros (HTTP en desarrollo), donde no está disponible.
+ */
+function newClientOrderId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `cw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 export interface LiveRiskPolicy {
@@ -190,16 +209,27 @@ export const tradingService = {
     return data
   },
 
-  /** Lanza una orden manual market/limit. */
+  /**
+   * Lanza una orden manual market/limit.
+   *
+   * Se envía un `client_order_id` único por intento: si la respuesta se pierde
+   * (red inestable, doble clic, reintento del navegador) el backend reconoce
+   * la petición repetida y devuelve el resultado del primer envío en lugar de
+   * cursar una segunda orden real. El identificador se genera aquí porque solo
+   * el cliente sabe qué es "el mismo intento" desde el punto de vista del
+   * usuario; pásalo explícitamente para reintentar una orden concreta.
+   */
   async placeOrder(connectionId: number, payload: {
     symbol: string
     side: 'buy' | 'sell'
     type: 'market' | 'limit'
     amount: number
     price?: number
+    client_order_id?: string
   }): Promise<PlaceOrderResult> {
+    const body = { client_order_id: newClientOrderId(), ...payload }
     const { data } = await apiClient.post<PlaceOrderResult>(
-      `/trading/connections/${connectionId}/orders/`, payload,
+      `/trading/connections/${connectionId}/orders/`, body,
     )
     return data
   },

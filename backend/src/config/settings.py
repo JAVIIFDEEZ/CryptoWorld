@@ -13,10 +13,32 @@ from datetime import timedelta
 import os
 import re
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Cargar variables de entorno desde .env
 load_dotenv()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Lee un booleano del entorno aceptando True/1/yes/on (insensible a mayúsculas).
+
+    El proyecto usaba comparaciones `== "True"` dispersas: cualquier valor
+    legítimo pero distinto ("true", "1") desactivaba silenciosamente la opción.
+    En un flag de seguridad ese fallo es silencioso y grave, así que la lectura
+    se centraliza aquí.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("true", "1", "yes", "on")
+
+
+def _env_list(name: str, default: str = "") -> list[str]:
+    """Lista separada por comas y/o espacios, sin elementos vacíos."""
+    raw = os.environ.get(name, default).strip()
+    return [item for item in re.split(r"[,\s]+", raw) if item]
+
 
 # ------------------------------------------------------------------
 # Rutas base
@@ -27,14 +49,33 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ------------------------------------------------------------------
 # Seguridad
 # ------------------------------------------------------------------
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-change-this-in-production-key-12345"
-)
+INSECURE_SECRET_KEY = "django-insecure-change-this-in-production-key-12345"
 
-DEBUG = os.environ.get("DJANGO_DEBUG", "True") == "True"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", INSECURE_SECRET_KEY)
 
-ALLOWED_HOSTS = re.split(r'[,\s]+', os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost 127.0.0.1").strip())
+DEBUG = _env_bool("DJANGO_DEBUG", True)
+
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost 127.0.0.1")
+
+# ── Fail-fast de despliegue ───────────────────────────────────────
+# Arrancar en producción con la clave de ejemplo permite falsificar tokens JWT
+# y descifrar las credenciales de exchange de todos los usuarios. Un despliegue
+# mal configurado debe abortar en el arranque, no servir tráfico inseguro.
+if not DEBUG:
+    if SECRET_KEY == INSECURE_SECRET_KEY or SECRET_KEY.startswith("django-insecure-"):
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY tiene el valor de ejemplo. Genera una clave "
+            "aleatoria de 50+ caracteres antes de desplegar con DJANGO_DEBUG=False."
+        )
+    if len(SECRET_KEY) < 32:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY es demasiado corta (mínimo 32 caracteres)."
+        )
+    if not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            "DJANGO_ALLOWED_HOSTS debe listar los dominios reales en producción "
+            "(nunca '*': habilita ataques de cabecera Host)."
+        )
 
 # ------------------------------------------------------------------
 # Aplicaciones instaladas
@@ -172,9 +213,20 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
+    # Techo global: hasta ahora solo los endpoints con ScopedRateThrottle
+    # declarado estaban limitados, así que los +100 endpoints restantes (varios
+    # de ellos costosos: backtests, forense on-chain) eran ilimitados. Estas
+    # clases ponen un suelo de protección a TODA la API; los scopes específicos
+    # siguen aplicándose encima donde están declarados.
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ),
     # Rate limiting por IP en endpoints sensibles de auth (ScopedRateThrottle
     # declarado view a view). El contador vive en la cache Redis.
     "DEFAULT_THROTTLE_RATES": {
+        "anon": os.environ.get("THROTTLE_ANON", "120/min"),
+        "user": os.environ.get("THROTTLE_USER", "600/min"),
         "auth_login": "10/min",
         "auth_register": "10/hour",
         "auth_password_reset": "5/hour",
@@ -186,6 +238,10 @@ REST_FRAMEWORK = {
         "robust_backtest": "30/hour",
         "strategy_generate": "10/hour",
         "strategy_robustness": "40/hour",
+        # Órdenes contra el exchange REAL del usuario: el límite más estricto
+        # de la API. Contiene tanto el error humano (doble clic, bucle en un
+        # script) como el abuso de una sesión robada.
+        "trading_order": os.environ.get("THROTTLE_TRADING_ORDER", "20/min"),
     },
 }
 
@@ -206,12 +262,51 @@ SIMPLE_JWT = {
 # ------------------------------------------------------------------
 # CORS — Permitir peticiones desde el frontend React
 # ------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = re.split(r'[,\s]+', os.environ.get(
-    "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173 http://127.0.0.1:5173"
-).strip())
+CORS_ALLOWED_ORIGINS = _env_list(
+    "CORS_ALLOWED_ORIGINS", "http://localhost:5173 http://127.0.0.1:5173"
+)
 
 CORS_ALLOW_CREDENTIALS = True
+
+# ------------------------------------------------------------------
+# Endurecimiento HTTP
+#
+# Los valores que no dependen del transporte se aplican SIEMPRE (también en
+# desarrollo: así lo que se prueba es lo que se despliega). Los que exigen
+# HTTPS se activan solo con DEBUG=False, porque en local no hay TLS y
+# romperían el flujo de login.
+# ------------------------------------------------------------------
+SECURE_CONTENT_TYPE_NOSNIFF = True          # Sin MIME sniffing
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"                    # La API nunca debe embeberse
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_HTTPONLY = False                # El frontend necesita leer el token
+
+# Orígenes de confianza para CSRF (formulario admin y vistas con sesión).
+# Por defecto se derivan de CORS_ALLOWED_ORIGINS: son el mismo conjunto de
+# frontends legítimos y evita el desajuste típico entre ambas listas.
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or [
+    origin for origin in CORS_ALLOWED_ORIGINS if origin.startswith(("http://", "https://"))
+]
+
+# Límites de cuerpo de petición: contienen ataques de agotamiento de memoria
+# en los endpoints que aceptan JSON (specs de estrategia, listas de activos).
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get("DATA_UPLOAD_MAX_MEMORY_SIZE", 2 * 1024 * 1024))
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+
+if not DEBUG:
+    # Detrás de Nginx/Railway el TLS termina en el proxy: sin esta cabecera
+    # Django cree que la petición es HTTP y entra en bucle de redirección.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", True)
+    SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", 31536000))  # 1 año
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 # ------------------------------------------------------------------
 # Email — Selección automática de backend por variables de entorno
@@ -431,3 +526,65 @@ CELERY_BEAT_SCHEDULE = {
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "admin@cryptoworld.app")
+
+# ------------------------------------------------------------------
+# Cifrado de credenciales de usuario (claves API de exchanges)
+#
+# Se separa de SECRET_KEY a propósito: SECRET_KEY firma tokens y cookies y se
+# rota con relativa frecuencia; rotarla NO debe invalidar las credenciales de
+# exchange de todos los usuarios. Además, un secreto de firma filtrado no debe
+# implicar automáticamente el descifrado de las claves API.
+#
+# Formato: lista separada por comas. La PRIMERA clave cifra; todas descifran.
+# Eso permite rotar sin downtime: se añade la nueva delante, y las credenciales
+# se recifran de forma transparente al siguiente guardado.
+# Vacío → se deriva de SECRET_KEY (compatibilidad con lo ya guardado).
+# ------------------------------------------------------------------
+CREDENTIALS_ENCRYPTION_KEYS = _env_list("CREDENTIALS_ENCRYPTION_KEYS")
+
+# ------------------------------------------------------------------
+# Logging
+#
+# Sin configuración explícita, Django solo emite WARNING+ del propio framework
+# y los logger.info de los casos de uso se pierden: no hay trazabilidad de qué
+# hizo el sistema con el dinero del usuario. Aquí se define:
+#   · consola con formato legible (o JSON en producción, para el agregador)
+#   · `core.audit`, canal separado para eventos auditables (órdenes reales,
+#     cambios de política de riesgo, accesos administrativos)
+# ------------------------------------------------------------------
+LOG_LEVEL = os.environ.get("DJANGO_LOG_LEVEL", "DEBUG" if DEBUG else "INFO").upper()
+LOG_FORMAT = os.environ.get("DJANGO_LOG_FORMAT", "plain" if DEBUG else "json").lower()
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {
+            "format": "{asctime} {levelname:<8} {name}: {message}",
+            "style": "{",
+        },
+        "json": {
+            "()": "config.logging.JsonFormatter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json" if LOG_FORMAT == "json" else "plain",
+        },
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        # Código propio: el nivel lo marca el entorno.
+        "core": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+        # Canal de auditoría: siempre INFO, nunca se silencia. Es el registro
+        # de cumplimiento (quién ordenó qué, cuándo y con qué resultado).
+        "core.audit": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        # Peticiones 4xx/5xx: en producción interesan como señal operativa.
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        # El SQL de Django en DEBUG inunda la salida; se sube el umbral.
+        "django.db.backends": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "celery": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+    },
+}

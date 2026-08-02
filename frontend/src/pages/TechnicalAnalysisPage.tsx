@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAssets } from '@/hooks/queries/useMarketData'
@@ -15,7 +15,9 @@ function TechnicalAnalysisPage() {
   // Catálogo desde la caché compartida (TanStack Query): si vienes de Mercado,
   // no se re-pide la lista.
   const { data: assetsData, isLoading: isLoadingAssets, isError: error } = useAssets()
-  const assets = assetsData ?? []
+  // useMemo: sin él, `?? []` crea un array nuevo en cada render y el
+  // efecto de más abajo se re-ejecuta siempre, no solo cuando cambia el catálogo.
+  const assets = useMemo(() => assetsData ?? [], [assetsData])
 
   useEffect(() => {
     if (assets.length > 0) {

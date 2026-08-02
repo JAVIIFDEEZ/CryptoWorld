@@ -54,9 +54,7 @@ function Graticule() {
   return (
     <>
       {lines.map((geom, i) => (
-        // eslint-disable-next-line react/no-unknown-property
         <line key={i}>
-          {/* eslint-disable-next-line react/no-unknown-property */}
           <primitive object={geom} attach="geometry" />
           <lineBasicMaterial color="#1e3a5f" transparent opacity={0.55} />
         </line>

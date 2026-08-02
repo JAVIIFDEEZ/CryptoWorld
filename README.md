@@ -164,7 +164,30 @@ docker compose exec backend pytest --cov=core --cov-report=html  # Con cobertura
 cd backend && pytest
 ```
 
-**Cobertura actual:** ~51 tests (unitarios de entidades, value objects, repositorios, servicios de dominio + integración de endpoints API).
+**Backend:** 847 tests (unitarios de entidades, value objects, repositorios y
+servicios de dominio + integración de los endpoints de la API). La suite falla
+si la cobertura baja del 75 %.
+
+```bash
+cd frontend
+npm run lint        # ESLint — sin avisos permitidos
+npx tsc --noEmit    # Tipos
+npm test            # 124 tests (vitest + testing-library)
+```
+
+### Comprobaciones de despliegue
+
+```bash
+cd backend
+python src/manage.py makemigrations --check --dry-run   # modelos ↔ migraciones
+DJANGO_DEBUG=False DJANGO_SECRET_KEY=<clave-real> \
+  DJANGO_ALLOWED_HOSTS=tudominio.com \
+  python src/manage.py check --deploy --fail-level WARNING
+```
+
+Las cuatro comprobaciones son pasos obligatorios de CI. La postura de seguridad
+está descrita en [`SECURITY.md`](SECURITY.md) y la última auditoría técnica en
+[`info/Auditoria_Institucional.md`](info/Auditoria_Institucional.md).
 
 ---
 

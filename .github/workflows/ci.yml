@@ -1,24 +1,36 @@
 # ═══════════════════════════════════════════════════════════════════
 # CI — Integración continua de CryptoWorld
 #
-# Dos jobs independientes:
-#   backend  → pytest (unit + integración) contra PostgreSQL y Redis
-#   frontend → typecheck (tsc) + build de producción (vite)
+# Jobs:
+#   backend   → migraciones coherentes, pytest con umbral de cobertura y
+#               `check --deploy` con la configuración de producción real
+#   frontend  → lint, typecheck, tests y build de producción
+#   seguridad → auditoría de dependencias (Python y npm)
 #
-# Se ejecuta en cada push y pull request a las ramas principales.
+# Los disparadores cubren las ramas de trabajo reales del repositorio. La
+# versión anterior apuntaba a `Javier-Dev`, una rama que ya no existe, así que
+# CI no se ejecutaba en ningún push de desarrollo.
 # ═══════════════════════════════════════════════════════════════════
 
 name: CI
 
 on:
   push:
-    branches: [main, Javier-Dev]
+    branches: [main, develop, "claude/**"]
   pull_request:
-    branches: [main, Javier-Dev]
+    branches: [main, develop]
+  # Permite lanzar la suite a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+# Un push nuevo sobre la misma rama cancela la ejecución anterior: no tiene
+# sentido gastar minutos en validar un commit ya superado.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
-    name: Backend — pytest
+    name: Backend — pytest y cobertura
     runs-on: ubuntu-latest
 
     services:
@@ -46,7 +58,7 @@ jobs:
           --health-retries 5
 
     env:
-      DJANGO_SECRET_KEY: ci-test-secret-key
+      DJANGO_SECRET_KEY: ci-test-secret-key-not-used-in-production-0123456789
       DJANGO_DEBUG: "True"
       DB_HOST: localhost
       DB_USER: postgres
@@ -65,14 +77,36 @@ jobs:
 
       - name: Instalar dependencias
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
 
-      - name: Ejecutar tests
+      # Un modelo cambiado sin su migración rompe el despliegue, no la suite:
+      # el fallo aparecería en producción. Se comprueba antes de los tests.
+      - name: Migraciones al día
         working-directory: backend
-        run: pytest --no-cov -q
+        run: python src/manage.py makemigrations --check --dry-run
+        env:
+          PYTHONPATH: src
+
+      - name: Ejecutar tests con cobertura
+        working-directory: backend
+        run: pytest -q
+
+      # Con la configuración de producción activa (DEBUG=False), Django audita
+      # HSTS, cookies seguras, SSL redirect y demás. Falla si falta cualquiera.
+      - name: Auditoría de despliegue (check --deploy)
+        working-directory: backend
+        run: python src/manage.py check --deploy --fail-level WARNING
+        env:
+          PYTHONPATH: src
+          DJANGO_DEBUG: "False"
+          DJANGO_SECRET_KEY: ci-deploy-check-key-with-enough-entropy-0123456789
+          DJANGO_ALLOWED_HOSTS: cryptoworld.example.com
+          CORS_ALLOWED_ORIGINS: https://cryptoworld.example.com
 
   frontend:
-    name: Frontend — typecheck y build
+    name: Frontend — lint, typecheck, tests y build
     runs-on: ubuntu-latest
 
     steps:
@@ -88,6 +122,12 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # El repositorio declaraba el script `lint` y sus dependencias, pero no
+      # había configuración de ESLint ni paso de CI: nunca se ejecutaba.
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
       - name: Typecheck
         working-directory: frontend
         run: npx tsc --noEmit
@@ -99,3 +139,29 @@ jobs:
       - name: Build de producción
         working-directory: frontend
         run: npm run build
+
+  seguridad:
+    name: Seguridad — auditoría de dependencias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: pip-audit (vulnerabilidades conocidas en Python)
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit --requirement requirements.txt --strict --progress-spinner off
+
+      - name: npm audit (vulnerabilidades altas y críticas)
+        working-directory: frontend
+        run: npm audit --audit-level=high

@@ -22,7 +22,9 @@ class ExecutionTcaUseCase:
     def execute(self, owner) -> dict:
         from core.infrastructure.persistence.models import LiveOrderRecord
 
-        qs = (LiveOrderRecord.objects.filter(account__owner=owner)
+        # Por `owner`: el coste de ejecución del usuario incluye sus órdenes
+        # manuales, no solo las espejadas desde una cartera de paper.
+        qs = (LiveOrderRecord.objects.filter(owner=owner)
               .order_by("-created_at")[:self._LIMIT])
         records = list(qs)
         if not records:

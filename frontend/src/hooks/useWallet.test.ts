@@ -30,7 +30,7 @@ describe('useWallet', () => {
   })
 
   it('connects, exposes address and resolves the chain slug', async () => {
-    ;(window as { ethereum?: unknown }).ethereum = {
+    (window as { ethereum?: unknown }).ethereum = {
       request: vi.fn(async ({ method }: { method: string }) => {
         if (method === 'eth_requestAccounts') return ['0xAbC0000000000000000000000000000000000001']
         if (method === 'eth_chainId') return '0x2105' // 8453 = Base

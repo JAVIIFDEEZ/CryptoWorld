@@ -45,6 +45,11 @@ factory-boy==3.3.1              # Generación de datos de prueba
 
 # ── Servidor de producción ────────────────────────────────────────
 gunicorn==22.0.0
+# Workers ASGI para gunicorn. El proyecto usa Channels (WebSockets de precios y
+# notificaciones): servir config.wsgi los deja muertos en producción, porque
+# WSGI no sabe hacer el upgrade del protocolo. Con UvicornWorker se conserva la
+# gestión de procesos de gunicorn y se sirve config.asgi.
+uvicorn[standard]==0.30.6
 dj-database-url==2.2.0          # Parsea DATABASE_URL (Railway lo inyecta automáticamente)
 whitenoise==6.7.0               # Sirve archivos estáticos sin Nginx (Railway no tiene Nginx)
 

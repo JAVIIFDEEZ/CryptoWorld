@@ -49,7 +49,9 @@ function MarketPage() {
     .slice(0, 25)
     .map((a) => a.symbol), [assets])
   const sparklinesQuery = useSparklines(top25)
-  const sparks = sparklinesQuery.data ?? {}
+  // useMemo: estabiliza la identidad del objeto para que `marketBodies`
+  // no se recalcule en cada render.
+  const sparks = useMemo(() => sparklinesQuery.data ?? {}, [sparklinesQuery.data])
   const sparksLoaded = sparklinesQuery.isFetched
 
   // Watchlist con actualización optimista: la estrella responde al instante.

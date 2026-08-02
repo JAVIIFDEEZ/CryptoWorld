@@ -44,4 +44,4 @@ except User.DoesNotExist:
 " || true
 fi
 
-exec gunicorn config.wsgi:application --workers 3 --timeout 120 --bind 0.0.0.0:${PORT:-8000}
+exec gunicorn config.asgi:application --worker-class uvicorn.workers.UvicornWorker --workers 3 --timeout 120 --bind 0.0.0.0:${PORT:-8000}

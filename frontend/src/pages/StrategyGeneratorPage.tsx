@@ -7,7 +7,7 @@
  * y el historial de estrategias guardadas.
  */
 
-import { lazy, useEffect, useRef, useState } from 'react'
+import { lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAssets } from '@/hooks/queries/useMarketData'
 import { type CryptoAsset } from '@/services/analysisService'
@@ -60,7 +60,8 @@ export default function StrategyGeneratorPage() {
   const { t } = useTranslation()
   // Catálogo desde la caché compartida (TanStack Query).
   const { data: assetsData, isLoading: loadingAssets } = useAssets()
-  const assets = assetsData ?? []
+  // useMemo: estabiliza la identidad del array entre renders (ver efecto abajo).
+  const assets = useMemo(() => assetsData ?? [], [assetsData])
   const [symbol, setSymbol] = useState('BTC')
   const [interval, setIntervalTf] = useState('1d')
   const [preset, setPreset] = useState<GenPreset>('balanced')

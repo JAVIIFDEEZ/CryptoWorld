@@ -76,7 +76,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Gunicorn: WSGI server de producción (no runserver)
+    # Gunicorn con workers ASGI (no runserver).
+    #
+    # Se sirve config.asgi, NO config.wsgi: el proyecto usa Channels para los
+    # precios y las notificaciones en tiempo real, y WSGI no sabe hacer el
+    # upgrade a WebSocket — servirlo dejaba toda la capa de tiempo real muerta
+    # en producción mientras funcionaba en desarrollo.
     #   --workers 3     → regla (2 * CPUs) + 1
     #   --timeout 120   → permite respuestas lentas (ML, análisis)
     #   --bind 0.0.0.0:8000
@@ -85,7 +90,8 @@ services:
         cd src &&
         python manage.py migrate --noinput &&
         python manage.py collectstatic --noinput &&
-        gunicorn config.wsgi:application
+        gunicorn config.asgi:application
+          --worker-class uvicorn.workers.UvicornWorker
           --bind 0.0.0.0:8000
           --workers 3
           --timeout 120

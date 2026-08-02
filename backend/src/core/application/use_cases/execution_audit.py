@@ -24,7 +24,10 @@ class ExecutionAuditUseCase:
     def execute(self, owner, limit: int = 50, status_filter: str = "") -> dict:
         from core.infrastructure.persistence.models import LiveOrderRecord
 
-        base = (LiveOrderRecord.objects.filter(account__owner=owner)
+        # Se consulta por `owner`, no por `account__owner`: así entran tanto
+        # las órdenes espejadas por la promoción paper→real como las manuales
+        # (que no cuelgan de ninguna cartera de paper).
+        base = (LiveOrderRecord.objects.filter(owner=owner)
                 .order_by("-created_at"))
 
         summary_rows = list(
@@ -33,7 +36,7 @@ class ExecutionAuditUseCase:
         summary = summarize(summary_rows)
 
         entries_qs = base
-        if status_filter in ("sent", "failed", "blocked"):
+        if status_filter in ("sent", "failed", "blocked", "pending"):
             entries_qs = entries_qs.filter(status=status_filter)
 
         limit = max(1, min(limit, self._ENTRIES_CAP))

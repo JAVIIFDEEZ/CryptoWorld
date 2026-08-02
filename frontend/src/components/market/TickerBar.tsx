@@ -12,8 +12,6 @@ import { analysisService, type CryptoAsset } from '@/services/analysisService'
 import { useCurrency } from '@/hooks/useCurrency'
 import { usePriceStream } from '@/hooks/usePriceStream'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // Velocidad de desplazamiento en px/frame (~60fps)
 const SCROLL_SPEED = 0.6
 
