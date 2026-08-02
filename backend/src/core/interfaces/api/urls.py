@@ -11,14 +11,38 @@ Convención REST aplicada:
 """
 
 from django.urls import path
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularRedocView,
+    SpectacularSwaggerView,
+)
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from core.interfaces.api import views
 from core.interfaces.api import admin_views
 
 urlpatterns = [
+    # ── Documentación de la API (OpenAPI 3) ────────────────────────
+    # El esquema se genera desde el propio código, así que no puede
+    # quedar desincronizado con los endpoints como sí ocurría con la
+    # tabla de rutas escrita a mano en el README.
+    path("schema/", SpectacularAPIView.as_view(), name="api-schema"),
+    path(
+        "docs/",
+        SpectacularSwaggerView.as_view(url_name="api-schema"),
+        name="api-docs",
+    ),
+    path(
+        "redoc/",
+        SpectacularRedocView.as_view(url_name="api-schema"),
+        name="api-redoc",
+    ),
+
     # ── Health ─────────────────────────────────────────────────────
-    path("health/", views.HealthCheckView.as_view(), name="health-check"),
+    # `health/` sondea dependencias (readiness); `health/live/` solo
+    # confirma que el proceso responde (liveness).
+    path("health/", views.ReadinessView.as_view(), name="health-check"),
+    path("health/live/", views.LivenessView.as_view(), name="health-live"),
 
     # ── Auth — Registro y login ─────────────────────────────────────
     path("auth/register/", views.RegisterView.as_view(), name="auth-register"),

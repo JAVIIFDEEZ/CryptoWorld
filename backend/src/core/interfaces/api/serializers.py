@@ -12,7 +12,92 @@ Su responsabilidad:
 NO contienen lógica de negocio. Eso vive en los casos de uso.
 """
 
+from datetime import timedelta
+from decimal import Decimal
+
+from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 from rest_framework import serializers
+
+# Longitud mínima única para toda la API, definida en settings junto a
+# los validadores de Django para que no puedan divergir.
+PASSWORD_MIN_LENGTH = getattr(settings, "PASSWORD_MIN_LENGTH", 12)
+
+# Precisión de los campos monetarios. Coincide con el esquema de la base
+# de datos (`Decimal(38, 18)` para cantidades, `Decimal(20, 8)` para
+# precios) para que la validación no acepte números que la columna no
+# pueda almacenar.
+QUANTITY_DECIMAL_PLACES = 18
+QUANTITY_MAX_DIGITS = 38
+PRICE_DECIMAL_PLACES = 8
+PRICE_MAX_DIGITS = 20
+MIN_POSITIVE_AMOUNT = Decimal("0.000000001")
+
+
+def _run_password_validators(password: str, user=None) -> str:
+    """
+    Aplicar AUTH_PASSWORD_VALIDATORS y traducir el error al formato DRF.
+
+    Se usa en todos los puntos donde el usuario elige una contraseña.
+    El registro no lo hacía: solo exigía ocho caracteres, de modo que se
+    podían crear cuentas con contraseñas ("12345678", "password") que el
+    cambio y la recuperación sí rechazaban. Misma política en los tres.
+    """
+    try:
+        validate_password(password, user)
+    except DjangoValidationError as exc:
+        raise serializers.ValidationError(list(exc.messages)) from exc
+    return password
+
+
+def money_field(**kwargs) -> serializers.DecimalField:
+    """
+    Campo decimal para cantidades de activo.
+
+    Deliberadamente `DecimalField` y no `FloatField`: un float de doble
+    precisión tiene ~15-17 dígitos significativos y no puede representar
+    exactamente cantidades de 18 decimales, así que redondea en silencio
+    los importes de una plataforma financiera. `DecimalField` conserva el
+    valor exacto de extremo a extremo, hasta la columna de PostgreSQL.
+    """
+    kwargs.setdefault("max_digits", QUANTITY_MAX_DIGITS)
+    kwargs.setdefault("decimal_places", QUANTITY_DECIMAL_PLACES)
+    kwargs.setdefault("min_value", MIN_POSITIVE_AMOUNT)
+    return serializers.DecimalField(**kwargs)
+
+
+def price_field(**kwargs) -> serializers.DecimalField:
+    """Campo decimal para precios en USD (8 decimales, como la BD)."""
+    kwargs.setdefault("max_digits", PRICE_MAX_DIGITS)
+    kwargs.setdefault("decimal_places", PRICE_DECIMAL_PLACES)
+    kwargs.setdefault("min_value", MIN_POSITIVE_AMOUNT)
+    return serializers.DecimalField(**kwargs)
+
+
+class PastOrPresentDateTimeField(serializers.DateTimeField):
+    """
+    Fecha de ejecución de una operación: nunca en el futuro.
+
+    Una operación registrada con fecha futura descuadra el PnL histórico
+    y el orden del historial. Se admite un margen de unos minutos para
+    absorber relojes de cliente ligeramente adelantados.
+    """
+
+    CLOCK_SKEW_TOLERANCE = timedelta(minutes=5)
+
+    def validate_empty_values(self, data):
+        return super().validate_empty_values(data)
+
+    def to_internal_value(self, value):
+        parsed = super().to_internal_value(value)
+        now = timezone.now()
+        if parsed > now + self.CLOCK_SKEW_TOLERANCE:
+            raise serializers.ValidationError(
+                "La fecha de la operación no puede estar en el futuro."
+            )
+        return parsed
 
 
 # ── Auth ───────────────────────────────────────────────────────────
@@ -22,7 +107,7 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     username = serializers.CharField(min_length=3, max_length=150)
     password = serializers.CharField(
-        min_length=8,
+        min_length=PASSWORD_MIN_LENGTH,
         write_only=True,
         style={"input_type": "password"},
     )
@@ -31,12 +116,38 @@ class RegisterSerializer(serializers.Serializer):
         style={"input_type": "password"},
     )
 
+    def validate_email(self, value: str) -> str:
+        """
+        Normalizar a minúsculas.
+
+        El email es el identificador de login. Sin normalizar,
+        `Foo@x.com` y `foo@x.com` crean dos cuentas distintas y el login
+        pasa a ser sensible a mayúsculas, mientras que el cambio de email
+        —que sí comparaba con `iexact`— las trata como la misma.
+        """
+        return value.strip().lower()
+
+    def validate_username(self, value: str) -> str:
+        return value.strip()
+
     def validate(self, data: dict) -> dict:
-        """Validación cruzada: las dos contraseñas deben coincidir."""
+        """Coincidencia de contraseñas y política de contraseñas completa."""
         if data["password"] != data["password_confirm"]:
             raise serializers.ValidationError(
                 {"password_confirm": "Las contraseñas no coinciden."}
             )
+
+        # Los validadores de Django comparan la contraseña con los datos
+        # del usuario (UserAttributeSimilarityValidator); se le pasa una
+        # instancia sin guardar para que pueda hacerlo también en el alta.
+        from core.infrastructure.persistence.models import User
+
+        candidate = User(email=data["email"], username=data["username"])
+        try:
+            _run_password_validators(data["password"], candidate)
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({"password": exc.detail}) from exc
+
         return data
 
 
@@ -44,6 +155,9 @@ class LoginSerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/login."""
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+
+    def validate_email(self, value: str) -> str:
+        return value.strip().lower()
 
 
 class LogoutSerializer(serializers.Serializer):
@@ -60,17 +174,23 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/password-reset/."""
     email = serializers.EmailField()
 
+    def validate_email(self, value: str) -> str:
+        return value.strip().lower()
+
 
 class ResendVerificationRequestSerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/verify-email/resend/."""
     email = serializers.EmailField()
+
+    def validate_email(self, value: str) -> str:
+        return value.strip().lower()
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/password-reset/confirm/."""
     uid = serializers.CharField()
     token = serializers.CharField()
-    new_password = serializers.CharField(min_length=8, write_only=True)
+    new_password = serializers.CharField(min_length=PASSWORD_MIN_LENGTH, write_only=True)
     new_password_confirm = serializers.CharField(write_only=True)
 
     def validate(self, data: dict) -> dict:
@@ -84,7 +204,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class ChangePasswordSerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/change-password/."""
     current_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(min_length=8, write_only=True)
+    new_password = serializers.CharField(min_length=PASSWORD_MIN_LENGTH, write_only=True)
     new_password_confirm = serializers.CharField(write_only=True)
 
     def validate(self, data: dict) -> dict:
@@ -125,6 +245,9 @@ class ChangeEmailRequestSerializer(serializers.Serializer):
     """Valida el cuerpo de POST /api/auth/change-email/."""
     new_email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+
+    def validate_new_email(self, value: str) -> str:
+        return value.strip().lower()
 
 
 class ChangeEmailConfirmSerializer(serializers.Serializer):
@@ -359,9 +482,9 @@ class AddTradeSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/trades/."""
     asset_symbol = serializers.CharField(max_length=20)
     trade_type = serializers.ChoiceField(choices=["BUY", "SELL"])
-    quantity = serializers.FloatField(min_value=0.000000001)
-    price_usd = serializers.FloatField(min_value=0.000000001)
-    executed_at = serializers.DateTimeField()
+    quantity = money_field()
+    price_usd = price_field()
+    executed_at = PastOrPresentDateTimeField()
     notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
 
@@ -413,7 +536,7 @@ class CreateAlertSerializer(serializers.Serializer):
     """Valida POST /api/alerts/."""
     asset_symbol = serializers.CharField(max_length=20)
     condition = serializers.ChoiceField(choices=["ABOVE", "BELOW"])
-    threshold_price = serializers.FloatField(min_value=0.000000001)
+    threshold_price = price_field()
     notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
 
@@ -438,26 +561,26 @@ class OpenPositionSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/positions/."""
     asset_symbol = serializers.CharField(max_length=20)
     direction = serializers.ChoiceField(choices=["LONG", "SHORT"])
-    quantity = serializers.FloatField(min_value=0.000000001)
-    entry_price = serializers.FloatField(min_value=0.000000001)
-    opened_at = serializers.DateTimeField()
+    quantity = money_field()
+    entry_price = price_field()
+    opened_at = PastOrPresentDateTimeField()
     label = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
     notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
 
 class ClosePositionSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/positions/<id>/close/."""
-    close_quantity = serializers.FloatField(min_value=0.000000001)
-    close_price = serializers.FloatField(min_value=0.000000001)
-    executed_at = serializers.DateTimeField()
+    close_quantity = money_field()
+    close_price = price_field()
+    executed_at = PastOrPresentDateTimeField()
     notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
 
 class AddToPositionSerializer(serializers.Serializer):
     """Valida POST /api/portfolio/positions/<id>/add/."""
-    quantity = serializers.FloatField(min_value=0.000000001)
-    entry_price = serializers.FloatField(min_value=0.000000001)
-    executed_at = serializers.DateTimeField()
+    quantity = money_field()
+    entry_price = price_field()
+    executed_at = PastOrPresentDateTimeField()
     notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
 
 

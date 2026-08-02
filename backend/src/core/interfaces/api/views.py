@@ -1,29 +1,56 @@
-﻿"""
-interfaces/api/views.py â€” Controladores HTTP (DRF Views).
+"""
+interfaces/api/views.py — Controladores HTTP (DRF Views).
 
-Esta es la Ãºnica capa que sabe de HTTP.
+Esta es la única capa que sabe de HTTP.
 Responsabilidades:
-  1. Recibir y validar la peticiÃ³n HTTP (usando serializers)
+  1. Recibir y validar la petición HTTP (usando serializers)
   2. Construir el DTO de entrada
   3. Invocar el caso de uso correspondiente (capa application)
-  4. Serializar el DTO de salida â†’ respuesta HTTP
+  4. Serializar el DTO de salida → respuesta HTTP
 
 Lo que las views NUNCA deben hacer:
-  - LÃ³gica de negocio
+  - Lógica de negocio
   - Consultas directas a la base de datos
-  - Operaciones matemÃ¡ticas o financieras
+  - Operaciones matemáticas o financieras
 
 Principio aplicado: Single Responsibility + Clean Architecture.
 """
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.throttling import ScopedRateThrottle
-from rest_framework_simplejwt.tokens import RefreshToken
+import logging
+
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.core.cache import cache
+from django.db import transaction
+from drf_spectacular.utils import OpenApiResponse, extend_schema
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from core.application.services import audit
+from core.application.services.login_guard import (
+    PASSWORD_POLICY,
+    TOTP_POLICY,
+    AccountLockedError,
+    ensure_not_locked,
+    register_failure,
+    reset as reset_login_attempts,
+)
+from core.application.services.sessions import revoke_all_sessions
+from core.infrastructure.persistence.models import AuditLog
+from core.interfaces.api.authentication import CredentialEpochJWTAuthentication
+from core.interfaces.api.exception_handler import DomainError
+from core.interfaces.api.pagination import paginate_list
+
+logger = logging.getLogger(__name__)
+
+# Versión del servicio publicada en las sondas de salud. Se lee del
+# entorno para que coincida con la imagen desplegada en lugar de quedar
+# congelada en el código (antes estaba fijada a "1.0.0").
+APP_VERSION = getattr(settings, "APP_VERSION", "1.139.0")
 
 from core.interfaces.api.serializers import (
     RegisterSerializer,
@@ -150,19 +177,52 @@ from core.infrastructure.persistence.models import User as UserModel
 from core.domain.services.user_domain_service import UserDomainService
 
 
-# â”€â”€ Health Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Health Check ───────────────────────────────────────────────────
 
-class HealthCheckView(APIView):
+class LivenessView(APIView):
     """
-    GET /api/health — Comprobación de estado del servidor y sus dependencias.
+    GET /api/health/live/ — Sonda de vitalidad (liveness probe).
 
-    No requiere autenticación. Además del estado del proceso web, sondea
-    las dependencias críticas (BD, cache Redis, broker Celery) para poder
-    diagnosticar despliegues (Railway/Docker) de un vistazo. Devuelve
-    siempre 200: el campo `status` distingue "ok" de "degraded" para no
-    tumbar healthchecks de Docker por una dependencia secundaria.
+    Responde 200 si el proceso web atiende peticiones, sin tocar ninguna
+    dependencia. Es lo que debe consultar el orquestador para decidir si
+    reinicia el contenedor: si sondease Redis o la base de datos, un
+    parpadeo de una dependencia externa provocaría un reinicio en bucle
+    del servicio web, que es justo lo contrario de lo que se busca.
     """
+
     permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = []
+
+    @extend_schema(
+        summary="Sonda de vitalidad",
+        responses={200: OpenApiResponse(description="El proceso web responde.")},
+        tags=["Salud"],
+    )
+    def get(self, request):
+        return Response(
+            {"status": "ok", "service": "CryptoWorld API", "version": APP_VERSION},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ReadinessView(APIView):
+    """
+    GET /api/health/  — Sonda de disponibilidad (readiness probe).
+
+    Sondea las dependencias críticas (base de datos, cache Redis y broker
+    de Celery) y responde 200 si todas están sanas o 503 si alguna falla,
+    para que el balanceador deje de enviar tráfico a una réplica que no
+    puede servirlo.
+
+    El detalle por componente solo se revela a administradores: para el
+    resto es un dato de arquitectura interna que no aporta al cliente y
+    sí ayuda a quien esté haciendo reconocimiento del sistema.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = [CredentialEpochJWTAuthentication]
+    throttle_classes = []
 
     @staticmethod
     def _check_components() -> dict:
@@ -177,12 +237,14 @@ class HealthCheckView(APIView):
                 cursor.execute("SELECT 1")
             components["database"] = "ok"
         except Exception:
+            logger.warning("Healthcheck: base de datos inaccesible", exc_info=True)
             components["database"] = "error"
 
         try:
             cache.set("health_ping", "1", 5)
             components["cache"] = "ok" if cache.get("health_ping") == "1" else "error"
         except Exception:
+            logger.warning("Healthcheck: cache inaccesible", exc_info=True)
             components["cache"] = "error"
 
         try:
@@ -190,6 +252,7 @@ class HealthCheckView(APIView):
                 conn.ensure_connection(max_retries=0)
             components["celery_broker"] = "ok"
         except Exception:
+            logger.warning("Healthcheck: broker Celery inaccesible", exc_info=True)
             components["celery_broker"] = "error"
 
         # Informativo: qué backend de email está activo (no afecta al estado)
@@ -203,42 +266,64 @@ class HealthCheckView(APIView):
 
         return components
 
+    @extend_schema(
+        summary="Sonda de disponibilidad",
+        responses={
+            200: OpenApiResponse(description="Todas las dependencias responden."),
+            503: OpenApiResponse(description="Alguna dependencia crítica falla."),
+        },
+        tags=["Salud"],
+    )
     def get(self, request):
         components = self._check_components()
         checks = {k: v for k, v in components.items() if k != "email_backend"}
-        overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+        healthy = all(v == "ok" for v in checks.values())
+
+        body = {
+            "status": "ok" if healthy else "degraded",
+            "version": APP_VERSION,
+            "service": "CryptoWorld API",
+        }
+
+        # El desglose de dependencias es información de infraestructura.
+        if request.user.is_authenticated and request.user.is_staff:
+            body["components"] = components
+
         return Response(
-            {
-                "status": overall,
-                "version": "1.0.0",
-                "service": "CryptoWorld API",
-                "components": components,
-            },
-            status=status.HTTP_200_OK,
+            body,
+            status=status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
 
-# â”€â”€ Auth Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Auth Views ─────────────────────────────────────────────────────
 
 class RegisterView(APIView):
     """
-    POST /api/auth/register â€” Registrar un nuevo usuario.
+    POST /api/auth/register — Registrar un nuevo usuario.
 
     Flujo:
       1. Validar datos de entrada con RegisterSerializer
       2. Construir DTO de entrada
       3. Delegar al caso de uso RegisterUserUseCase
-      4. Enviar email de verificaciÃ³n
+      4. Enviar email de verificación
       5. Devolver respuesta 201 con datos del usuario creado
     """
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth_register"
 
+    @extend_schema(
+        summary="Registrar un nuevo usuario",
+        request=RegisterSerializer,
+        responses={
+            201: OpenApiResponse(description="Cuenta creada; email de verificación enviado."),
+            400: OpenApiResponse(description="Datos inválidos o email/usuario ya en uso."),
+        },
+        tags=["Autenticación"],
+    )
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         validated = serializer.validated_data
 
@@ -246,24 +331,31 @@ class RegisterView(APIView):
         user_domain_service = UserDomainService(user_repo)
         use_case = RegisterUserUseCase(user_repo, user_domain_service)
 
-        try:
-            input_dto = RegisterUserInputDTO(
-                email=validated["email"],
-                username=validated["username"],
-                password=validated["password"],
-            )
-            output_dto = use_case.execute(input_dto)
+        input_dto = RegisterUserInputDTO(
+            email=validated["email"],
+            username=validated["username"],
+            password=validated["password"],
+        )
 
-            # El repositorio crea el usuario sin contraseña;
-            # la establecemos aquí usando el método del repositorio.
+        # Atómico: el alta y el establecimiento de la contraseña son una
+        # sola operación. Sin la transacción, un fallo entre ambos pasos
+        # dejaba un usuario con el email ocupado y sin contraseña válida,
+        # imposible de recuperar y de volver a registrar.
+        with transaction.atomic():
+            output_dto = use_case.execute(input_dto)
             user_repo.set_password(output_dto.id, validated["password"])
 
-            # Enviar email de verificación de forma asíncrona (no bloquea la
-            # respuesta HTTP); con fallback síncrono si no hay worker Celery.
-            dispatch_task(send_verification_email_task, output_dto.id)
+        # Fuera de la transacción: encolar el email solo tiene sentido si
+        # el alta ya está confirmada en la base de datos.
+        dispatch_task(send_verification_email_task, output_dto.id)
 
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        audit.record(
+            AuditLog.Action.REGISTER,
+            request=request,
+            actor_email=output_dto.email,
+            target_type="user",
+            target_id=output_dto.id,
+        )
 
         return Response(
             {
@@ -278,7 +370,7 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     """
-    POST /api/auth/login â€” Autenticar usuario y devolver tokens JWT.
+    POST /api/auth/login — Autenticar usuario y devolver tokens JWT.
 
     Si el usuario tiene 2FA activo, devuelve un token temporal (pre_auth_token)
     en lugar de los tokens completos. El cliente debe completar el segundo factor
@@ -288,43 +380,102 @@ class LoginView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth_login"
 
+    @extend_schema(
+        summary="Iniciar sesión",
+        request=LoginSerializer,
+        responses={
+            200: OpenApiResponse(description="Tokens JWT, o pre_auth_token si hay 2FA."),
+            401: OpenApiResponse(description="Credenciales inválidas."),
+            403: OpenApiResponse(description="Cuenta desactivada o email sin verificar."),
+            429: OpenApiResponse(description="Cuenta bloqueada por intentos fallidos."),
+        },
+        tags=["Autenticación"],
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         validated = serializer.validated_data
+        # El email es el identificador de login: se normaliza igual que en
+        # el registro para que las mayúsculas no partan ni la cuenta ni el
+        # contador de intentos fallidos.
+        email = validated["email"].strip().lower()
 
-        user = authenticate(
-            request,
-            username=validated["email"],
-            password=validated["password"],
-        )
+        # El límite por IP no protege de una botnet repartiendo intentos
+        # contra una sola cuenta: este guardia cuenta por cuenta.
+        try:
+            ensure_not_locked(PASSWORD_POLICY, email)
+        except AccountLockedError as exc:
+            audit.record(
+                AuditLog.Action.LOGIN_BLOCKED,
+                request=request,
+                actor_email=email,
+                outcome=AuditLog.Outcome.FAILURE,
+            )
+            raise DomainError(
+                str(exc),
+                code="account_locked",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            ) from exc
+
+        user = authenticate(request, username=email, password=validated["password"])
 
         if user is None:
-            return Response(
-                {"error": "Credenciales inválidas."},
-                status=status.HTTP_401_UNAUTHORIZED,
+            attempts = register_failure(PASSWORD_POLICY, email)
+            audit.record(
+                AuditLog.Action.LOGIN_FAILURE,
+                request=request,
+                actor_email=email,
+                outcome=AuditLog.Outcome.FAILURE,
+                failed_attempts=attempts,
             )
+            # Mensaje deliberadamente idéntico exista o no la cuenta, para
+            # no convertir el login en un oráculo de emails registrados.
+            raise DomainError(
+                "Credenciales inválidas.",
+                code="invalid_credentials",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Credenciales correctas: el contador se limpia aquí y no más
+        # abajo, para que una cuenta desactivada o sin verificar no quede
+        # acumulando intentos "fallidos" que no lo son.
+        reset_login_attempts(PASSWORD_POLICY, email)
 
         if not user.is_active:
-            return Response(
-                {"error": "Cuenta desactivada."},
-                status=status.HTTP_403_FORBIDDEN,
+            audit.record(
+                AuditLog.Action.LOGIN_FAILURE,
+                request=request,
+                actor=user,
+                outcome=AuditLog.Outcome.FAILURE,
+                reason="account_disabled",
+            )
+            raise DomainError(
+                "Cuenta desactivada.",
+                code="account_disabled",
+                status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # PolÃ­tica de seguridad: no permitir login hasta verificar email
+        # Política de seguridad: no permitir login hasta verificar email
         if not user.is_email_verified:
-            return Response(
-                {
-                    "error": "Debes verificar tu email antes de iniciar sesión.",
-                    "error_code": "email_not_verified",
-                },
-                status=status.HTTP_403_FORBIDDEN,
+            audit.record(
+                AuditLog.Action.LOGIN_FAILURE,
+                request=request,
+                actor=user,
+                outcome=AuditLog.Outcome.FAILURE,
+                reason="email_not_verified",
+            )
+            raise DomainError(
+                "Debes verificar tu email antes de iniciar sesión.",
+                code="email_not_verified",
+                status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Si 2FA estÃ¡ activo, emitir token temporal de pre-autenticaciÃ³n
+        # Si 2FA está activo, emitir token temporal de pre-autenticación
         if user.is_2fa_enabled:
+            audit.record(
+                AuditLog.Action.TWO_FACTOR_CHALLENGE, request=request, actor=user
+            )
             pre_auth = PreAuthToken()
             pre_auth["user_id"] = user.pk
             return Response(
@@ -337,6 +488,7 @@ class LoginView(APIView):
 
         # Sin 2FA: emitir tokens completos
         refresh = RefreshToken.for_user(user)
+        audit.record(AuditLog.Action.LOGIN_SUCCESS, request=request, actor=user)
 
         return Response(
             {
@@ -354,23 +506,31 @@ class LoginView(APIView):
 
 class LogoutView(APIView):
     """
-    POST /api/auth/logout/ â€” Cerrar sesiÃ³n aÃ±adiendo el refresh_token a la blacklist.
-    No requiere access token vÃ¡lido: el propio refresh_token es prueba suficiente.
+    POST /api/auth/logout/ — Cerrar sesión añadiendo el refresh_token a la blacklist.
+    No requiere access token válido: el propio refresh_token es prueba suficiente.
     Esto permite hacer logout aunque el access token ya haya expirado.
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Cerrar sesión",
+        request=LogoutSerializer,
+        responses={200: OpenApiResponse(description="Refresh token invalidado.")},
+        tags=["Autenticación"],
+    )
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            LogoutUseCase().execute(
-                LogoutInputDTO(refresh_token=serializer.validated_data["refresh_token"])
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        LogoutUseCase().execute(
+            LogoutInputDTO(refresh_token=serializer.validated_data["refresh_token"])
+        )
+
+        audit.record(
+            AuditLog.Action.LOGOUT,
+            request=request,
+            actor=request.user if request.user.is_authenticated else None,
+        )
 
         return Response({"message": "Sesión cerrada correctamente."}, status=status.HTTP_200_OK)
 
@@ -406,13 +566,23 @@ class MeView(APIView):
             ),
         }
 
+    @extend_schema(
+        summary="Perfil del usuario autenticado",
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         return Response(self._serialize(request.user), status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="Actualizar perfil y preferencias",
+        request=UpdatePreferencesSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def patch(self, request):
         serializer = UpdatePreferencesSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         user = request.user
         validated = serializer.validated_data
@@ -425,9 +595,8 @@ class MeView(APIView):
             .exclude(pk=user.pk)
             .exists()
         ):
-            return Response(
-                {"error": "El nombre de usuario ya está en uso."},
-                status=status.HTTP_400_BAD_REQUEST,
+            raise DomainError(
+                "El nombre de usuario ya está en uso.", code="username_taken"
             )
 
         updated_fields = []
@@ -451,25 +620,35 @@ class ChangeEmailRequestView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth_change_email"
 
+    @extend_schema(
+        summary="Solicitar cambio de email",
+        request=ChangeEmailRequestSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         from core.application.use_cases.change_email import RequestEmailChangeUseCase
         from core.tasks import send_email_change_email as send_email_change_task
 
         serializer = ChangeEmailRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            RequestEmailChangeUseCase().execute(
-                user_id=request.user.pk,
-                new_email=v["new_email"],
-                password=v["password"],
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        RequestEmailChangeUseCase().execute(
+            user_id=request.user.pk,
+            new_email=v["new_email"],
+            password=v["password"],
+        )
 
         dispatch_task(send_email_change_task, request.user.pk)
+
+        audit.record(
+            AuditLog.Action.EMAIL_CHANGE_REQUESTED,
+            request=request,
+            actor=request.user,
+            target_type="user",
+            target_id=request.user.pk,
+        )
 
         return Response(
             {
@@ -491,22 +670,35 @@ class ChangeEmailConfirmView(APIView):
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Confirmar cambio de email",
+        request=ChangeEmailConfirmSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         from core.application.use_cases.change_email import ConfirmEmailChangeUseCase
 
         serializer = ChangeEmailConfirmSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            new_email = ConfirmEmailChangeUseCase().execute(
-                serializer.validated_data["token"]
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        user = ConfirmEmailChangeUseCase().execute(serializer.validated_data["token"])
+
+        audit.record(
+            AuditLog.Action.EMAIL_CHANGED,
+            request=request,
+            actor=user,
+            target_type="user",
+            target_id=user.pk,
+        )
 
         return Response(
-            {"message": f"Email actualizado correctamente a {new_email}."},
+            {
+                "message": f"Email actualizado correctamente a {user.email}.",
+                # El email es la credencial de login: al cambiarlo se
+                # revocan las sesiones y el cliente debe volver a entrar.
+                "sessions_revoked": True,
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -514,23 +706,30 @@ class ChangeEmailConfirmView(APIView):
 class VerifyEmailView(APIView):
     """
     GET /api/auth/verify-email/?uid=xxx&token=xxx
-    Confirmar direcciÃ³n de email usando el link enviado por correo.
+    Confirmar dirección de email usando el link enviado por correo.
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Verificar la dirección de email",
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         serializer = VerifyEmailSerializer(data=request.query_params)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            VerifyEmailUseCase().execute(
-                VerifyEmailInputDTO(
-                    token=serializer.validated_data["token"],
-                )
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        user = VerifyEmailUseCase().execute(
+            VerifyEmailInputDTO(token=serializer.validated_data["token"])
+        )
+
+        audit.record(
+            AuditLog.Action.EMAIL_VERIFIED,
+            request=request,
+            actor=user,
+            target_type="user",
+            target_id=user.pk,
+        )
 
         return Response(
             {"message": "Email verificado correctamente."},
@@ -540,22 +739,29 @@ class VerifyEmailView(APIView):
 
 class ResendVerificationEmailView(APIView):
     """
-    POST /api/auth/verify-email/resend/ â€” Reenviar email de verificaciÃ³n.
-    No requiere autenticaciÃ³n para no bloquear el flujo cuando se exige
+    POST /api/auth/verify-email/resend/ — Reenviar email de verificación.
+    No requiere autenticación para no bloquear el flujo cuando se exige
     email verificado antes de permitir login.
     """
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth_resend_verification"
 
+    @extend_schema(
+        summary="Reenviar email de verificación",
+        request=ResendVerificationRequestSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = ResendVerificationRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
-        # Respuesta indistinguible para evitar enumeraciÃ³n de emails.
+        # Respuesta indistinguible para evitar enumeración de emails.
         from core.infrastructure.persistence.models import User as UserModel
-        user = UserModel.objects.filter(email=serializer.validated_data["email"]).first()
+        user = UserModel.objects.filter(
+            email__iexact=serializer.validated_data["email"]
+        ).first()
         if user and not user.is_email_verified:
             dispatch_task(send_verification_email_task, user.pk)
 
@@ -567,17 +773,22 @@ class ResendVerificationEmailView(APIView):
 
 class PasswordResetRequestView(APIView):
     """
-    POST /api/auth/password-reset/ â€” Solicitar link de recuperaciÃ³n por email.
-    No requiere autenticaciÃ³n. No revela si el email existe.
+    POST /api/auth/password-reset/ — Solicitar link de recuperación por email.
+    No requiere autenticación. No revela si el email existe.
     """
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth_password_reset"
 
+    @extend_schema(
+        summary="Solicitar recuperación de contraseña",
+        request=PasswordResetRequestSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         # Enviar email de forma asíncrona (no revela si el email existe)
         dispatch_task(send_password_reset_email_task, serializer.validated_data["email"])
@@ -591,79 +802,118 @@ class PasswordResetRequestView(APIView):
 
 class PasswordResetConfirmView(APIView):
     """
-    POST /api/auth/password-reset/confirm/ â€” Establecer nueva contraseÃ±a con el token del email.
+    POST /api/auth/password-reset/confirm/ — Establecer nueva contraseña con el token del email.
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Confirmar nueva contraseña",
+        request=PasswordResetConfirmSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            ConfirmPasswordResetUseCase().execute(
-                PasswordResetConfirmDTO(
-                    uid=v["uid"],
-                    token=v["token"],
-                    new_password=v["new_password"],
-                )
+        user = ConfirmPasswordResetUseCase().execute(
+            PasswordResetConfirmDTO(
+                uid=v["uid"],
+                token=v["token"],
+                new_password=v["new_password"],
             )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        )
+
+        audit.record(
+            AuditLog.Action.PASSWORD_RESET,
+            request=request,
+            actor=user,
+            target_type="user",
+            target_id=user.pk,
+        )
 
         return Response(
-            {"message": "Contraseña restablecida correctamente."},
+            {
+                "message": (
+                    "Contraseña restablecida correctamente. Se han cerrado "
+                    "todas las sesiones abiertas."
+                ),
+                "sessions_revoked": True,
+            },
             status=status.HTTP_200_OK,
         )
 
 
 class ChangePasswordView(APIView):
     """
-    POST /api/auth/change-password/ â€” Cambiar contraseÃ±a estando autenticado.
-    Requiere la contraseÃ±a actual como verificaciÃ³n adicional.
+    POST /api/auth/change-password/ — Cambiar contraseña estando autenticado.
+    Requiere la contraseña actual como verificación adicional.
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Cambiar la contraseña",
+        request=ChangePasswordSerializer,
+        tags=["Cuenta"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            ChangePasswordUseCase().execute(
-                ChangePasswordDTO(
-                    user_id=request.user.pk,
-                    current_password=v["current_password"],
-                    new_password=v["new_password"],
-                )
+        tokens = ChangePasswordUseCase().execute(
+            ChangePasswordDTO(
+                user_id=request.user.pk,
+                current_password=v["current_password"],
+                new_password=v["new_password"],
             )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        )
+
+        audit.record(
+            AuditLog.Action.PASSWORD_CHANGED,
+            request=request,
+            actor=request.user,
+            target_type="user",
+            target_id=request.user.pk,
+        )
 
         return Response(
-            {"message": "Contraseña cambiada correctamente."},
+            {
+                "message": (
+                    "Contraseña cambiada correctamente. Se han cerrado las "
+                    "sesiones abiertas en otros dispositivos."
+                ),
+                # Tokens nuevos: el resto de sesiones quedan revocadas, pero
+                # el dispositivo que hace el cambio continúa autenticado.
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens["refresh_token"],
+                "sessions_revoked": True,
+            },
             status=status.HTTP_200_OK,
         )
 
 
-# â”€â”€ 2FA Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── 2FA Views ──────────────────────────────────────────────────────
 
 class Setup2FAView(APIView):
     """
-    POST /api/auth/2fa/setup/ â€” Iniciar configuraciÃ³n de 2FA.
+    POST /api/auth/2fa/setup/ — Iniciar configuración de 2FA.
 
     Devuelve el secreto TOTP y el QR en base64 para que el usuario
     escanee con Google Authenticator / Authy.
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Iniciar configuración de 2FA",
+        request=None,
+        tags=["Doble factor"],
+        responses={200: OpenApiResponse(description="Secreto TOTP y QR en base64.")},
+    )
     def post(self, request):
-        try:
-            output_dto = Setup2FAUseCase().execute(request.user.pk)
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        output_dto = Setup2FAUseCase().execute(request.user.pk)
 
         return Response(
             {
@@ -681,24 +931,34 @@ class Setup2FAView(APIView):
 
 class Enable2FAView(APIView):
     """
-    POST /api/auth/2fa/enable/ â€” Activar 2FA confirmando el primer cÃ³digo TOTP.
+    POST /api/auth/2fa/enable/ — Activar 2FA confirmando el primer código TOTP.
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Activar 2FA",
+        request=Enable2FASerializer,
+        tags=["Doble factor"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = Enable2FASerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            recovery_codes = Enable2FAUseCase().execute(
-                Enable2FADTO(
-                    user_id=request.user.pk,
-                    totp_code=serializer.validated_data["totp_code"],
-                )
+        recovery_codes = Enable2FAUseCase().execute(
+            Enable2FADTO(
+                user_id=request.user.pk,
+                totp_code=serializer.validated_data["totp_code"],
             )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        )
+
+        audit.record(
+            AuditLog.Action.TWO_FACTOR_ENABLED,
+            request=request,
+            actor=request.user,
+            target_type="user",
+            target_id=request.user.pk,
+        )
 
         return Response(
             {
@@ -713,24 +973,34 @@ class Enable2FAView(APIView):
 
 class Disable2FAView(APIView):
     """
-    POST /api/auth/2fa/disable/ â€” Desactivar 2FA (requiere cÃ³digo TOTP vigente).
+    POST /api/auth/2fa/disable/ — Desactivar 2FA (requiere código TOTP vigente).
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Desactivar 2FA",
+        request=Disable2FASerializer,
+        tags=["Doble factor"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = Disable2FASerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            Disable2FAUseCase().execute(
-                Disable2FADTO(
-                    user_id=request.user.pk,
-                    totp_code=serializer.validated_data["totp_code"],
-                )
+        Disable2FAUseCase().execute(
+            Disable2FADTO(
+                user_id=request.user.pk,
+                totp_code=serializer.validated_data["totp_code"],
             )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        )
+
+        audit.record(
+            AuditLog.Action.TWO_FACTOR_DISABLED,
+            request=request,
+            actor=request.user,
+            target_type="user",
+            target_id=request.user.pk,
+        )
 
         return Response(
             {"message": "2FA desactivado correctamente."},
@@ -748,29 +1018,58 @@ class Regenerate2FARecoveryCodesView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Regenerar códigos de recuperación",
+        request=Enable2FASerializer,
+        tags=["Doble factor"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         import pyotp
         from core.application.use_cases.recovery_codes import generate_recovery_codes
 
         serializer = Enable2FASerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         user = request.user
         if not user.is_2fa_enabled or not user.totp_secret:
-            return Response(
-                {"error": "2FA no está activado en esta cuenta."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise DomainError("2FA no está activado en esta cuenta.", code="2fa_not_enabled")
+
+        # El segundo factor también se protege por cuenta: son solo seis
+        # dígitos y el límite por IP no frena un ataque distribuido.
+        identity = f"regen:{user.pk}"
+        try:
+            ensure_not_locked(TOTP_POLICY, identity)
+        except AccountLockedError as exc:
+            raise DomainError(
+                str(exc),
+                code="account_locked",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            ) from exc
 
         totp = pyotp.TOTP(user.totp_secret)
         if not totp.verify(serializer.validated_data["totp_code"], valid_window=1):
-            return Response(
-                {"error": "Código TOTP incorrecto."},
-                status=status.HTTP_400_BAD_REQUEST,
+            register_failure(TOTP_POLICY, identity)
+            audit.record(
+                AuditLog.Action.TWO_FACTOR_FAILURE,
+                request=request,
+                actor=user,
+                outcome=AuditLog.Outcome.FAILURE,
+                reason="recovery_codes_regeneration",
             )
+            raise DomainError("Código TOTP incorrecto.", code="invalid_totp")
 
+        reset_login_attempts(TOTP_POLICY, identity)
         codes = generate_recovery_codes(user)
+
+        audit.record(
+            AuditLog.Action.RECOVERY_CODES_REGENERATED,
+            request=request,
+            actor=user,
+            target_type="user",
+            target_id=user.pk,
+        )
+
         return Response(
             {
                 "message": "Códigos de recuperación regenerados. Los anteriores ya no son válidos.",
@@ -782,21 +1081,46 @@ class Regenerate2FARecoveryCodesView(APIView):
 
 class Verify2FALoginView(APIView):
     """
-    POST /api/auth/2fa/login/ â€” Segunda fase del login con 2FA.
+    POST /api/auth/2fa/login/ — Segunda fase del login con 2FA.
 
-    Recibe el pre_auth_token (obtenido del login normal) y el cÃ³digo TOTP.
-    Si ambos son vÃ¡lidos, devuelve los tokens JWT completos.
+    Recibe el pre_auth_token (obtenido del login normal) y el código TOTP.
+    Si ambos son válidos, devuelve los tokens JWT completos.
     """
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "auth_2fa"
 
+    @extend_schema(
+        summary="Segundo paso del login con 2FA",
+        request=Verify2FALoginSerializer,
+        tags=["Doble factor"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = Verify2FALoginSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
+
+        # El pre_auth_token identifica la cuenta antes de validar el
+        # segundo factor: sirve para contar los intentos por cuenta, que
+        # es lo que realmente frena la fuerza bruta sobre seis dígitos.
+        identity = _pre_auth_identity(v["pre_auth_token"])
+        try:
+            ensure_not_locked(TOTP_POLICY, identity)
+        except AccountLockedError as exc:
+            audit.record(
+                AuditLog.Action.LOGIN_BLOCKED,
+                request=request,
+                outcome=AuditLog.Outcome.FAILURE,
+                reason="2fa_attempts",
+            )
+            raise DomainError(
+                str(exc),
+                code="account_locked",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            ) from exc
+
         try:
             output_dto = Verify2FALoginUseCase().execute(
                 Verify2FALoginDTO(
@@ -806,7 +1130,36 @@ class Verify2FALoginView(APIView):
                 )
             )
         except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
+            register_failure(TOTP_POLICY, identity)
+            audit.record(
+                AuditLog.Action.TWO_FACTOR_FAILURE,
+                request=request,
+                outcome=AuditLog.Outcome.FAILURE,
+                target_type="user",
+                target_id=identity,
+            )
+            raise DomainError(
+                str(exc),
+                code="invalid_second_factor",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            ) from exc
+
+        reset_login_attempts(TOTP_POLICY, identity)
+        audit.record(
+            AuditLog.Action.TWO_FACTOR_SUCCESS,
+            request=request,
+            actor_email=output_dto.email,
+            target_type="user",
+            target_id=output_dto.user_id,
+        )
+        audit.record(
+            AuditLog.Action.LOGIN_SUCCESS,
+            request=request,
+            actor_email=output_dto.email,
+            target_type="user",
+            target_id=output_dto.user_id,
+            second_factor=True,
+        )
 
         return Response(
             {
@@ -821,18 +1174,37 @@ class Verify2FALoginView(APIView):
         )
 
 
-# â”€â”€ Assets Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _pre_auth_identity(pre_auth_token: str) -> str:
+    """
+    Extraer el identificador de cuenta de un pre_auth_token.
+
+    Se usa solo como clave del contador de intentos, así que un token
+    ilegible no es un error: se cae a una clave derivada del propio
+    token, que sigue acotando la fuerza bruta de quien lo esté enviando.
+    """
+    try:
+        return str(PreAuthToken(pre_auth_token).get("user_id") or "")
+    except Exception:
+        return f"unknown:{pre_auth_token[:32]}"
+
+
+# ── Assets Views ───────────────────────────────────────────────────
 
 class AssetListView(APIView):
     """
-    GET /api/assets â€” Listar todos los activos criptogrÃ¡ficos.
-    Requiere autenticaciÃ³n JWT (Authorization: Bearer <token>).
-    CachÃ© Redis 60 s: los activos los actualiza Celery; no necesitamos recargar la BD en cada request.
+    GET /api/assets — Listar todos los activos criptográficos.
+    Requiere autenticación JWT (Authorization: Bearer <token>).
+    Caché Redis 60 s: los activos los actualiza Celery; no necesitamos recargar la BD en cada request.
     """
     permission_classes = [IsAuthenticated]
     _CACHE_KEY = "asset_list"
     _CACHE_TTL = 60  # 60 segundos
 
+    @extend_schema(
+        summary="Listar activos del catálogo",
+        tags=["Mercado"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         cached = cache.get(self._CACHE_KEY)
         if cached is not None:
@@ -872,6 +1244,11 @@ class AssetSparklinesView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Serie de 7 días por símbolo",
+        tags=["Mercado"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         from datetime import timedelta
         from django.utils import timezone
@@ -938,19 +1315,24 @@ class AssetSparklinesView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
-# â”€â”€ Analysis Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Analysis Views ─────────────────────────────────────────────────
 
 class RunAnalysisView(APIView):
     """
-    POST /api/analysis/run â€” Solicitar ejecuciÃ³n de anÃ¡lisis tÃ©cnico.
-    Requiere autenticaciÃ³n JWT.
+    POST /api/analysis/run — Solicitar ejecución de análisis técnico.
+    Requiere autenticación JWT.
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Registrar una ejecución de análisis",
+        request=AnalysisRequestSerializer,
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = AnalysisRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         validated = serializer.validated_data
         use_case = RunAnalysisUseCase()
@@ -965,7 +1347,7 @@ class RunAnalysisView(APIView):
         return Response(out_serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
-# â”€â”€ Market Intelligence Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Market Intelligence Views ─────────────────────────────────────
 
 class MarketOverviewView(APIView):
     """
@@ -978,6 +1360,11 @@ class MarketOverviewView(APIView):
     _CACHE_KEY = "market_overview"
     _CACHE_TTL = 300  # 5 minutos
 
+    @extend_schema(
+        summary="Resumen global del mercado",
+        tags=["Mercado"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         cached = cache.get(self._CACHE_KEY)
         if cached is not None:
@@ -1000,6 +1387,11 @@ class FxRatesView(APIView):
     _CACHE_KEY = "fx_rates"
     _CACHE_TTL = 3600  # 1 hora
 
+    @extend_schema(
+        summary="Tasas de conversión USD→EUR/GBP",
+        tags=["Mercado"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         from core.application.use_cases.get_fx_rates import GetFxRatesUseCase
 
@@ -1025,12 +1417,16 @@ class AssetOhlcvView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Velas OHLCV de un activo",
+        tags=["Mercado"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request, symbol: str):
         from core.application.use_cases.get_asset_ohlcv import OhlcvNotAvailableError
 
         query_serializer = OhlcvQuerySerializer(data=request.query_params)
-        if not query_serializer.is_valid():
-            return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        query_serializer.is_valid(raise_exception=True)
 
         q = query_serializer.validated_data
 
@@ -1055,16 +1451,20 @@ class AssetOhlcvView(APIView):
 
 class BlockchainMetricsView(APIView):
     """
-    GET /api/blockchain/metrics/ â€” MÃ©tricas on-chain filtrables.
-    Requiere autenticaciÃ³n JWT.
+    GET /api/blockchain/metrics/ — Métricas on-chain filtrables.
+    Requiere autenticación JWT.
     """
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Serie histórica de una métrica on-chain",
+        tags=["On-chain"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         query_serializer = OnChainQuerySerializer(data=request.query_params)
-        if not query_serializer.is_valid():
-            return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        query_serializer.is_valid(raise_exception=True)
 
         q = query_serializer.validated_data
         result = GetOnChainMetricsUseCase().execute(
@@ -1102,6 +1502,11 @@ class MultiChainStatsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Estadísticas on-chain actuales",
+        tags=["On-chain"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         symbol = request.query_params.get("symbol", "ETH").upper()
         result = GetMultiChainStatsUseCase().execute(symbol=symbol)
@@ -1109,16 +1514,20 @@ class MultiChainStatsView(APIView):
 
 class NewsFeedView(APIView):
     """
-    GET /api/news/ â€” Feed de noticias con filtro de sentimiento.
-    Requiere autenticaciÃ³n JWT.
+    GET /api/news/ — Feed de noticias con filtro de sentimiento.
+    Requiere autenticación JWT.
     """
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Feed de noticias con filtro de sentimiento",
+        tags=["Noticias"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         query_serializer = NewsQuerySerializer(data=request.query_params)
-        if not query_serializer.is_valid():
-            return Response(query_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        query_serializer.is_valid(raise_exception=True)
 
         q = query_serializer.validated_data
         result = GetNewsFeedUseCase().execute(
@@ -1136,10 +1545,10 @@ class NewsFeedView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-# â”€â”€ Mock data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Mock data ──────────────────────────────────────────────────────
 
 def _get_mock_assets() -> list:
-    """Datos de ejemplo para desarrollo cuando la BD estÃ¡ vacÃ­a."""
+    """Datos de ejemplo para desarrollo cuando la BD está vacía."""
     return [
         {
             "id": 1, "symbol": "BTC", "name": "Bitcoin",
@@ -1163,28 +1572,66 @@ def _get_mock_assets() -> list:
 
 
 class DeleteAccountView(APIView):
+    """
+    DELETE /api/auth/delete-account/ — Eliminar la cuenta permanentemente.
+
+    Exige la contraseña actual: es una acción irreversible y no debe
+    poder ejecutarla quien solo haya conseguido una sesión.
+    """
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Eliminar la cuenta permanentemente",
+        request=DeleteAccountSerializer,
+        responses={
+            204: OpenApiResponse(description="Cuenta eliminada."),
+            400: OpenApiResponse(description="Contraseña incorrecta."),
+        },
+        tags=["Cuenta"],
+    )
     def delete(self, request):
         serializer = DeleteAccountSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         user = authenticate(
             request,
             username=request.user.email,
-            password=serializer.validated_data['password'],
+            password=serializer.validated_data["password"],
         )
         if user is None:
-            return Response({'error': 'Contraseña incorrecta.'}, status=status.HTTP_400_BAD_REQUEST)
+            audit.record(
+                AuditLog.Action.ACCOUNT_DELETED,
+                request=request,
+                actor=request.user,
+                outcome=AuditLog.Outcome.FAILURE,
+                reason="wrong_password",
+            )
+            raise DomainError("Contraseña incorrecta.", code="invalid_password")
+
+        # La traza se escribe ANTES del borrado: después, el usuario ya no
+        # existe y `actor` quedaría a null. El email queda conservado en
+        # `actor_email`, que es justo para lo que se denormalizó.
+        deleted_email = request.user.email
+        deleted_id = request.user.pk
 
         repo = DjangoUserRepository()
-        use_case = DeleteUserAccountUseCase(repo)
-        result = use_case.execute(request.user.id)
+        result = DeleteUserAccountUseCase(repo).execute(deleted_id)
 
-        if result.get('success'):
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response({'error': result.get('error')}, status=status.HTTP_400_BAD_REQUEST)
+        if not result.get("success"):
+            raise DomainError(
+                result.get("error") or "No se ha podido eliminar la cuenta.",
+                code="account_deletion_failed",
+            )
+
+        audit.record(
+            AuditLog.Action.ACCOUNT_DELETED,
+            request=request,
+            actor_email=deleted_email,
+            target_type="user",
+            target_id=deleted_id,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ── Analysis avanzado Views ────────────────────────────────────────
@@ -1197,10 +1644,15 @@ class CalculateAnalysisView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Calcular un indicador técnico",
+        request=CalculateAnalysisSerializer,
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = CalculateAnalysisSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
         use_case = RunAnalysisUseCase()
@@ -1220,10 +1672,15 @@ class SignalsDashboardView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Panel multi-indicador con veredicto",
+        request=SignalsRequestSerializer,
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = SignalsRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
         result = GetSignalsDashboardUseCase().execute(
@@ -1241,10 +1698,15 @@ class PredictPriceView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Predicción ML de dirección de precio",
+        request=PredictionRequestSerializer,
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = PredictionRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
         result = PredictPriceUseCase().execute(
@@ -1263,10 +1725,15 @@ class DetectPatternsView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Detectar patrones de velas",
+        request=PatternsRequestSerializer,
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = PatternsRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
         result = DetectPatternsUseCase().execute(
@@ -1284,10 +1751,15 @@ class RunBacktestView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Backtesting de una estrategia",
+        request=BacktestRequestSerializer,
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = BacktestRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
         result = RunBacktestUseCase().execute(
@@ -1312,6 +1784,11 @@ class AssetDetailInfoView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Ficha de proyecto de un activo",
+        tags=["Mercado"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request, symbol: str):
         from core.infrastructure.external_apis.coingecko_client import (
             CoinGeckoClient,
@@ -1381,6 +1858,11 @@ class AvailableStrategiesView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Estrategias disponibles para backtesting",
+        tags=["Análisis"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         strategies = RunBacktestUseCase.get_available_strategies()
         return Response(strategies, status=status.HTTP_200_OK)
@@ -1394,6 +1876,11 @@ class PortfolioView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Resumen del portfolio con PnL",
+        tags=["Portfolio"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         summary = GetPortfolioUseCase().execute(request.user)
         positions_data = [vars(p) for p in summary.positions]
@@ -1421,10 +1908,14 @@ class TradeListView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Historial de operaciones",
+        tags=["Portfolio"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         query_ser = TradeHistoryQuerySerializer(data=request.query_params)
-        if not query_ser.is_valid():
-            return Response(query_ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        query_ser.is_valid(raise_exception=True)
         q = query_ser.validated_data
 
         trades = GetTradeHistoryUseCase().execute(
@@ -1438,26 +1929,28 @@ class TradeListView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+        summary="Registrar una operación",
+        request=AddTradeSerializer,
+        tags=["Portfolio"],
+        responses={201: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = AddTradeSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            trade = AddTradeUseCase().execute(
-                user=request.user,
-                dto=AddTradeInputDTO(
-                    asset_symbol=v["asset_symbol"],
-                    trade_type=v["trade_type"],
-                    quantity=float(v["quantity"]),
-                    price_usd=float(v["price_usd"]),
-                    executed_at=v["executed_at"].isoformat(),
-                    notes=v.get("notes", ""),
-                ),
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        trade = AddTradeUseCase().execute(
+            user=request.user,
+            dto=AddTradeInputDTO(
+                asset_symbol=v["asset_symbol"],
+                trade_type=v["trade_type"],
+                quantity=v["quantity"],
+                price_usd=v["price_usd"],
+                executed_at=v["executed_at"].isoformat(),
+                notes=v.get("notes", ""),
+            ),
+        )
 
         return Response(
             TradeOutputSerializer(vars(trade)).data,
@@ -1471,11 +1964,18 @@ class TradeDetailView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Eliminar una operación",
+        tags=["Portfolio"],
+        responses={204: OpenApiResponse(description="Recurso eliminado.")},
+    )
     def delete(self, request, trade_id: int):
         try:
             DeleteTradeUseCase().execute(user=request.user, trade_id=trade_id)
         except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                str(exc), code="not_found", status_code=status.HTTP_404_NOT_FOUND
+            ) from exc
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1488,6 +1988,11 @@ class AlertListView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Listar alertas de precio",
+        tags=["Alertas"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         active_only = request.query_params.get("active_only", "false").lower() == "true"
         alerts = ListAlertsUseCase().execute(request.user, active_only=active_only)
@@ -1496,24 +2001,26 @@ class AlertListView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+        summary="Crear una alerta de precio",
+        request=CreateAlertSerializer,
+        tags=["Alertas"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = CreateAlertSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            alert = CreateAlertUseCase().execute(
-                user=request.user,
-                dto=CreateAlertInputDTO(
-                    asset_symbol=v["asset_symbol"],
-                    condition=v["condition"],
-                    threshold_price=float(v["threshold_price"]),
-                    notes=v.get("notes", ""),
-                ),
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        alert = CreateAlertUseCase().execute(
+            user=request.user,
+            dto=CreateAlertInputDTO(
+                asset_symbol=v["asset_symbol"],
+                condition=v["condition"],
+                threshold_price=v["threshold_price"],
+                notes=v.get("notes", ""),
+            ),
+        )
 
         return Response(
             AlertOutputSerializer(vars(alert)).data,
@@ -1528,11 +2035,18 @@ class AlertDetailView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Eliminar una alerta",
+        tags=["Alertas"],
+        responses={204: OpenApiResponse(description="Recurso eliminado.")},
+    )
     def delete(self, request, alert_id: int):
         try:
             DeleteAlertUseCase().execute(user=request.user, alert_id=alert_id)
         except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                str(exc), code="not_found", status_code=status.HTTP_404_NOT_FOUND
+            ) from exc
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1542,11 +2056,19 @@ class AlertToggleView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Activar o desactivar una alerta",
+        request=None,
+        tags=["Alertas"],
+        responses={200: OpenApiResponse(description="Alerta con su nuevo estado.")},
+    )
     def patch(self, request, alert_id: int):
         try:
             alert = ToggleAlertUseCase().execute(user=request.user, alert_id=alert_id)
         except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                str(exc), code="not_found", status_code=status.HTTP_404_NOT_FOUND
+            ) from exc
         return Response(
             AlertOutputSerializer(vars(alert)).data,
             status=status.HTTP_200_OK,
@@ -1562,10 +2084,14 @@ class PositionListView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Listar posiciones",
+        tags=["Portfolio"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         query_ser = PositionsQuerySerializer(data=request.query_params)
-        if not query_ser.is_valid():
-            return Response(query_ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        query_ser.is_valid(raise_exception=True)
 
         status_filter = query_ser.validated_data.get("status") or None
         summary = GetPositionsUseCase().execute(user=request.user, status=status_filter)
@@ -1575,27 +2101,29 @@ class PositionListView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+        summary="Abrir una posición",
+        request=OpenPositionSerializer,
+        tags=["Portfolio"],
+        responses={201: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = OpenPositionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            position = OpenPositionUseCase().execute(
-                user=request.user,
-                dto=OpenPositionInputDTO(
-                    asset_symbol=v["asset_symbol"],
-                    direction=v["direction"],
-                    quantity=float(v["quantity"]),
-                    entry_price=float(v["entry_price"]),
-                    opened_at=v["opened_at"].isoformat(),
-                    label=v.get("label", ""),
-                    notes=v.get("notes", ""),
-                ),
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        position = OpenPositionUseCase().execute(
+            user=request.user,
+            dto=OpenPositionInputDTO(
+                asset_symbol=v["asset_symbol"],
+                direction=v["direction"],
+                quantity=v["quantity"],
+                entry_price=v["entry_price"],
+                opened_at=v["opened_at"].isoformat(),
+                label=v.get("label", ""),
+                notes=v.get("notes", ""),
+            ),
+        )
 
         return Response(
             PositionOutputSerializer(vars(position)).data,
@@ -1610,15 +2138,23 @@ class PositionDetailView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Renombrar una posición",
+        request=UpdatePositionSerializer,
+        tags=["Portfolio"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def patch(self, request, position_id: int):
         serializer = UpdatePositionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         try:
             pos = PositionModel.objects.get(pk=position_id, user=request.user)
         except PositionModel.DoesNotExist:
-            return Response({"error": "Posición no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                "Posición no encontrada.", code="not_found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         pos.label = serializer.validated_data["label"]
         pos.save(update_fields=["label", "updated_at"])
@@ -1629,11 +2165,19 @@ class PositionDetailView(APIView):
         dto = _build_position_dto(pos, current_price)
         return Response(PositionOutputSerializer(vars(dto)).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        summary="Eliminar una posición sin trades",
+        tags=["Portfolio"],
+        responses={204: OpenApiResponse(description="Recurso eliminado.")},
+    )
     def delete(self, request, position_id: int):
         try:
             pos = PositionModel.objects.get(pk=position_id, user=request.user)
         except PositionModel.DoesNotExist:
-            return Response({"error": "Posición no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                "Posición no encontrada.", code="not_found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         if pos.trades.exists():
             return Response(
@@ -1650,25 +2194,27 @@ class PositionAddView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Ampliar una posición (AVCO)",
+        request=AddToPositionSerializer,
+        tags=["Portfolio"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request, position_id: int):
         serializer = AddToPositionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            position = ScalePositionUseCase().execute(
-                user=request.user,
-                position_id=position_id,
-                dto=AddToPositionInputDTO(
-                    quantity=float(v["quantity"]),
-                    entry_price=float(v["entry_price"]),
-                    executed_at=v["executed_at"].isoformat(),
-                    notes=v.get("notes", ""),
-                ),
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        position = ScalePositionUseCase().execute(
+            user=request.user,
+            position_id=position_id,
+            dto=AddToPositionInputDTO(
+                quantity=v["quantity"],
+                entry_price=v["entry_price"],
+                executed_at=v["executed_at"].isoformat(),
+                notes=v.get("notes", ""),
+            ),
+        )
 
         return Response(
             PositionOutputSerializer(vars(position)).data,
@@ -1682,25 +2228,27 @@ class PositionCloseView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Cerrar una posición total o parcialmente",
+        request=ClosePositionSerializer,
+        tags=["Portfolio"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request, position_id: int):
         serializer = ClosePositionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         v = serializer.validated_data
-        try:
-            position = ClosePositionUseCase().execute(
-                user=request.user,
-                position_id=position_id,
-                dto=ClosePositionInputDTO(
-                    close_quantity=float(v["close_quantity"]),
-                    close_price=float(v["close_price"]),
-                    executed_at=v["executed_at"].isoformat(),
-                    notes=v.get("notes", ""),
-                ),
-            )
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        position = ClosePositionUseCase().execute(
+            user=request.user,
+            position_id=position_id,
+            dto=ClosePositionInputDTO(
+                close_quantity=v["close_quantity"],
+                close_price=v["close_price"],
+                executed_at=v["executed_at"].isoformat(),
+                notes=v.get("notes", ""),
+            ),
+        )
 
         return Response(
             PositionOutputSerializer(vars(position)).data,
@@ -1717,6 +2265,11 @@ class WatchlistView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Listar la watchlist del usuario",
+        tags=["Watchlist"],
+        responses={200: OpenApiResponse(description="Operación completada.")},
+    )
     def get(self, request):
         entries = (
             UserWatchlistModel.objects
@@ -1741,16 +2294,24 @@ class WatchlistView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+        summary="Añadir un activo a la watchlist",
+        request=WatchlistAddSerializer,
+        tags=["Watchlist"],
+        responses={201: OpenApiResponse(description="Operación completada.")},
+    )
     def post(self, request):
         serializer = WatchlistAddSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         symbol = serializer.validated_data["symbol"].upper()
         try:
             asset = CryptoAssetModel.objects.get(symbol=symbol)
         except CryptoAssetModel.DoesNotExist:
-            return Response({"error": f"Activo '{symbol}' no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                f"Activo '{symbol}' no encontrado.", code="not_found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         _, created = UserWatchlistModel.objects.get_or_create(
             user=request.user,
@@ -1768,11 +2329,19 @@ class WatchlistItemView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Quitar un activo de la watchlist",
+        tags=["Watchlist"],
+        responses={204: OpenApiResponse(description="Recurso eliminado.")},
+    )
     def delete(self, request, symbol: str):
         deleted, _ = UserWatchlistModel.objects.filter(
             user=request.user,
             asset__symbol=symbol.upper(),
         ).delete()
         if not deleted:
-            return Response({"error": "El activo no está en la watchlist."}, status=status.HTTP_404_NOT_FOUND)
+            raise DomainError(
+                "El activo no está en la watchlist.", code="not_found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
         return Response(status=status.HTTP_204_NO_CONTENT)

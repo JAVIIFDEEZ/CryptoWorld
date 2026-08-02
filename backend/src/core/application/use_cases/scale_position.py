@@ -31,8 +31,10 @@ class ScalePositionUseCase:
         if position.status == "CLOSED":
             raise ValueError("No se puede ampliar una posición ya cerrada.")
 
-        add_qty = Decimal(str(dto.quantity))
-        add_price = Decimal(str(dto.entry_price))
+        # El DTO ya transporta Decimal (el serializer valida con
+        # DecimalField); no hay conversion desde float que redondee.
+        add_qty = dto.quantity
+        add_price = dto.entry_price
 
         if add_qty <= 0:
             raise ValueError("La cantidad a añadir debe ser mayor que cero.")

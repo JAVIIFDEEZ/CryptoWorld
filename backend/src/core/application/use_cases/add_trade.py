@@ -31,8 +31,10 @@ class AddTradeUseCase:
         except CryptoAsset.DoesNotExist:
             raise ValueError(f"Activo '{symbol}' no encontrado en el catálogo.")
 
-        qty = Decimal(str(dto.quantity))
-        price = Decimal(str(dto.price_usd))
+        # El DTO ya transporta Decimal (el serializer valida con
+        # DecimalField); no hay conversion desde float que redondee.
+        qty = dto.quantity
+        price = dto.price_usd
         total = qty * price
 
         if qty <= 0:

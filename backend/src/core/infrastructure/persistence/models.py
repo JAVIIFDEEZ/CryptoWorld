@@ -81,6 +81,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="True cuando el usuario finaliza el setup de 2FA.",
     )
+    credentials_changed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Momento del último cambio de credenciales (contraseña, email o "
+            "doble factor). Todo JWT emitido antes de esta marca se rechaza: "
+            "es lo que hace que cambiar la contraseña expulse de verdad a "
+            "las sesiones abiertas."
+        ),
+    )
 
     # ── Preferencias de cuenta ──────────────────────────────────────
     class Currency(models.TextChoices):
@@ -116,6 +126,85 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.email
+
+
+class AuditLog(models.Model):
+    """
+    Traza inmutable de los eventos relevantes para la seguridad.
+
+    Registra quién hizo qué, cuándo, desde dónde y con qué resultado:
+    inicios de sesión (con y sin éxito), cambios de credenciales, altas y
+    bajas de doble factor, y toda acción del panel de administración.
+
+    Decisiones de diseño:
+      - `actor` es SET_NULL y se guarda además `actor_email`: la traza de
+        un usuario debe sobrevivir al borrado de su cuenta, que es
+        justamente el momento en que más falta hace.
+      - No se almacena nunca el secreto involucrado (contraseña, código
+        TOTP, token); solo el hecho de que la operación ocurrió.
+      - `metadata` recoge contexto adicional no sensible en JSON.
+    """
+
+    class Action(models.TextChoices):
+        LOGIN_SUCCESS = "login.success", "Inicio de sesión correcto"
+        LOGIN_FAILURE = "login.failure", "Inicio de sesión fallido"
+        LOGIN_BLOCKED = "login.blocked", "Inicio de sesión bloqueado"
+        LOGOUT = "logout", "Cierre de sesión"
+        TWO_FACTOR_CHALLENGE = "2fa.challenge", "Segundo factor solicitado"
+        TWO_FACTOR_SUCCESS = "2fa.success", "Segundo factor superado"
+        TWO_FACTOR_FAILURE = "2fa.failure", "Segundo factor fallido"
+        TWO_FACTOR_ENABLED = "2fa.enabled", "Doble factor activado"
+        TWO_FACTOR_DISABLED = "2fa.disabled", "Doble factor desactivado"
+        RECOVERY_CODES_REGENERATED = "2fa.recovery_regenerated", "Códigos de recuperación regenerados"
+        REGISTER = "account.register", "Registro de cuenta"
+        EMAIL_VERIFIED = "account.email_verified", "Email verificado"
+        PASSWORD_CHANGED = "account.password_changed", "Contraseña cambiada"
+        PASSWORD_RESET = "account.password_reset", "Contraseña restablecida"
+        EMAIL_CHANGE_REQUESTED = "account.email_change_requested", "Cambio de email solicitado"
+        EMAIL_CHANGED = "account.email_changed", "Email cambiado"
+        ACCOUNT_DELETED = "account.deleted", "Cuenta eliminada"
+        ADMIN_USER_CREATED = "admin.user_created", "Usuario administrador creado"
+        ADMIN_USER_UPDATED = "admin.user_updated", "Usuario modificado por un administrador"
+        ADMIN_MARKET_SYNC = "admin.market_sync", "Sincronización de mercado forzada"
+
+    class Outcome(models.TextChoices):
+        SUCCESS = "SUCCESS", "Correcto"
+        FAILURE = "FAILURE", "Fallido"
+
+    actor = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_entries",
+    )
+    # Copia del identificador en el momento del evento: la traza debe
+    # seguir siendo legible aunque la cuenta se borre o cambie de email.
+    actor_email = models.EmailField(blank=True, default="")
+    action = models.CharField(max_length=48, choices=Action.choices, db_index=True)
+    outcome = models.CharField(
+        max_length=8, choices=Outcome.choices, default=Outcome.SUCCESS
+    )
+    target_type = models.CharField(max_length=48, blank=True, default="")
+    target_id = models.CharField(max_length=64, blank=True, default="")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=400, blank=True, default="")
+    request_id = models.CharField(max_length=64, blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "audit_log"
+        verbose_name = "Registro de auditoría"
+        verbose_name_plural = "Registros de auditoría"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["actor", "-created_at"], name="idx_audit_actor_created"),
+            models.Index(fields=["action", "-created_at"], name="idx_audit_action_created"),
+        ]
+
+    def __str__(self) -> str:
+        return f"[{self.created_at:%Y-%m-%d %H:%M:%S}] {self.action} {self.outcome} {self.actor_email}"
 
 
 class TwoFactorRecoveryCode(models.Model):
@@ -214,6 +303,12 @@ class MarketDataSnapshot(models.Model):
         verbose_name = "Snapshot de Mercado"
         verbose_name_plural = "Snapshots de Mercado"
         ordering = ["-timestamp"]
+        indexes = [
+            # La consulta de sparklines filtra por activo y ventana temporal;
+            # sin este índice compuesto degenera en un recorrido secuencial
+            # sobre una tabla que crece ~144 filas/día por activo.
+            models.Index(fields=["asset", "-timestamp"], name="idx_snapshot_asset_ts"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.asset.symbol} @ {self.timestamp}"
@@ -331,6 +426,9 @@ class Position(models.Model):
         verbose_name = "Posición"
         verbose_name_plural = "Posiciones"
         ordering = ["-opened_at"]
+        indexes = [
+            models.Index(fields=["user", "status", "-opened_at"], name="idx_position_user_status"),
+        ]
 
     def __str__(self) -> str:
         return (
@@ -392,6 +490,10 @@ class TradeHistory(models.Model):
         verbose_name = "Operación"
         verbose_name_plural = "Historial de Operaciones"
         ordering = ["-executed_at"]
+        indexes = [
+            models.Index(fields=["user", "-executed_at"], name="idx_trade_user_executed"),
+            models.Index(fields=["position"], name="idx_trade_position"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.user.email} — {self.trade_type} {self.quantity} {self.asset.symbol} @ {self.price_usd}"
@@ -434,6 +536,12 @@ class PriceAlert(models.Model):
         verbose_name = "Alerta de Precio"
         verbose_name_plural = "Alertas de Precio"
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="idx_alert_user_created"),
+            # El worker de Celery barre cada 2 min las alertas pendientes:
+            # este índice es el que evita escanear toda la tabla.
+            models.Index(fields=["is_active", "is_triggered"], name="idx_alert_pending"),
+        ]
 
     def __str__(self) -> str:
         return (

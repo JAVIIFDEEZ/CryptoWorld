@@ -59,16 +59,18 @@ class TestAdminProtections:
         assert response.status_code == 403
 
     @pytest.mark.integration
-    def test_admin_list_includes_date_joined(self, admin_client):
+    def test_admin_list_is_paginated(self, admin_client):
+        """El listado va paginado: nunca vuelca la tabla entera."""
         response = admin_client.get("/api/admin/users/")
         assert response.status_code == 200
-        assert "date_joined" in response.data[0]
+        assert set(["count", "page", "page_size", "results"]) <= set(response.data)
+        assert "date_joined" in response.data["results"][0]
 
     @pytest.mark.integration
     def test_admin_search_filters_by_email(self, admin_client, test_user):
         response = admin_client.get("/api/admin/users/", {"search": "test@example"})
         assert response.status_code == 200
-        emails = [u["email"] for u in response.data]
+        emails = [u["email"] for u in response.data["results"]]
         assert "test@example.com" in emails
         assert "admin@example.com" not in emails
 
@@ -192,8 +194,8 @@ class Test2FARecoveryCodes:
 class TestHealthComponents:
 
     @pytest.mark.integration
-    def test_health_reports_components(self, api_client, db):
-        response = api_client.get("/api/health/")
+    def test_health_reports_components(self, admin_client, db):
+        response = admin_client.get("/api/health/")
         assert response.status_code == 200
         components = response.data["components"]
         assert components["database"] == "ok"

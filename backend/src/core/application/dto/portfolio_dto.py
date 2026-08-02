@@ -3,6 +3,7 @@ portfolio_dto.py — DTOs para el módulo de Portfolio.
 """
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Optional
 from datetime import datetime
 
@@ -12,8 +13,10 @@ class AddTradeInputDTO:
     """Datos para registrar una operación (compra o venta)."""
     asset_symbol: str
     trade_type: str          # "BUY" | "SELL"
-    quantity: float
-    price_usd: float
+    # Decimal y no float: las cantidades llegan con hasta 18 decimales y
+    # un float de doble precision no las representa exactamente.
+    quantity: Decimal
+    price_usd: Decimal
     executed_at: str         # ISO 8601 string
     notes: str = ""
 
@@ -73,8 +76,8 @@ class OpenPositionInputDTO:
     """Datos para abrir una nueva posición (LONG o SHORT)."""
     asset_symbol: str
     direction: str        # "LONG" | "SHORT"
-    quantity: float
-    entry_price: float
+    quantity: Decimal
+    entry_price: Decimal
     opened_at: str        # ISO 8601 string
     label: str = ""
     notes: str = ""
@@ -83,8 +86,8 @@ class OpenPositionInputDTO:
 @dataclass(frozen=True)
 class ClosePositionInputDTO:
     """Datos para cerrar parcial o totalmente una posición."""
-    close_quantity: float
-    close_price: float
+    close_quantity: Decimal
+    close_price: Decimal
     executed_at: str      # ISO 8601 string
     notes: str = ""
 
@@ -92,8 +95,8 @@ class ClosePositionInputDTO:
 @dataclass(frozen=True)
 class AddToPositionInputDTO:
     """Datos para ampliar una posición existente (escalar entrada, recalcula AVCO)."""
-    quantity: float
-    entry_price: float
+    quantity: Decimal
+    entry_price: Decimal
     executed_at: str      # ISO 8601 string
     notes: str = ""
 

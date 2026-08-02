@@ -76,8 +76,10 @@ class OpenPositionUseCase:
         if dto.direction not in ("LONG", "SHORT"):
             raise ValueError("La dirección debe ser 'LONG' o 'SHORT'.")
 
-        qty = Decimal(str(dto.quantity))
-        price = Decimal(str(dto.entry_price))
+        # El DTO ya transporta Decimal (el serializer valida con
+        # DecimalField); no hay conversion desde float que redondee.
+        qty = dto.quantity
+        price = dto.entry_price
 
         try:
             opened_at = datetime.fromisoformat(dto.opened_at)

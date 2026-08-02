@@ -1,4 +1,4 @@
-﻿/**
+/**
  * pages/PortfolioPage.tsx - Gestión de portfolio con posiciones explícitas.
  *
  * Modelo Hedge: cada posición es independiente (LONG o SHORT).

@@ -13,6 +13,12 @@ from core.application.dto.auth_dto import VerifyEmailInputDTO
 # Tiempo de validez del token: 3 días en segundos
 VERIFICATION_MAX_AGE = 60 * 60 * 24 * 3
 
+# Sal específica del propósito. Sin ella el token se firma con la sal por
+# defecto de django.core.signing, compartida con cualquier otro uso de
+# TimestampSigner del proyecto: un token emitido para un fin serviría
+# para otro. Cada propósito criptográfico debe tener su propia sal.
+EMAIL_VERIFICATION_SALT = "core.email-verification"
+
 
 class VerifyEmailUseCase:
     """
@@ -26,13 +32,17 @@ class VerifyEmailUseCase:
     Expira a los 3 días (VERIFICATION_MAX_AGE).
     """
 
-    def execute(self, dto: VerifyEmailInputDTO) -> None:
+    def execute(self, dto: VerifyEmailInputDTO) -> UserModel:
         """
         Marca el email del usuario como verificado.
 
-        Lanza ValueError si el token es inválido o ha expirado.
+        Returns:
+            El usuario verificado, para poder auditarlo.
+
+        Raises:
+            ValueError: si el token es inválido o ha expirado.
         """
-        signer = signing.TimestampSigner()
+        signer = signing.TimestampSigner(salt=EMAIL_VERIFICATION_SALT)
         try:
             user_pk = signer.unsign(dto.token, max_age=VERIFICATION_MAX_AGE)
         except signing.SignatureExpired:
@@ -47,3 +57,4 @@ class VerifyEmailUseCase:
 
         user.is_email_verified = True
         user.save(update_fields=["is_email_verified"])
+        return user

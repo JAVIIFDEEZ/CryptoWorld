@@ -3,6 +3,7 @@ alerts_dto.py — DTOs para el módulo de Alertas de Precio.
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Optional
 
 
@@ -11,7 +12,7 @@ class CreateAlertInputDTO:
     """Datos para crear una nueva alerta de precio."""
     asset_symbol: str
     condition: str      # "ABOVE" | "BELOW"
-    threshold_price: float
+    threshold_price: Decimal
     notes: str = ""
 
 

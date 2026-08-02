@@ -51,7 +51,8 @@ class CreateAlertUseCase:
         if dto.condition not in ("ABOVE", "BELOW"):
             raise ValueError("condition debe ser 'ABOVE' o 'BELOW'.")
 
-        threshold = Decimal(str(dto.threshold_price))
+        # El DTO ya transporta Decimal desde el serializer.
+        threshold = dto.threshold_price
         if threshold <= 0:
             raise ValueError("El precio umbral debe ser mayor que cero.")
 

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * pages/NewsPage.tsx — Feed de noticias de criptomonedas.
  *
  * Layout "revista": artículo destacado + grid de 2 columnas.

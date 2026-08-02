@@ -219,6 +219,77 @@ def send_email_change_email(self, user_id: int) -> dict:
         raise self.retry(exc=exc)
 
 
+@shared_task(name="core.tasks.purge_old_market_snapshots", bind=True, max_retries=1)
+def purge_old_market_snapshots(self) -> dict:
+    """
+    Podar `MarketDataSnapshot` más allá del periodo de retención.
+
+    La tabla crece ~144 filas al día por activo (una cada 10 minutos).
+    Con un catálogo de 100 activos son ~5,3 millones de filas al año: sin
+    purga, la tabla es de crecimiento ilimitado y termina degradando cada
+    consulta de sparklines y el propio coste de almacenamiento.
+
+    El borrado se hace por lotes para no mantener un bloqueo largo ni una
+    transacción enorme sobre la tabla en producción.
+    """
+    from django.conf import settings
+    from django.utils import timezone
+    from datetime import timedelta
+
+    from core.infrastructure.persistence.models import MarketDataSnapshot
+
+    retention_days = getattr(settings, "MARKET_SNAPSHOT_RETENTION_DAYS", 90)
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    batch_size = 5_000
+    total = 0
+
+    while True:
+        ids = list(
+            MarketDataSnapshot.objects.filter(timestamp__lt=cutoff)
+            .values_list("pk", flat=True)[:batch_size]
+        )
+        if not ids:
+            break
+        deleted, _ = MarketDataSnapshot.objects.filter(pk__in=ids).delete()
+        total += deleted
+        if len(ids) < batch_size:
+            break
+
+    logger.info(
+        "purge_old_market_snapshots: %d filas eliminadas (retencion %d dias)",
+        total,
+        retention_days,
+    )
+    return {"deleted": total, "retention_days": retention_days}
+
+
+@shared_task(name="core.tasks.purge_audit_log", bind=True, max_retries=1)
+def purge_audit_log(self) -> dict:
+    """
+    Podar el registro de auditoría más allá del periodo de conservación.
+
+    La traza de seguridad tiene que conservarse, pero no indefinidamente:
+    guardarla más de lo necesario es a la vez coste y exposición de datos
+    personales (IP y user-agent). El periodo se configura por entorno.
+    """
+    from django.conf import settings
+    from django.utils import timezone
+    from datetime import timedelta
+
+    from core.infrastructure.persistence.models import AuditLog
+
+    retention_days = getattr(settings, "AUDIT_LOG_RETENTION_DAYS", 365)
+    cutoff = timezone.now() - timedelta(days=retention_days)
+
+    deleted, _ = AuditLog.objects.filter(created_at__lt=cutoff).delete()
+    logger.info(
+        "purge_audit_log: %d entradas eliminadas (retencion %d dias)",
+        deleted,
+        retention_days,
+    )
+    return {"deleted": deleted, "retention_days": retention_days}
+
+
 @shared_task(
     name="core.tasks.send_password_reset_email",
     bind=True,

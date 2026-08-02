@@ -31,8 +31,10 @@ class ClosePositionUseCase:
         if position.status == "CLOSED":
             raise ValueError("La posición ya está cerrada.")
 
-        close_qty = Decimal(str(dto.close_quantity))
-        close_price = Decimal(str(dto.close_price))
+        # El DTO ya transporta Decimal (el serializer valida con
+        # DecimalField); no hay conversion desde float que redondee.
+        close_qty = dto.close_quantity
+        close_price = dto.close_price
 
         if close_qty <= 0:
             raise ValueError("La cantidad a cerrar debe ser mayor que cero.")

@@ -18,8 +18,10 @@ que no controla.
 from django.conf import settings
 from django.core import signing
 from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
 from django.template.loader import render_to_string
 
+from core.application.services.sessions import revoke_all_sessions
 from core.infrastructure.persistence.models import User as UserModel
 
 # Sal específica: un token de verificación normal no sirve para cambiar email
@@ -104,12 +106,20 @@ class RequestEmailChangeUseCase:
 class ConfirmEmailChangeUseCase:
     """Paso 2: validar el token y aplicar el cambio."""
 
-    def execute(self, token: str) -> str:
+    def execute(self, token: str) -> UserModel:
         """
-        Sustituye el email por el pendiente. Devuelve la nueva dirección.
+        Sustituye el email por el pendiente.
 
-        Lanza ValueError si el token es inválido/expirado, no coincide con
-        la petición pendiente o la dirección se ocupó entre tanto.
+        El email es el identificador de login, así que cambiarlo equivale
+        a cambiar la credencial: se revocan todas las sesiones abiertas y
+        el usuario vuelve a autenticarse con su nueva dirección.
+
+        Returns:
+            El usuario con el email ya actualizado.
+
+        Raises:
+            ValueError: si el token es inválido/expirado, no coincide con
+                la petición pendiente o la dirección se ocupó entre tanto.
         """
         try:
             payload = signing.loads(
@@ -137,9 +147,12 @@ class ConfirmEmailChangeUseCase:
             user.save(update_fields=["pending_email"])
             raise ValueError("Esa dirección de email ya está en uso.")
 
-        user.email = new_email
-        user.pending_email = None
-        # El usuario acaba de demostrar control sobre la nueva dirección
-        user.is_email_verified = True
-        user.save(update_fields=["email", "pending_email", "is_email_verified"])
-        return new_email
+        with transaction.atomic():
+            user.email = new_email
+            user.pending_email = None
+            # El usuario acaba de demostrar control sobre la nueva dirección
+            user.is_email_verified = True
+            user.save(update_fields=["email", "pending_email", "is_email_verified"])
+            revoke_all_sessions(user)
+
+        return user

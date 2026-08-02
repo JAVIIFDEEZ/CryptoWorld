@@ -9,6 +9,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
 
+from core.application.use_cases.verify_email import EMAIL_VERIFICATION_SALT
 from core.infrastructure.persistence.models import User as UserModel
 
 
@@ -38,7 +39,9 @@ class SendVerificationEmailUseCase:
         if user.is_email_verified:
             return  # Ya verificado, no reenviar
 
-        signer = signing.TimestampSigner()
+        # Sal específica del propósito: el token de verificación no debe
+        # ser reutilizable en ningún otro flujo firmado del proyecto.
+        signer = signing.TimestampSigner(salt=EMAIL_VERIFICATION_SALT)
         # El token codifica el pk del usuario firmado con HMAC
         token = signer.sign(str(user.pk))
 

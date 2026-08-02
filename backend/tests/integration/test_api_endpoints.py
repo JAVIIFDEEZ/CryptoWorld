@@ -16,16 +16,42 @@ import pytest
 class TestHealthEndpoint:
 
     @pytest.mark.integration
-    def test_health_returns_200(self, api_client, db):
+    def test_readiness_returns_200(self, api_client, db):
         response = api_client.get("/api/health/")
         assert response.status_code == 200
         assert response.data["status"] == "ok"
 
     @pytest.mark.integration
-    def test_health_no_auth_required(self, api_client):
-        """El health check debe ser público (responde 200 incluso degradado)."""
+    def test_readiness_no_auth_required(self, api_client, db):
+        """La sonda de disponibilidad es pública."""
         response = api_client.get("/api/health/")
         assert response.status_code == 200
+
+    @pytest.mark.integration
+    def test_readiness_hides_components_from_anonymous(self, api_client, db):
+        """El desglose de dependencias solo se revela a administradores."""
+        response = api_client.get("/api/health/")
+        assert "components" not in response.data
+
+    @pytest.mark.integration
+    def test_readiness_shows_components_to_admin(self, admin_client, db):
+        response = admin_client.get("/api/health/")
+        assert "components" in response.data
+        assert "database" in response.data["components"]
+
+    @pytest.mark.integration
+    def test_liveness_does_not_touch_dependencies(self, api_client):
+        """
+        La sonda de vitalidad no consulta la base de datos.
+
+        El test se ejecuta sin la fixture `db` a propósito: pytest-django
+        bloquea cualquier acceso, así que si la vista lo intentara el test
+        fallaría. Es la garantía de que un fallo de PostgreSQL no provoca
+        el reinicio en bucle del proceso web.
+        """
+        response = api_client.get("/api/health/live/")
+        assert response.status_code == 200
+        assert response.data["status"] == "ok"
 
 
 class TestAuthEndpoints:
@@ -67,11 +93,11 @@ class TestAuthEndpoints:
 
     @pytest.mark.integration
     def test_login_blocked_until_email_verified(self, api_client, test_user):
-        """Sin verificar el email, el login devuelve 403 con error_code."""
+        """Sin verificar el email, el login devuelve 403 con código estable."""
         payload = {"email": "test@example.com", "password": "testpass123"}
         response = api_client.post("/api/auth/login/", payload, format="json")
         assert response.status_code == 403
-        assert response.data["error_code"] == "email_not_verified"
+        assert response.data["error"]["code"] == "email_not_verified"
 
     @pytest.mark.integration
     def test_login_fails_with_wrong_password(self, api_client, test_user):
