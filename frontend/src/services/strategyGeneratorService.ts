@@ -66,6 +66,15 @@ export interface GatingChecks {
   mc_p5_positive: boolean
 }
 
+/**
+ * Estado de una estrategia guardada.
+ *
+ * `validated` exige holdout positivo — datos jamás vistos —, no solo haber
+ * pasado el gating. Una que pasa el gating pero pierde fuera es `candidate`:
+ * robusta en la búsqueda, aún sin confirmar.
+ */
+export type StrategyStatus = 'candidate' | 'validated' | 'rejected' | 'archived'
+
 /** Punto de la curva E[max Sharpe] frente al número de pruebas. */
 export interface ExpectedMaxSharpePoint {
   trials: number
@@ -245,7 +254,17 @@ export interface GenerationReport {
   ranking: Finalist[]
   candidates: Candidate[]
   rejected: (Candidate & { failed_checks: string[] })[]
-  persisted?: { id: number; spec_hash: string; rank: number }[]
+  persisted?: { id: number; spec_hash: string; rank: number; status?: StrategyStatus }[]
+  /** Registro append-only de esta ejecución + contexto acumulado del activo. */
+  experiment_run?: {
+    registered: boolean
+    run_id?: number
+    catalog_version?: string
+    seed?: number | null
+    cumulative_runs?: number
+    cumulative_evaluations?: number
+    note?: string
+  }
 }
 
 export type JobResult = GenerationReport | { error: string }

@@ -487,6 +487,83 @@ class UserWatchlist(models.Model):
         return f"{self.user.email} ★ {self.asset.symbol}"
 
 
+class StrategyExperimentRun(models.Model):
+    """
+    Registro APPEND-ONLY de cada ejecución del generador de estrategias.
+
+    El paradigma de *research factory*: si solo se guardan las búsquedas que
+    dieron algo, el número de pruebas realizadas queda subestimado y con él la
+    deflación del Sharpe — se acaba creyendo un edge que es selección. Aquí se
+    registra TODA ejecución, produjera estrategias o ninguna.
+
+    Es a nivel de ejecución y no de genoma a propósito: un preset profundo
+    evalúa miles de specs y la reoptimización nocturna corre sobre muchos
+    activos, así que una fila por genoma serían millones de registros al mes.
+    El dato que importa para la gobernanza —cuántas configuraciones se han
+    probado sobre este activo— se conserva exactamente sumando `evaluations`,
+    y los genomas que sobrevivieron ya viven en `StrategyDefinition`.
+
+    Nunca se actualiza ni se borra: `save()` rechaza modificar una fila ya
+    escrita. Un registro de experimentos que se puede reescribir no sirve de
+    nada.
+    """
+
+    asset = models.ForeignKey(
+        CryptoAsset, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="experiment_runs",
+    )
+    # Se guarda el símbolo aparte del FK: si el activo se borra del catálogo, el
+    # registro histórico debe seguir diciendo sobre qué se buscó.
+    asset_symbol = models.CharField(max_length=20, db_index=True)
+    interval = models.CharField(max_length=10, default="1d")
+
+    # ── Reproducibilidad ──────────────────────────────────────────
+    seed = models.IntegerField(null=True, blank=True)
+    preset = models.CharField(max_length=20, blank=True, default="")
+    optimizer = models.CharField(max_length=10, blank=True, default="single")
+    # Huella del espacio de búsqueda (bloques + rangos + operadores). Dos
+    # ejecuciones con la misma semilla pero distinto catálogo NO son comparables.
+    catalog_version = models.CharField(max_length=32, blank=True, default="")
+    candles = models.PositiveIntegerField(default=0)
+    data_start = models.DateTimeField(null=True, blank=True)
+    data_end = models.DateTimeField(null=True, blank=True)
+
+    # ── Multiplicidad ─────────────────────────────────────────────
+    evaluations = models.PositiveIntegerField(default=0)        # nº real de pruebas
+    effective_trials = models.PositiveIntegerField(default=0)   # independientes tras agrupar
+    expected_max_sharpe = models.FloatField(null=True, blank=True)  # umbral del azar con ese N
+
+    # ── Resultado ─────────────────────────────────────────────────
+    candidates_gated = models.PositiveIntegerField(default=0)
+    passed_gating = models.PositiveIntegerField(default=0)
+    best_fitness = models.FloatField(null=True, blank=True)
+    best_deflated_sharpe = models.FloatField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "strategy_experiment_runs"
+        verbose_name = "Ejecución del generador (registro)"
+        verbose_name_plural = "Ejecuciones del generador (registro)"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["asset_symbol", "interval", "-created_at"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        """Append-only: una ejecución registrada no se modifica jamás."""
+        if self.pk is not None:
+            raise ValueError(
+                "StrategyExperimentRun es append-only: un registro de "
+                "experimento no puede modificarse una vez escrito."
+            )
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return (f"{self.asset_symbol}/{self.interval} · {self.evaluations} pruebas "
+                f"→ {self.passed_gating} validadas")
+
+
 class StrategyDefinition(models.Model):
     """
     Estrategia generada por el algoritmo genético (Módulo 2) que ha superado el

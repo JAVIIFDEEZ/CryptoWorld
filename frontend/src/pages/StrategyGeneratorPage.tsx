@@ -414,7 +414,7 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
       {/* Cuántas configuraciones se probaron y qué Sharpe da el azar con ese número.
           Sin ese contexto, el Sharpe de la campeona no es interpretable. */}
       {report.overfitting_control && (
-        <MultipleTestingCard control={report.overfitting_control} />
+        <MultipleTestingCard control={report.overfitting_control} run={report.experiment_run} />
       )}
 
       <Generator3DPanel

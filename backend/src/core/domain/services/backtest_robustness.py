@@ -70,17 +70,23 @@ def optimize_parameters(
     objective: str = "sharpe",
     periods_per_year: float = 365.0,
     seed: int = 42,
+    costs=None,
 ) -> dict:
     """
     Busca los mejores parámetros con Optuna (TPE, semilla fija) y devuelve la
     matriz de trials (params, valor objetivo y retornos por vela de cada uno),
     imprescindible para PBO y DSR.
+
+    `costs` aplica el modelo de comisión y deslizamiento durante la búsqueda.
+    Optimizar en bruto y cobrar después elige parámetros que no habrían ganado
+    de haberse pagado la ejecución: la rotación alta sale gratis en la búsqueda
+    y sangra en producción.
     """
     space = strategy_param_space(strategy)
 
     def objective_fn(trial: "optuna.Trial") -> float:
         params = _suggest_params(trial, space)
-        bt = run_backtest_full(df, strategy, params=params)
+        bt = run_backtest_full(df, strategy, params=params, costs=costs)
         if "error" in bt:
             return -1e9
         trial.set_user_attr("params", params)
@@ -131,6 +137,7 @@ def walk_forward_analysis(
     periods_per_year: float = 365.0,
     seed: int = 42,
     min_window: int = 60,
+    costs=None,
 ) -> dict:
     """
     Divide la serie en n_splits tramos OOS consecutivos. Para cada tramo
@@ -169,11 +176,11 @@ def walk_forward_analysis(
 
         opt = optimize_parameters(
             train_df, strategy, n_trials=n_trials, objective=objective,
-            periods_per_year=periods_per_year, seed=seed,
+            periods_per_year=periods_per_year, seed=seed, costs=costs,
         )
         best = opt["best_params"]
-        is_bt = run_backtest_full(train_df, strategy, params=best)
-        oos_bt = run_backtest_full(test_df, strategy, params=best)
+        is_bt = run_backtest_full(train_df, strategy, params=best, costs=costs)
+        oos_bt = run_backtest_full(test_df, strategy, params=best, costs=costs)
         is_s = m.sharpe_ratio(is_bt["bar_returns"], periods_per_year)
         oos_s = m.sharpe_ratio(oos_bt["bar_returns"], periods_per_year)
 
@@ -281,6 +288,7 @@ def permutation_test(
     n_perms: int = 200,
     periods_per_year: float = 365.0,
     seed: int = 42,
+    costs=None,
 ) -> dict:
     """
     Permuta los retornos de la serie de precios (destruye la estructura
@@ -304,7 +312,7 @@ def permutation_test(
         pdf["high"] = prices * 1.001
         pdf["low"] = prices * 0.999
         pdf["close"] = prices
-        bt = run_backtest_full(pdf, strategy, params=params)
+        bt = run_backtest_full(pdf, strategy, params=params, costs=costs)
         s = m.sharpe_ratio(bt["bar_returns"], periods_per_year) if "error" not in bt else 0.0
         if s >= observed_sharpe:
             count_ge += 1

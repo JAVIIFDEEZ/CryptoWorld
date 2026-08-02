@@ -175,6 +175,30 @@ class TrialRegistry:
         }
 
 
+def _status_for(finalist: dict) -> str:
+    """Estado con el que se guarda una finalista.
+
+    «Validada» solo si ha demostrado algo en datos JAMÁS vistos. Antes se
+    marcaba `validated` a todo el ranking sin mirar el holdout, de modo que la
+    etiqueta afirmaba más de lo que el dato sostenía: pasar el gating es
+    superar controles sobre la misma zona en la que se buscó.
+
+    Una finalista que pasa el gating pero pierde en holdout no es un fracaso —
+    es una **candidata**: robusta en la búsqueda, aún sin confirmar fuera. La
+    distinción es la que separa un hallazgo de una promesa.
+    """
+    if not finalist.get("passed_gating"):
+        return "candidate"
+    holdout = finalist.get("holdout_validation") or {}
+    sharpe = holdout.get("sharpe")
+    n_trades = holdout.get("n_trades", 0)
+    # Sin operaciones en el holdout no hay evidencia ni a favor ni en contra:
+    # tampoco basta para llamarlo validado.
+    if sharpe is None or n_trades == 0 or sharpe <= 0:
+        return "candidate"
+    return "validated"
+
+
 def _overfitting_summary(registry: "TrialRegistry", finalists: list) -> dict:
     """
     Resumen de multiplicidad de la ejecución: cuántas configuraciones se
@@ -730,6 +754,11 @@ class GenerateStrategiesUseCase:
             self._cross_validate(report, symbol, interval, cfg, progress_cb)
 
         if persist:
+            # El registro va ANTES de persistir finalistas y fuera de su suerte:
+            # una búsqueda que no produjo nada es justo la que no debe perderse
+            # (si solo se registran las que dieron algo, el nº de pruebas queda
+            # subestimado y con él la deflación del Sharpe).
+            report["experiment_run"] = self._register_run(symbol, interval, cfg, report)
             report["persisted"] = self._persist(symbol, interval, report)
 
         logger.info(
@@ -785,6 +814,66 @@ class GenerateStrategiesUseCase:
                                     "passed": len(ranking)}))
 
     @staticmethod
+    def _register_run(symbol: str, interval: str, cfg: GenerationConfig, report: dict) -> dict:
+        """Anota la ejecución en el registro append-only y devuelve el contexto
+        acumulado de este activo (cuántas pruebas se le llevan hechas).
+
+        El acumulado se REPORTA, no deflacta: el DSR usa el N de la corrida en
+        curso para que el resultado sea reproducible y no cambie de valor al
+        re-ejecutar. Aun así, saber que un activo lleva 40.000 configuraciones
+        probadas es información de gobernanza que no debe perderse.
+        """
+        from django.db.models import Count, Sum
+        from core.domain.services.strategy_spec import catalog_version
+        from core.infrastructure.persistence.models import CryptoAsset, StrategyExperimentRun
+
+        control = report.get("overfitting_control", {}) or {}
+        curve = control.get("expected_max_sharpe_curve", {}) or {}
+        try:
+            run = StrategyExperimentRun.objects.create(
+                asset=CryptoAsset.objects.filter(symbol=symbol).first(),
+                asset_symbol=symbol,
+                interval=interval,
+                seed=cfg.ga.seed,
+                preset=report.get("preset", ""),
+                optimizer=cfg.optimizer,
+                catalog_version=catalog_version(),
+                candles=report.get("candles_total", 0),
+                evaluations=control.get("evaluated", 0),
+                effective_trials=control.get("effective_trials") or 0,
+                expected_max_sharpe=curve.get("expected_max_at_n"),
+                candidates_gated=report["summary"]["candidates_gated"],
+                passed_gating=report["summary"]["passed_gating"],
+                best_fitness=report["ga_evolution"]["best_fitness"],
+                best_deflated_sharpe=control.get("best_deflated_sharpe"),
+            )
+        except Exception:  # noqa: BLE001 — el registro no puede tumbar una generación válida
+            logger.exception("no se pudo registrar la ejecución del generador %s/%s",
+                             symbol, interval)
+            return {"registered": False}
+
+        history = StrategyExperimentRun.objects.filter(
+            asset_symbol=symbol, interval=interval,
+        ).aggregate(runs=Count("id"), trials=Sum("evaluations"))
+
+        return {
+            "registered": True,
+            "run_id": run.id,
+            "catalog_version": run.catalog_version,
+            "seed": run.seed,
+            # Contexto histórico del activo: cuántas veces se ha buscado aquí y
+            # con cuántas configuraciones en total.
+            "cumulative_runs": history["runs"] or 0,
+            "cumulative_evaluations": history["trials"] or 0,
+            "note": (
+                f"{symbol}/{interval} acumula {history['trials'] or 0} configuraciones "
+                f"probadas en {history['runs'] or 0} ejecuciones. El Sharpe deflactado "
+                "usa el N de ESTA ejecución (reproducible); el acumulado es contexto "
+                "de gobernanza."
+            ),
+        }
+
+    @staticmethod
     def _persist(symbol: str, interval: str, report: dict) -> list[dict]:
         """Persiste cada finalista del ranking como StrategyDefinition (Módulo 0)."""
         from django.utils import timezone
@@ -793,6 +882,7 @@ class GenerateStrategiesUseCase:
         asset = CryptoAsset.objects.filter(symbol=symbol).first()
         persisted = []
         for item in report["ranking"]:
+            status = _status_for(item)
             obj = StrategyDefinition.objects.create(
                 asset=asset,
                 name=item["description"][:255],
@@ -805,8 +895,9 @@ class GenerateStrategiesUseCase:
                 robustness_metrics=item["gating"]["metrics"],
                 gating_checks=item["gating"]["checks"],
                 holdout_metrics=item["holdout_validation"],
-                status="validated",
+                status=status,
                 generated_at=timezone.now(),
             )
-            persisted.append({"id": obj.id, "spec_hash": obj.spec_hash, "rank": obj.rank})
+            persisted.append({"id": obj.id, "spec_hash": obj.spec_hash,
+                              "rank": obj.rank, "status": status})
         return persisted

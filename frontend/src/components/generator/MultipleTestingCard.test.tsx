@@ -52,6 +52,25 @@ describe('MultipleTestingCard', () => {
     expect(screen.getByText('412')).toBeInTheDocument()
   })
 
+  it('muestra el histórico acumulado del activo cuando hay registro', () => {
+    render(
+      <MultipleTestingCard
+        control={control(0.8, 0.45)}
+        run={{
+          registered: true, run_id: 3, catalog_version: '31b-abc123def456',
+          seed: 7, cumulative_runs: 4, cumulative_evaluations: 12000,
+        }}
+      />,
+    )
+    expect(screen.getByText(/Histórico del activo/i)).toBeInTheDocument()
+    expect(screen.getByText('31b-abc123def456')).toBeInTheDocument()
+  })
+
+  it('omite el histórico si la ejecución no llegó a registrarse', () => {
+    render(<MultipleTestingCard control={control(0.8, 0.45)} run={{ registered: false }} />)
+    expect(screen.queryByText(/Histórico del activo/i)).not.toBeInTheDocument()
+  })
+
   it('no renderiza nada sin curva suficiente', () => {
     const c = control(0.5, 0.4)
     c.expected_max_sharpe_curve.curve = [{ trials: 1, expected_max_sharpe: 0 }]

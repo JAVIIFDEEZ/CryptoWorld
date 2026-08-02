@@ -18,6 +18,7 @@ import numpy as np
 from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
+from core.domain.services.backtest_execution import CostModel
 from core.domain.services.backtest_report import build_robustness_report
 from core.domain.services.technical_analysis_service import (
     STRATEGIES,
@@ -42,6 +43,12 @@ class RobustnessConfig:
     n_sims: int = 1000          # simulaciones de Monte Carlo
     objective: str = "sharpe"   # objetivo de optimización
     seed: int = 42
+    # Costes de ejecución aplicados a TODA la suite. Antes corría en bruto: las
+    # métricas y el veredicto salían de una simulación en la que operar era
+    # gratis, y la optimización premiaba rotaciones que en real sangran. Los
+    # mismos valores por defecto que usa el generador de estrategias.
+    commission_bps: float = 10.0
+    slippage_bps: float = 5.0
 
 
 # Presets de cómputo: rapidez vs exhaustividad. El usuario elige según
@@ -110,16 +117,21 @@ def run_robustness_suite(
 
     ppy = metrics.annualization_factor(interval)
 
+    # Costes de ejecución aplicados a TODA la suite (optimización, walk-forward,
+    # permutación y backtest final). Sin esto, el titular de la suite era el
+    # rendimiento de un mundo donde operar es gratis.
+    costs = CostModel(commission_bps=cfg.commission_bps, slippage_bps=cfg.slippage_bps)
+
     # ── Optimización in-sample sobre toda la serie (base de PBO y DSR) ──
     optimization = robustness.optimize_parameters(
         df, strategy, n_trials=cfg.n_trials, objective=cfg.objective,
-        periods_per_year=ppy, seed=cfg.seed,
+        periods_per_year=ppy, seed=cfg.seed, costs=costs,
     )
     best_params = optimization["best_params"]
     trials = optimization["trials"]
 
     # Backtest con los mejores parámetros (estrategia evaluada)
-    best_bt = run_backtest_full(df, strategy, initial_capital, best_params)
+    best_bt = run_backtest_full(df, strategy, initial_capital, best_params, costs=costs)
     base_metrics = metrics.compute_metrics(best_bt, ppy)
     observed_sharpe = metrics.sharpe_ratio(best_bt["bar_returns"], ppy)
 
@@ -136,12 +148,12 @@ def run_robustness_suite(
     wf_rolling = robustness.walk_forward_analysis(
         df, strategy, n_splits=cfg.wf_splits, anchored=False,
         n_trials=cfg.wf_trials, objective=cfg.objective,
-        periods_per_year=ppy, seed=cfg.seed,
+        periods_per_year=ppy, seed=cfg.seed, costs=costs,
     )
     wf_anchored = robustness.walk_forward_analysis(
         df, strategy, n_splits=cfg.wf_splits, anchored=True,
         n_trials=cfg.wf_trials, objective=cfg.objective,
-        periods_per_year=ppy, seed=cfg.seed,
+        periods_per_year=ppy, seed=cfg.seed, costs=costs,
     )
 
     # ── Monte Carlo y permutation test ──
@@ -151,7 +163,7 @@ def run_robustness_suite(
     )
     permutation = robustness.permutation_test(
         df, strategy, best_params, observed_sharpe,
-        n_perms=cfg.n_perms, periods_per_year=ppy, seed=cfg.seed,
+        n_perms=cfg.n_perms, periods_per_year=ppy, seed=cfg.seed, costs=costs,
     )
 
     # ── Detectores de sesgo ──
@@ -198,6 +210,35 @@ def run_robustness_suite(
         "strengths": report["strengths"],
         "component_scores": report["component_scores"],
         "metrics": base_metrics,
+        # ── Titular honesto ───────────────────────────────────────
+        # `metrics` es rendimiento IN-SAMPLE: los parámetros se eligieron sobre
+        # esa misma serie, así que su Sharpe es la cota superior optimista, no
+        # una expectativa. El titular que debe leerse primero es el de fuera de
+        # muestra y deflactado por el nº de configuraciones probadas.
+        "headline": {
+            "oos_sharpe": wf_anchored.get("mean_oos_sharpe"),
+            "in_sample_sharpe": round(float(observed_sharpe), 3),
+            "deflated_sharpe": deflated_sharpe.get("dsr"),
+            "n_trials": deflated_sharpe.get("n_trials"),
+            "expected_max_sharpe_by_chance": deflated_sharpe.get("sr0_threshold"),
+            "walk_forward_efficiency": wf_anchored.get("efficiency"),
+            "costs_applied": True,
+            "commission_bps": cfg.commission_bps,
+            "slippage_bps": cfg.slippage_bps,
+            "note": (
+                "El Sharpe fuera de muestra es la cifra a mirar. El in-sample "
+                f"({observed_sharpe:.2f}) sale de optimizar sobre esa misma serie y "
+                "siempre es optimista. Todas las cifras son NETAS de costes "
+                f"({cfg.commission_bps:.0f}+{cfg.slippage_bps:.0f} bps por lado) y el "
+                "Sharpe deflactado corrige por las "
+                f"{deflated_sharpe.get('n_trials', 0)} configuraciones probadas."
+            ),
+        },
+        "disclaimer": (
+            "Resultados SIMULADOS sobre datos históricos. Una simulación no es "
+            "una previsión: el rendimiento pasado no garantiza el futuro y esta "
+            "información no constituye asesoramiento financiero."
+        ),
         "diagnostics": {
             "deflated_sharpe": deflated_sharpe,
             "pbo": pbo,

@@ -85,8 +85,13 @@ class ReoptimizeStrategiesUseCase:
 
     @staticmethod
     def _persist_new(asset, interval: str, report: dict, existing: set) -> int:
-        """Persiste los finalistas validados cuyo spec_hash es nuevo para el activo."""
+        """Persiste los finalistas cuyo spec_hash es nuevo para el activo.
+
+        El estado lo decide el mismo criterio que en la generación manual:
+        «validada» exige holdout positivo, no solo haber pasado el gating.
+        """
         from django.utils import timezone
+        from core.application.use_cases.generate_strategies import _status_for
         from core.infrastructure.persistence.models import StrategyDefinition
 
         created = 0
@@ -105,7 +110,7 @@ class ReoptimizeStrategiesUseCase:
                 robustness_metrics=item["gating"]["metrics"],
                 gating_checks=item["gating"]["checks"],
                 holdout_metrics=item["holdout_validation"],
-                status="validated",
+                status=_status_for(item),
                 generated_at=timezone.now(),
             )
             existing.add(item["spec_hash"])

@@ -13,12 +13,16 @@
 import type { GenerationReport } from '@/services/strategyGeneratorService'
 
 type Control = NonNullable<GenerationReport['overfitting_control']>
+type Run = NonNullable<GenerationReport['experiment_run']>
 
 const W = 520
 const H = 150
 const PAD = { left: 40, right: 12, top: 12, bottom: 26 }
 
-export default function MultipleTestingCard({ control }: Readonly<{ control: Control }>) {
+export default function MultipleTestingCard({ control, run }: Readonly<{
+  control: Control
+  run?: Run
+}>) {
   const { curve, expected_max_at_n: threshold, observed_sharpe: observed, n_trials: nTrials } =
     control.expected_max_sharpe_curve
   const points = curve ?? []
@@ -142,6 +146,26 @@ export default function MultipleTestingCard({ control }: Readonly<{ control: Con
       </div>
 
       <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">{control.note}</p>
+
+      {/* Contexto histórico del activo. El Sharpe deflactado usa el N de ESTA
+          ejecución (reproducible); el acumulado es gobernanza, no deflación. */}
+      {run?.registered && (run.cumulative_evaluations ?? 0) > 0 && (
+        <p className="text-[10px] text-slate-500 mt-2 pt-2 border-t border-slate-700/60 leading-relaxed">
+          Histórico del activo:{' '}
+          <span className="text-slate-300 font-mono">
+            {run.cumulative_evaluations?.toLocaleString('es-ES')}
+          </span>{' '}
+          configuraciones probadas en{' '}
+          <span className="text-slate-300 font-mono">{run.cumulative_runs}</span>{' '}
+          {run.cumulative_runs === 1 ? 'ejecución' : 'ejecuciones'} registradas.
+          {run.catalog_version && (
+            <> · catálogo <span className="font-mono">{run.catalog_version}</span></>
+          )}
+          {run.seed !== null && run.seed !== undefined && (
+            <> · semilla <span className="font-mono">{run.seed}</span></>
+          )}
+        </p>
+      )}
     </div>
   )
 }

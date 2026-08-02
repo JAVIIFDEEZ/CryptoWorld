@@ -235,6 +235,42 @@ COMBINES = ("AND", "OR")
 _MAX_CONDITIONS = 3
 
 
+def catalog_version() -> str:
+    """
+    Huella del espacio de búsqueda: bloques disponibles, sus rangos de
+    parámetros y los operadores de condición.
+
+    Un experimento solo es reproducible si se sabe sobre qué catálogo corrió.
+    Añadir un indicador o mover el rango de una ventana cambia el espacio y
+    hace que dos ejecuciones con la misma semilla dejen de ser comparables —
+    esta huella lo delata en lugar de que pase inadvertido.
+
+    Se deriva del contenido, no de un número que haya que acordarse de subir a
+    mano: lo segundo se olvida siempre.
+    """
+    import hashlib
+    import json
+
+    blocks = {
+        name: {
+            "params": {p: [kind, lo, hi] for p, (kind, lo, hi) in meta.get("params", {}).items()},
+            "threshold": list(meta["threshold"]) if "threshold" in meta else None,
+        }
+        for name, meta in sorted(_ALL.items())
+    }
+    payload = {
+        "blocks": blocks,
+        "ops": {
+            "threshold": list(THRESHOLD_OPS), "cross": list(CROSS_OPS),
+            "compare": list(COMPARE_OPS), "slope": list(SLOPE_OPS),
+            "slope_bars": list(SLOPE_BARS_RANGE), "combines": list(COMBINES),
+        },
+        "max_conditions": _MAX_CONDITIONS,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{len(_ALL)}b-{digest[:12]}"
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Muestreo de parámetros y condiciones
 # ═══════════════════════════════════════════════════════════════════
