@@ -2,7 +2,9 @@
 
 > **Trabajo de Fin de Grado** — Ingeniería Informática, UCLM  
 > Arquitectura Cliente-Servidor con Clean Architecture  
-> *Última actualización: Abril 2026*
+> *Última actualización: Agosto 2026*
+
+[![CI](https://github.com/JAVIIFDEEZ/CryptoWorld/actions/workflows/ci.yml/badge.svg)](https://github.com/JAVIIFDEEZ/CryptoWorld/actions/workflows/ci.yml)
 
 ---
 
@@ -47,14 +49,16 @@ backend/src/core/
 │   ├── repositories/  ← IUserRepository, ICryptoAssetRepository (contratos ABC)
 │   ├── services/      ← UserDomainService, TechnicalAnalysisService (~900 líneas)
 │   └── value_objects/ ← Email, CryptoSymbol (inmutables)
-├── application/       ← Casos de uso (24 archivos) + DTOs (23 dataclasses)
+├── application/       ← Casos de uso + DTOs + servicios transversales
 │   ├── use_cases/     ← Una clase por acción: auth, analysis, market, admin
-│   └── dto/           ← auth_dto.py, asset_dto.py, market_intelligence_dto.py
+│   ├── services/      ← audit, sessions, login_guard
+│   └── dto/           ← auth_dto.py, asset_dto.py, portfolio_dto.py…
 ├── infrastructure/    ← Adaptadores externos
-│   ├── persistence/   ← Django ORM models (5 tablas) + repos concretos
-│   └── external_apis/ ← BinancePublicClient + CoinGeckoClient
-└── interfaces/        ← Controladores HTTP (31 endpoints)
-    └── api/           ← views.py + serializers.py + urls.py
+│   ├── persistence/   ← Django ORM models (11 tablas) + repos concretos
+│   └── external_apis/ ← Binance, CoinGecko, KuCoin, Blockchair…
+└── interfaces/        ← Controladores HTTP (53 endpoints)
+    └── api/           ← views, serializers, urls, autenticación,
+                         paginación y manejador de errores
 ```
 
 **Regla de dependencias:** `interfaces → application → domain ← infrastructure`
@@ -96,58 +100,49 @@ npm run dev   # http://localhost:5173
 
 ---
 
-## Endpoints de la API (31 rutas)
+## Documentación de la API
 
-### Salud
-| Método | URL | Auth | Descripción |
-|--------|-----|------|-------------|
-| `GET` | `/api/health/` | No | Estado del servidor |
+El esquema **OpenAPI 3** se genera desde el propio código, así que no
+puede quedar desincronizado con los endpoints (como sí ocurría con la
+tabla de rutas que se mantenía a mano en este README):
 
-### Autenticación (16 endpoints)
-| Método | URL | Auth | Descripción |
-|--------|-----|------|-------------|
-| `POST` | `/api/auth/register/` | No | Registrar usuario |
-| `POST` | `/api/auth/login/` | No | Login → JWT (soporta flujo 2FA) |
-| `POST` | `/api/auth/logout/` | JWT | Logout seguro (blacklist refresh) |
-| `GET` | `/api/auth/me/` | JWT | Perfil del usuario autenticado |
-| `POST` | `/api/auth/token/refresh/` | No | Renovar access token |
-| `GET` | `/api/auth/verify-email/` | No | Verificar email (link con token HMAC) |
-| `POST` | `/api/auth/verify-email/resend/` | JWT | Reenviar email de verificación |
-| `POST` | `/api/auth/password-reset/` | No | Solicitar recuperación de contraseña |
-| `POST` | `/api/auth/password-reset/confirm/` | No | Confirmar nueva contraseña con token |
-| `POST` | `/api/auth/change-password/` | JWT | Cambiar contraseña (requiere actual) |
-| `DELETE` | `/api/auth/delete-account/` | JWT | Eliminar cuenta permanentemente |
-| `POST` | `/api/auth/2fa/setup/` | JWT | Generar secreto TOTP + QR base64 |
-| `POST` | `/api/auth/2fa/enable/` | JWT | Activar 2FA con primer código TOTP |
-| `POST` | `/api/auth/2fa/disable/` | JWT | Desactivar 2FA |
-| `POST` | `/api/auth/2fa/login/` | No | Segundo paso login 2FA (pre_auth_token + TOTP) |
+| Recurso | URL |
+|---|---|
+| Esquema OpenAPI (YAML) | `/api/schema/` |
+| Swagger UI — explorador interactivo | `/api/docs/` |
+| ReDoc — documentación de lectura | `/api/redoc/` |
 
-### Datos de mercado
-| Método | URL | Auth | Descripción |
-|--------|-----|------|-------------|
-| `GET` | `/api/assets/` | JWT | Listar activos (datos reales de CoinGecko) |
-| `GET` | `/api/assets/<symbol>/ohlcv/` | JWT | Velas OHLCV (Binance → CoinGecko fallback) |
-| `GET` | `/api/market/overview/` | JWT | Métricas globales (cap total, vol 24h, BTC dom, Fear & Greed) |
-| `GET` | `/api/blockchain/metrics/` | JWT | Métricas on-chain (stub — datos simulados) |
-| `GET` | `/api/news/` | JWT | Feed de noticias (stub — datos simulados) |
+**53 endpoints** agrupados en: autenticación y cuenta (13), doble factor
+(5), mercado y activos (6), on-chain y noticias (3), análisis técnico (7),
+portfolio y posiciones (7), alertas (3), watchlist (2), administración (5)
+y sondas de salud (2).
 
-### Análisis técnico
-| Método | URL | Auth | Descripción |
-|--------|-----|------|-------------|
-| `POST` | `/api/analysis/run/` | JWT | Ejecutar análisis con indicador individual |
-| `POST` | `/api/analysis/calculate/` | JWT | Calcular indicador técnico (RSI, MACD, SMA, EMA, Bollinger) |
-| `POST` | `/api/analysis/signals/` | JWT | Panel multi-indicador con 11 señales y veredicto |
-| `POST` | `/api/analysis/predict/` | JWT | Predicción ML con Random Forest |
-| `POST` | `/api/analysis/patterns/` | JWT | Detección de 12 patrones de velas japonesas |
-| `POST` | `/api/analysis/backtest/` | JWT | Backtesting de 5 estrategias |
-| `GET` | `/api/analysis/strategies/` | JWT | Lista de estrategias disponibles para backtest |
+### Contrato de error
 
-### Administración
-| Método | URL | Auth | Descripción |
-|--------|-----|------|-------------|
-| `GET` | `/api/admin/users/` | Admin | Listar usuarios |
-| `GET/PATCH/DELETE` | `/api/admin/users/<id>/` | Admin | Gestión individual de usuario |
-| `POST` | `/api/admin/market/sync/` | Admin | Sincronizar catálogo desde CoinGecko |
+Toda respuesta de error comparte la misma envolvente, con un código
+estable que el cliente puede usar para decidir:
+
+```json
+{
+  "error": {
+    "code": "email_not_verified",
+    "message": "Debes verificar tu email antes de iniciar sesión.",
+    "details": { "campo": ["mensaje"] }
+  },
+  "request_id": "3f2a9c1e8b7d4f60a1c2e3d4f5a6b7c8"
+}
+```
+
+`request_id` viaja también en la cabecera `X-Request-ID` y aparece en
+todas las líneas de log de esa petición: es lo que permite localizar una
+incidencia reportada por un usuario sin ambigüedad.
+
+### Sondas de salud
+
+| URL | Uso | Comportamiento |
+|---|---|---|
+| `/api/health/live/` | Liveness probe | 200 si el proceso responde. No consulta dependencias, para que un fallo de Redis no provoque el reinicio en bucle del servicio web. |
+| `/api/health/` | Readiness probe | 200 si base de datos, cache y broker responden; 503 si alguno falla. El desglose por componente solo se revela a administradores. |
 
 ---
 
@@ -158,13 +153,33 @@ npm run dev   # http://localhost:5173
 docker compose exec backend pytest                     # Todos los tests
 docker compose exec backend pytest -m unit             # Solo unitarios (sin BD)
 docker compose exec backend pytest -m integration      # Solo integración
-docker compose exec backend pytest --cov=core --cov-report=html  # Con cobertura
+docker compose exec backend pytest -m security         # Solo controles de seguridad
+docker compose exec backend pytest --cov-report=html   # Informe HTML de cobertura
 
 # O localmente con el entorno virtual
 cd backend && pytest
 ```
 
-**Cobertura actual:** ~51 tests (unitarios de entidades, value objects, repositorios, servicios de dominio + integración de endpoints API).
+**293 tests, 70 % de cobertura.** El umbral mínimo está fijado en
+`pytest.ini` (`--cov-fail-under=68`) y funciona como trinquete: la
+cobertura no puede bajar sin que la integración continua lo detenga.
+
+| Suite | Qué cubre |
+|---|---|
+| `tests/unit/domain/` | Entidades, value objects, repositorios y el motor de análisis técnico |
+| `tests/integration/test_security_controls.py` | Política de contraseñas, revocación de sesiones, bloqueo por cuenta, privilegios y auditoría |
+| `tests/integration/test_portfolio_arithmetic.py` | Coste medio ponderado, PnL en LONG/SHORT y precisión decimal |
+| `tests/integration/test_alerts_and_trades.py` | Alertas, evaluación por el worker, operaciones y retención |
+| `tests/integration/test_api_endpoints.py` | Rutas, códigos de estado y autenticación JWT |
+
+### Comprobaciones de calidad
+
+```bash
+cd backend
+ruff check .                                    # Lint
+python src/manage.py check --deploy             # Configuración de producción
+python src/manage.py spectacular --fail-on-warn # Esquema OpenAPI
+```
 
 ---
 
@@ -179,6 +194,30 @@ cd backend && pytest
 - **Adapter Pattern** — clientes de APIs externas encapsulan HTTP
 - **Guard Pattern** — `ProtectedRoute` + `AdminRoute` en React
 - **Interceptor Pattern** — Axios inyecta JWT + maneja 401 globalmente
+
+---
+
+## Seguridad
+
+El modelo de seguridad completo —autenticación, control de acceso,
+límites de peticiones, auditoría y riesgos aceptados— está en
+[`SECURITY.md`](SECURITY.md). El informe de la revisión de agosto de 2026
+y las correcciones aplicadas, en
+[`info/Auditoria_2026.md`](info/Auditoria_2026.md).
+
+En resumen:
+
+- Contraseñas PBKDF2 con política única de 12 caracteres mínimo en
+  registro, cambio y recuperación.
+- Doble factor TOTP con códigos de recuperación hasheados de un solo uso.
+- Access tokens de 15 minutos; cambiar la contraseña o el email revoca
+  **todas** las sesiones abiertas, incluidos los access ya emitidos.
+- Bloqueo temporal por cuenta ante intentos fallidos, además del límite
+  por IP.
+- Dos niveles administrativos: solo un superusuario concede privilegios.
+- Registro de auditoría de todo evento sensible, con retención definida.
+- `manage.py check --deploy` sin ningún aviso, verificado en cada
+  integración con la configuración real de producción.
 
 ---
 
@@ -198,12 +237,17 @@ cd backend && pytest
 - [x] Gráficos profesionales con KLineChart v9 (15 herramientas, 20+ indicadores)
 - [x] Panel de administración (gestión de usuarios + sync de mercado)
 - [x] Eliminación de cuenta
-- [ ] Gestión de portfolio personal (posiciones, P&L)
-- [ ] Sistema de alertas configurables
-- [ ] Feed de noticias real (actualmente stub)
-- [ ] Métricas on-chain reales (actualmente stub)
+- [x] Gestión de portfolio personal (posiciones LONG/SHORT, AVCO y P&L)
+- [x] Sistema de alertas de precio configurables
+- [x] Feed de noticias real (CryptoCompare)
+- [x] Métricas on-chain reales (Blockchain.com y Blockchair)
+- [x] Auditoría de seguridad y endurecimiento para producción
+- [x] Registro de auditoría con retención
+- [x] Esquema OpenAPI generado desde el código
+- [ ] Autenticación por cookies `HttpOnly` (ver riesgos aceptados)
+- [ ] Contrato unificado de series en los indicadores técnicos
 
 ---
 
 **Autor:** Javier — TFG Ingeniería Informática, UCLM  
-**Versión del proyecto:** v1.29.4 — Abril 2026
+**Versión del proyecto:** v1.140.0 — Agosto 2026
