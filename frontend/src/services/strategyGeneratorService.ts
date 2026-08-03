@@ -120,6 +120,33 @@ export interface OverfittingControl {
   note: string
 }
 
+/**
+ * Validación cruzada combinatoria purgada (CPCV).
+ *
+ * El walk-forward recorre UN camino histórico y devuelve un punto. Esto es la
+ * nube de la que ese punto era una muestra: todas las combinaciones de k
+ * bloques del histórico. La cifra honesta es el percentil bajo — qué rinde la
+ * estrategia cuando el troceo NO la favorece —, no la media.
+ */
+export interface CpcvDistribution {
+  n_paths: number
+  n_blocks: number
+  blocks_per_path?: number
+  sharpe_mean?: number
+  sharpe_median?: number
+  sharpe_p5?: number
+  sharpe_p25?: number
+  sharpe_p75?: number
+  sharpe_min?: number
+  sharpe_max?: number
+  pct_paths_positive?: number
+  embargo_pct?: number
+  embargo_bars?: number
+  blocks?: { block: number; candles: number; sharpe: number; n_trades: number }[]
+  note?: string
+  purge_note?: string
+}
+
 export interface GatingMetrics {
   n_trades: number
   total_return_pct: number
@@ -132,6 +159,9 @@ export interface GatingMetrics {
   pbo: number | null
   overfitting?: OverfittingControl
   deflated_sharpe?: number | null
+  cpcv?: CpcvDistribution
+  cpcv_sharpe_p5?: number | null
+  cpcv_sharpe_median?: number | null
   turnover?: number
   cost_drag_pct?: number
   exit_reasons?: Record<string, number>

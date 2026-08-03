@@ -45,6 +45,13 @@ class GatingThresholds:
     wf_splits: int = 4
     pbo_neighbors: int = 12
     mc_sims: int = 400
+    # ── Validación cruzada combinatoria purgada (CPCV) ──
+    # Se REPORTA, no bloquea: primero hay que ver la distribución sobre activos
+    # reales para fijar un umbral con criterio. Convertirlo en check es añadir
+    # `cpcv_p5` a `checks` con `min_cpcv_p5_sharpe`.
+    cpcv_blocks: int = 8             # bloques contiguos del histórico
+    cpcv_k: int = 2                  # bloques por camino → C(8,2) = 28 caminos
+    cpcv_embargo_pct: float = 0.02   # velas descartadas al inicio de cada bloque
 
 
 def _segment_backtest(df, spec: dict, costs: CostModel | None = None) -> dict:
@@ -100,6 +107,79 @@ def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_
         "n_folds": len(oos_sharpes),
         "fold_oos_sharpes": [round(float(s), 4) for s in oos_sharpes],
     }
+
+
+def purged_cpcv(df, spec: dict, n_blocks: int = 8, k: int = 2, embargo_pct: float = 0.02,
+                ppy: float = 365.0, costs: CostModel | None = None) -> dict:
+    """
+    Validación cruzada combinatoria purgada del spec (CPCV).
+
+    El walk-forward recorre UN camino histórico y devuelve un punto con mucha
+    varianza. Aquí el histórico se parte en `n_blocks` bloques contiguos, cada
+    uno se backtestea de forma independiente, y se agregan todas las
+    combinaciones de `k` bloques: el resultado es una **distribución** de Sharpe
+    sobre C(n_blocks, k) caminos.
+
+    Sobre la purga, que aquí no significa lo que en el libro
+    ─────────────────────────────────────────────────────────────────────
+    El *purging* de López de Prado quita del ENTRENAMIENTO las muestras cuyas
+    etiquetas solapan con el test, porque el modelo se ajusta sobre el train y
+    ese solape es la fuga. En este motor **no se ajusta nada** en el walk-forward:
+    el spec ya viene fijo del GA y cada tramo se backtestea aislado. Purgar el
+    train, por tanto, no cerraría ninguna fuga — solo cambiaría el Sharpe IS.
+
+    Lo que sí es una fuente real de contaminación aquí es la **frontera entre
+    bloques**: las primeras velas de un bloque tienen los indicadores a medio
+    calentar y cualquier señal en ellas se calcula sobre una ventana incompleta.
+    El `embargo_pct` descarta esas velas iniciales de cada bloque. Ese es el
+    análogo que hace algo, y es lo que se implementa.
+
+    Cada bloque se backtestea SIN prefijo de datos de bloques vecinos: esa es la
+    purga efectiva — ningún bloque ve información de otro.
+    """
+    n = len(df)
+    n_blocks = max(2, int(n_blocks))
+    block_size = n // n_blocks
+    if block_size < 30:
+        return {"n_paths": 0, "n_blocks": 0,
+                "note": ("Histórico insuficiente para la validación combinatoria "
+                         f"({n} velas para {n_blocks} bloques).")}
+
+    embargo_bars = max(1, int(round(block_size * max(0.0, embargo_pct))))
+
+    block_returns: list = []
+    block_stats: list[dict] = []
+    for b in range(n_blocks):
+        start = b * block_size
+        end = n if b == n_blocks - 1 else (b + 1) * block_size
+        segment = df.iloc[start:end]
+        if len(segment) <= embargo_bars + 5:
+            continue
+        bt = _segment_backtest(segment, spec, costs)
+        # Embargo: fuera las primeras velas del bloque (indicadores calentando y
+        # cualquier lectura a caballo del corte).
+        returns = list(bt["bar_returns"])[embargo_bars:]
+        if len(returns) < 5:
+            continue
+        block_returns.append(returns)
+        block_stats.append({
+            "block": b + 1,
+            "candles": len(returns),
+            "sharpe": round(metrics.sharpe_ratio(returns, ppy), 3),
+            "n_trades": bt["total_trades"],
+        })
+
+    result = robustness.combinatorial_paths(block_returns, k=k, ppy=ppy)
+    result["embargo_pct"] = embargo_pct
+    result["embargo_bars"] = embargo_bars
+    result["blocks"] = block_stats
+    result["purge_note"] = (
+        "Cada bloque se backtestea aislado (ningún bloque ve datos de otro) y se "
+        "descartan sus primeras velas por embargo. No se purga el train al modo "
+        "del libro porque aquí no se entrena nada: el spec viene fijo del "
+        "buscador, así que esa purga no cerraría ninguna fuga."
+    )
+    return result
 
 
 def walk_forward_matrix(df, spec: dict, splits_list=(3, 4, 5, 6),
@@ -443,6 +523,11 @@ def gate_spec(
     )
     pbo = overfitting["pbo"]
 
+    # Distribución de rendimiento sobre múltiples caminos históricos, no el
+    # punto único del walk-forward. Reportado, no bloqueante.
+    cpcv = purged_cpcv(df, spec, n_blocks=th.cpcv_blocks, k=th.cpcv_k,
+                       embargo_pct=th.cpcv_embargo_pct, ppy=ppy, costs=costs)
+
     mc = robustness.monte_carlo_simulation(
         [t["pnl_pct"] for t in full["trades"]], n_sims=th.mc_sims, seed=seed
     )
@@ -475,6 +560,11 @@ def gate_spec(
             # Se reporta, no bloquea: el gating sigue decidiéndose por PBO.
             "overfitting": overfitting,
             "deflated_sharpe": overfitting["deflated_sharpe"].get("dsr"),
+            # Validación cruzada combinatoria purgada: el walk-forward da un
+            # punto, esto da la nube de la que ese punto era una muestra.
+            "cpcv": cpcv,
+            "cpcv_sharpe_p5": cpcv.get("sharpe_p5"),
+            "cpcv_sharpe_median": cpcv.get("sharpe_median"),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
             "exit_reasons": full["exit_reasons"],

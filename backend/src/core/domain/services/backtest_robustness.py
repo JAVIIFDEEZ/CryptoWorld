@@ -539,6 +539,70 @@ def _partition_sharpe(submatrix: np.ndarray) -> np.ndarray:
     return np.divide(mu, sd, out=np.zeros_like(mu), where=sd > 0)
 
 
+def combinatorial_paths(block_returns: list, k: int = 2, ppy: float = 365.0,
+                        max_paths: int = 200) -> dict:
+    """
+    Distribución de rendimiento sobre TODOS los caminos de C(N,k) bloques.
+
+    Un walk-forward clásico recorre **un solo camino** histórico: el pasado
+    ocurrió en un orden y se mide ese orden. Su Sharpe es un punto con varianza
+    enorme, y basta que un tramo bueno caiga donde caiga para cambiar el
+    veredicto. La validación cruzada combinatoria toma todas las combinaciones
+    de k bloques como test y produce una **distribución**: el percentil bajo de
+    esa distribución, y no la media, es la expectativa honesta de rendimiento.
+
+    Recibe las series de retorno YA calculadas de cada bloque, así que es
+    aritmética pura: quien llama backtestea N bloques una sola vez y aquí se
+    combinan. Esa economía existe porque la estrategia es fija — si hubiera que
+    reentrenar por combinación, como en el CPCV original, costaría C(N,k) veces
+    más.
+
+    `max_paths` acota la explosión combinatoria: con N y k grandes, C(N,k) crece
+    sin control y no aporta precisión adicional a la distribución.
+    """
+    blocks = [np.asarray(b, dtype=float) for b in block_returns if b is not None and len(b) >= 2]
+    n = len(blocks)
+    if n < 2 or k < 1 or k > n:
+        return {"n_paths": 0, "n_blocks": n,
+                "note": "Bloques insuficientes para la validación combinatoria."}
+
+    sharpes: list[float] = []
+    for combo in combinations(range(n), k):
+        path = np.concatenate([blocks[i] for i in combo])
+        if path.size < 2:
+            continue
+        sharpes.append(m.sharpe_ratio(path, ppy))
+        if len(sharpes) >= max_paths:
+            break
+
+    if not sharpes:
+        return {"n_paths": 0, "n_blocks": n,
+                "note": "Ningún camino con longitud suficiente."}
+
+    arr = np.array(sharpes, dtype=float)
+    return {
+        "n_paths": int(arr.size),
+        "n_blocks": n,
+        "blocks_per_path": k,
+        "sharpe_mean": round(float(arr.mean()), 4),
+        "sharpe_median": round(float(np.median(arr)), 4),
+        # El percentil bajo es la cifra a mirar: qué rinde la estrategia cuando
+        # el troceo del histórico NO la favorece.
+        "sharpe_p5": round(float(np.percentile(arr, 5)), 4),
+        "sharpe_p25": round(float(np.percentile(arr, 25)), 4),
+        "sharpe_p75": round(float(np.percentile(arr, 75)), 4),
+        "sharpe_min": round(float(arr.min()), 4),
+        "sharpe_max": round(float(arr.max()), 4),
+        "pct_paths_positive": round(float((arr > 0).mean() * 100), 1),
+        "note": (
+            f"Distribución sobre {arr.size} caminos de {k} bloques. La mediana "
+            f"({np.median(arr):.2f}) es la expectativa central y el percentil 5 "
+            f"({np.percentile(arr, 5):.2f}) el escenario adverso: un walk-forward "
+            "simple habría devuelto un único punto de esta nube."
+        ),
+    }
+
+
 def probability_of_backtest_overfitting(
     returns_matrix, n_partitions: int = 10
 ) -> dict:

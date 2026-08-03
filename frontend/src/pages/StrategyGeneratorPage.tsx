@@ -26,6 +26,7 @@ import {
 import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
 import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
 import MultipleTestingCard from '@/components/generator/MultipleTestingCard'
+import CpcvDistributionCard from '@/components/generator/CpcvDistributionCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -415,6 +416,14 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
           Sin ese contexto, el Sharpe de la campeona no es interpretable. */}
       {report.overfitting_control && (
         <MultipleTestingCard control={report.overfitting_control} run={report.experiment_run} />
+      )}
+
+      {/* La nube de la que el Sharpe del walk-forward era una sola muestra. */}
+      {winner?.gating.metrics.cpcv && (
+        <CpcvDistributionCard
+          cpcv={winner.gating.metrics.cpcv}
+          walkForwardSharpe={winner.gating.metrics.mean_oos_sharpe}
+        />
       )}
 
       <Generator3DPanel

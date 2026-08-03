@@ -1,7 +1,8 @@
-# Motor cuantitativo — CAPA 1
+# Motor cuantitativo — CAPAS 1 y 2
 
-Brechas G1, G8 y G9 del informe del motor: control de multiplicidad, registro de
-experimentos y honestidad de presentación.
+**Capa 1** (G1, G8, G9): control de multiplicidad, registro de experimentos y
+honestidad de presentación.
+**Capa 2** (G2): validación cruzada combinatoria purgada.
 
 ---
 
@@ -229,12 +230,93 @@ holdout, no relajar la etiqueta.
 
 ---
 
+---
+
+# G2 — Validación cruzada combinatoria purgada (CPCV)
+
+**Brecha:** el walk-forward recorre **un solo camino** histórico. El pasado
+ocurrió en un orden, se mide ese orden, y el resultado es un punto con varianza
+enorme: basta con dónde caigan los tramos buenos para cambiar el veredicto.
+
+## Un hallazgo que cambia qué significa «purgar» aquí
+
+El informe pedía *purging* al modo de López de Prado: quitar del
+**entrenamiento** las muestras cuyas etiquetas solapan con el test, porque el
+modelo se ajusta sobre el train y ese solape es la fuga.
+
+Al leer `walk_forward_oos` aparece que **en este motor no se ajusta nada**. El
+spec ya viene fijo del GA («walk-forward del spec FIJO, sin re-optimizar»), y
+cada tramo se backtestea aislado empezando en plano. Se verificó que ningún
+consumidor reoptimiza: ni `gate_spec`, ni `evaluate_fitness`, ni
+`run_spec_robustness`, ni `compare_strategies`.
+
+Consecuencia: **purgar el train no cerraría ninguna fuga**. Solo cambiaría el
+Sharpe in-sample y, con él, el ratio de eficiencia y las decisiones de gating
+que dependen de él. Sería ceremonia — la apariencia de un rigor que no aporta.
+
+Lo que **sí** es una fuente real de contaminación en esta arquitectura es la
+frontera entre bloques: las primeras velas de un bloque tienen los indicadores
+a medio calentar y cualquier lectura ahí se calcula sobre una ventana
+incompleta. Eso es lo que se implementa:
+
+- **Aislamiento entre bloques** (la purga efectiva): cada bloque se backtestea
+  sin prefijo de datos de bloques vecinos, de modo que ninguno ve información
+  de otro. Un test lo comprueba: el Sharpe de un bloque no cambia según qué
+  bloques lo acompañen.
+- **Embargo** (`embargo_pct`, 2 % por defecto): se descartan las primeras velas
+  de cada bloque, las del calentamiento y las contiguas al corte.
+
+El resultado lo declara en `purge_note`, para que ninguna superficie presente
+esto como algo que no es.
+
+## Lo implementado
+
+- `combinatorial_paths` (dominio, aritmética pura): recibe las series de
+  retorno de N bloques y agrega **todas** las combinaciones de k como camino →
+  distribución de Sharpe con mediana, percentiles, rango y % de caminos
+  positivos. `max_paths` acota la explosión combinatoria.
+- `purged_cpcv` (specs): trocea el histórico, aplica el embargo, backtestea
+  cada bloque **una sola vez** y delega la combinatoria.
+
+Esa economía —N backtests en lugar de C(N,k)— existe precisamente porque la
+estrategia es fija. En el CPCV original hay que reentrenar por combinación, y
+por eso es caro. Con N=8 el coste es comparable al del walk-forward actual.
+
+## Impacto medido
+
+Misma serie sintética y mismo preset que en G1, campeona que pasa el gating:
+
+| | Valor |
+|---|---|
+| Walk-forward (un camino), Sharpe OOS | **6.598** |
+| CPCV, mediana sobre 15 caminos | **2.725** |
+| CPCV, percentil 5 | 1.187 |
+| CPCV, rango | 0.26 … 6.11 |
+| Sharpe por bloque | 0.448 · 3.097 · 6.177 · 6.020 · 5.890 · 0.037 |
+
+El walk-forward daba **2,4 veces** la expectativa central real, y la razón se ve
+en los bloques: los tramos flojos (0.448 y 0.037) están al principio y al final
+del histórico. El walk-forward clásico deja los primeros siempre en el
+entrenamiento, así que **nunca los mide como fuera de muestra**. El CPCV sí, y
+por eso encuentra el suelo.
+
+## Decisiones
+
+- **CPCV solo en el gating de finalistas.** No toca el fitness ni la eficiencia
+  walk-forward, así que la evolución del GA se comporta igual y el cambio es
+  acotado y revisable. Llevarlo al fitness redefiniría el objetivo de la
+  búsqueda y obligaría a repensar `overfit_gap` y el check `wf_efficiency`, que
+  dependen del esquema IS/OOS actual.
+- **Se reporta, no bloquea** — mismo criterio que con el DSR. Convertirlo en
+  check es añadir `cpcv_p5` a `checks` con su umbral en `GatingThresholds`,
+  donde ya están los parámetros (`cpcv_blocks`, `cpcv_k`, `cpcv_embargo_pct`).
+
+---
+
 ## Lo que NO cubre
 
 Siguen abiertas las brechas del informe del motor:
 
-- **G2** — validación cruzada purgada y combinatoria (CPCV) en lugar de
-  walk-forward simple. *Es la siguiente en orden.*
 - **G3** — triple-barrier y meta-labeling.
 - **G4** — fill al `open[i+1]`, market impact y capacidad, point-in-time.
 - **G5** — cross-checks que faltan (noise test, SPP, incubación).
@@ -254,4 +336,5 @@ pytest tests/unit/domain/test_multiple_testing_control.py   # 19 tests · G1
 pytest tests/unit/domain/test_trial_registry.py             # 10 tests · G1
 pytest tests/integration/test_experiment_registry.py        # 10 tests · G8+G9
 pytest tests/unit/domain/test_robustness_headline.py        #  6 tests · G9
+pytest tests/unit/domain/test_purged_cpcv.py                # 14 tests · G2
 ```
