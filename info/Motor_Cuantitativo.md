@@ -2,8 +2,8 @@
 
 **Capa 1** (G1, G8, G9): control de multiplicidad, registro de experimentos y
 honestidad de presentación.
-**Capa 2** (G2, G4.1): validación cruzada combinatoria purgada y relleno a la
-apertura siguiente.
+**Capa 2** (G2, G4.1, G5): validación cruzada combinatoria purgada, relleno a la
+apertura siguiente y cascada de retests.
 
 ---
 
@@ -374,6 +374,58 @@ otro mercado o marcos temporales más cortos, donde el hueco pesa más.
 
 ---
 
+# G5 — Cascada de retests
+
+**Brecha:** StrategyQuant retiene una estrategia solo si sobrevive a una
+cascada de perturbaciones. El motor tenía el retest más valioso (matriz
+walk-forward) y el Monte Carlo de operaciones, pero le faltaban tres que son
+baratos y atacan formas de sobreajuste que ningún walk-forward detecta.
+
+## Las cuatro pruebas
+
+Cada una responde a una pregunta distinta sobre de dónde venía el resultado:
+
+| Prueba | Pregunta |
+|---|---|
+| **Ruido en los precios** | ¿Dependía de las velas **exactas** que ocurrieron? |
+| **Arranque desplazado** | ¿Dependía de dónde se cortó el histórico? |
+| **Operaciones omitidas** | ¿Dependía de capturarlas **todas**? |
+| **Parámetros perturbados** | ¿Dependía del parámetro exacto? |
+
+- **`noise_test`** perturba el OHLC con ruido proporcional al ATR y reevalúa. El
+  pasado es *una* realización de un proceso, no la única que podía haber
+  ocurrido: una estrategia con edge tolera que las velas hubieran sido algo
+  distintas, y una ajustada a la curva se desploma porque vivía de máximos y
+  mínimos concretos. Es el *randomize history* de StrategyQuant, el retest más
+  citado. El ruido respeta la coherencia de la vela — tras perturbar se
+  recomponen `high` y `low` como envolvente del cuerpo, así que ninguna queda
+  con máximo por debajo del cierre.
+- **`starting_bar_test`** recorta el arranque en distintos desplazamientos. Una
+  estrategia sólida rinde parecido empiece donde empiece.
+- **`skip_trades_test`** descarta al azar un porcentaje de las operaciones. En
+  real se fallan ejecuciones: hay desconexiones, órdenes rechazadas y momentos
+  en que no se estaba mirando. Si el beneficio se concentra en unos pocos
+  aciertos, la distribución se hunde. Un test lo demuestra con el caso puro: un
+  único ganador dominante entre cuarenta pérdidas: el backtest completo gana,
+  pero el percentil 5 pierde.
+- **`parameter_sensitivity`** ya existía desde G1 — es el jitter que antes
+  alimentaba mal al PBO, reutilizado aquí para lo que sí mide.
+
+## Dos decisiones de criterio
+
+**Una prueba que no pudo ejecutarse NO cuenta como fallo.** Si la serie es corta
+o hay muy pocas operaciones, la prueba no llega a correr; condenar por ello
+sería confundir ausencia de evidencia con evidencia de fragilidad. La tarjeta lo
+muestra como «sin datos» en gris, nunca en verde — pintarlo de aprobado sería
+justo el adorno que este panel existe para evitar.
+
+**Se aplica al ranking, no a cada intento del gating.** Son unos 15 backtests
+extra por estrategia y solo tiene sentido gastarlos en las que ya han pasado
+todo lo demás. Se reporta y no recorta el cupo; convertirlo en filtro es usar el
+booleano `survived`.
+
+---
+
 ## Lo que NO cubre
 
 Siguen abiertas las brechas del informe del motor:
@@ -381,7 +433,8 @@ Siguen abiertas las brechas del informe del motor:
 - **G3** — triple-barrier y meta-labeling.
 - **G4** (resto) — market impact y capacidad, funding en perpetuos,
   point-in-time y universo sin sesgo de supervivencia.
-- **G5** — cross-checks que faltan (noise test, SPP, incubación).
+- **G5** (resto) — System Parameter Permutation e incubación obligatoria en
+  paper antes de permitir capital real.
 - **G6** — HRP para la construcción de cartera.
 - **G7** — detección de régimen y estabilidad temporal.
 
@@ -400,4 +453,5 @@ pytest tests/integration/test_experiment_registry.py        # 10 tests · G8+G9
 pytest tests/unit/domain/test_robustness_headline.py        #  6 tests · G9
 pytest tests/unit/domain/test_purged_cpcv.py                # 14 tests · G2
 pytest tests/unit/domain/test_backtest_execution.py         # 16 tests · G4.1
+pytest tests/unit/domain/test_retest_cascade.py             # 14 tests · G5
 ```

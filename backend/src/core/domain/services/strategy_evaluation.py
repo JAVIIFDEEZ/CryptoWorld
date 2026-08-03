@@ -182,6 +182,205 @@ def purged_cpcv(df, spec: dict, n_blocks: int = 8, k: int = 2, embargo_pct: floa
     return result
 
 
+def noise_test(df, spec: dict, n_runs: int = 10, atr_fraction: float = 0.25,
+               ppy: float = 365.0, seed: int = 42, costs: CostModel | None = None) -> dict:
+    """
+    ¿La estrategia depende de los precios EXACTOS que ocurrieron?
+
+    Se perturba el OHLC con ruido proporcional al ATR y se reevalúa. El pasado
+    es una realización de un proceso, no la única que podía haber ocurrido: una
+    estrategia con edge real tolera que las velas hubieran sido ligeramente
+    distintas, y una ajustada a la curva se desploma porque vivía de máximos y
+    mínimos concretos. Es el retest más citado de StrategyQuant
+    (*randomize history*) y ataca el curve fitting de frente.
+
+    El ruido respeta la coherencia de la vela: tras perturbar, se recomponen
+    `high` y `low` como envolvente de apertura y cierre, de modo que ninguna
+    vela queda con máximo por debajo del cierre.
+    """
+    import pandas as pd
+
+    close = df["close"].to_numpy(dtype=float)
+    if close.size < 30:
+        return {"n_runs": 0, "note": "Serie insuficiente para el test de ruido."}
+
+    high = df["high"].to_numpy(dtype=float) if "high" in df else close
+    low = df["low"].to_numpy(dtype=float) if "low" in df else close
+    open_ = df["open"].to_numpy(dtype=float) if "open" in df else close
+
+    # ATR simplificado (rango medio de la vela): la escala natural del ruido.
+    atr = float(np.mean(high - low))
+    if not np.isfinite(atr) or atr <= 0:
+        atr = float(np.mean(np.abs(np.diff(close)))) if close.size > 1 else 0.0
+    amplitude = atr * max(0.0, atr_fraction)
+    if amplitude <= 0:
+        return {"n_runs": 0, "note": "Sin volatilidad medible para escalar el ruido."}
+
+    base = metrics.sharpe_ratio(_segment_backtest(df, spec, costs)["bar_returns"], ppy)
+    rng = np.random.default_rng(seed)
+    sharpes: list[float] = []
+
+    for _ in range(max(1, n_runs)):
+        shock = rng.normal(0.0, amplitude, close.size)
+        nc = np.maximum(close + shock, 1e-9)
+        no = np.maximum(open_ + rng.normal(0.0, amplitude, close.size), 1e-9)
+        # Envolvente coherente: el máximo nunca por debajo del cuerpo de la vela.
+        nh = np.maximum.reduce([high + shock, nc, no])
+        nl = np.minimum.reduce([np.maximum(low + shock, 1e-9), nc, no])
+        noisy = pd.DataFrame({
+            "timestamp": df["timestamp"].values if "timestamp" in df else np.arange(close.size),
+            "open": no, "high": nh, "low": nl, "close": nc,
+            "volume": df["volume"].values if "volume" in df else np.ones(close.size),
+        })
+        sharpes.append(metrics.sharpe_ratio(_segment_backtest(noisy, spec, costs)["bar_returns"], ppy))
+
+    arr = np.array(sharpes, dtype=float)
+    return {
+        "n_runs": int(arr.size),
+        "atr_fraction": atr_fraction,
+        "base_sharpe": round(float(base), 3),
+        "noisy_sharpe_mean": round(float(arr.mean()), 3),
+        "noisy_sharpe_median": round(float(np.median(arr)), 3),
+        "noisy_sharpe_p5": round(float(np.percentile(arr, 5)), 3),
+        "pct_runs_positive": round(float((arr > 0).mean() * 100), 1),
+        # Cuánto del Sharpe se evapora al mover las velas. Alto = la estrategia
+        # vivía de precios concretos.
+        "degradation_pct": round(
+            float((base - np.median(arr)) / abs(base) * 100) if abs(base) > 1e-9 else 0.0, 1
+        ),
+    }
+
+
+def starting_bar_test(df, spec: dict, offsets=(0, 5, 11, 23, 37), ppy: float = 365.0,
+                      costs: CostModel | None = None) -> dict:
+    """
+    ¿El resultado depende de dónde se empezó a mirar?
+
+    Se recorta el arranque de la serie en distintos desplazamientos y se
+    reevalúa. Una estrategia sólida da resultados parecidos empiece donde
+    empiece; una que solo funciona con un alineamiento concreto del histórico
+    delata que su rendimiento venía de la casualidad de por dónde se cortó.
+    """
+    sharpes: list[dict] = []
+    for off in offsets:
+        off = int(off)
+        if off < 0 or len(df) - off < 60:
+            continue
+        segment = df.iloc[off:].reset_index(drop=True)
+        s = metrics.sharpe_ratio(_segment_backtest(segment, spec, costs)["bar_returns"], ppy)
+        sharpes.append({"offset": off, "sharpe": round(float(s), 3)})
+
+    if not sharpes:
+        return {"n_offsets": 0, "note": "Serie insuficiente para variar el arranque."}
+
+    values = np.array([s["sharpe"] for s in sharpes], dtype=float)
+    return {
+        "n_offsets": len(sharpes),
+        "results": sharpes,
+        "sharpe_mean": round(float(values.mean()), 3),
+        "sharpe_std": round(float(values.std(ddof=1)) if values.size > 1 else 0.0, 3),
+        "sharpe_min": round(float(values.min()), 3),
+        "pct_offsets_positive": round(float((values > 0).mean() * 100), 1),
+    }
+
+
+def skip_trades_test(trades: list, skip_pct: float = 0.1, n_runs: int = 200,
+                     seed: int = 42) -> dict:
+    """
+    ¿Sobrevive si se pierde una parte de las operaciones?
+
+    En real se fallan ejecuciones: hay desconexiones, órdenes rechazadas y
+    momentos en que no se estaba mirando. Se descarta al azar un `skip_pct` de
+    los trades y se mide el P&L resultante. Si el resultado depende de haber
+    capturado TODAS las operaciones —típico de estrategias cuyo beneficio se
+    concentra en unos pocos aciertos—, la distribución se hunde.
+    """
+    pnls = [float(t.get("pnl_pct", 0.0)) for t in (trades or [])]
+    if len(pnls) < 5:
+        return {"n_runs": 0, "note": "Muy pocas operaciones para el test de omisión."}
+
+    rng = np.random.default_rng(seed)
+    keep = max(1, int(round(len(pnls) * (1.0 - max(0.0, min(skip_pct, 0.9))))))
+    totals: list[float] = []
+    arr = np.array(pnls, dtype=float)
+    for _ in range(max(1, n_runs)):
+        idx = rng.choice(arr.size, size=keep, replace=False)
+        totals.append(float(arr[idx].sum()))
+
+    dist = np.array(totals, dtype=float)
+    full_total = float(arr.sum())
+    return {
+        "n_runs": int(dist.size),
+        "skip_pct": skip_pct,
+        "trades_total": int(arr.size),
+        "trades_kept": keep,
+        "full_pnl_pct": round(full_total, 2),
+        "pnl_median_pct": round(float(np.median(dist)), 2),
+        "pnl_p5_pct": round(float(np.percentile(dist, 5)), 2),
+        "pct_runs_profitable": round(float((dist > 0).mean() * 100), 1),
+    }
+
+
+def retest_cascade(df, spec: dict, trades: list | None = None, ppy: float = 365.0,
+                   seed: int = 42, costs: CostModel | None = None,
+                   noise_runs: int = 10) -> dict:
+    """
+    Cascada de retests al estilo StrategyQuant, con un veredicto agregado.
+
+    Cada prueba ataca una forma distinta de sobreajuste:
+      · ruido en los precios → dependencia de los datos exactos;
+      · desplazamiento del arranque → dependencia del corte del histórico;
+      · omisión de operaciones → dependencia de capturarlas todas;
+      · sensibilidad paramétrica → dependencia del parámetro exacto.
+
+    `survived` resume si la estrategia aguanta las cuatro. Se REPORTA: no
+    recorta el ranking. Convertirlo en filtro es usar este booleano.
+
+    Si no se pasan `trades`, se recalculan aquí: un backtest más es barato al
+    lado de los ~15 que cuesta la cascada, y evita arrastrar la lista completa
+    de operaciones por el payload solo para esto.
+    """
+    if trades is None:
+        trades = _segment_backtest(df, spec, costs)["trades"]
+
+    noise = noise_test(df, spec, n_runs=noise_runs, ppy=ppy, seed=seed, costs=costs)
+    starting = starting_bar_test(df, spec, ppy=ppy, costs=costs)
+    skipping = skip_trades_test(trades or [], seed=seed)
+    sensitivity = parameter_sensitivity(df, spec, ppy=ppy, seed=seed, costs=costs)
+
+    # Cada criterio se da por superado si la prueba pudo ejecutarse Y el
+    # resultado aguanta. Una prueba que no pudo correr no cuenta como fallo:
+    # ausencia de evidencia no es evidencia de fragilidad.
+    checks = {
+        "noise": noise.get("n_runs", 0) == 0 or noise.get("pct_runs_positive", 0) >= 60.0,
+        "starting_bar": (starting.get("n_offsets", 0) == 0
+                         or starting.get("pct_offsets_positive", 0) >= 60.0),
+        "skip_trades": (skipping.get("n_runs", 0) == 0
+                        or skipping.get("pct_runs_profitable", 0) >= 60.0),
+        "parameter_sensitivity": (sensitivity.get("n_neighbors", 0) == 0
+                                  or sensitivity.get("pct_neighbors_positive", 0) >= 50.0),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+
+    return {
+        "survived": not failed,
+        "checks": checks,
+        "failed": failed,
+        "noise": noise,
+        "starting_bar": starting,
+        "skip_trades": skipping,
+        "parameter_sensitivity": sensitivity,
+        "note": (
+            "Sobrevive a las cuatro perturbaciones: ruido en los precios, "
+            "desplazamiento del arranque, omisión de operaciones y cambio de "
+            "parámetros."
+            if not failed else
+            "Falla en: " + ", ".join(failed) + ". El resultado depende de "
+            "condiciones concretas del histórico más de lo que un edge real debería."
+        ),
+    }
+
+
 def walk_forward_matrix(df, spec: dict, splits_list=(3, 4, 5, 6),
                         ppy: float = 365.0, costs: CostModel | None = None) -> dict:
     """

@@ -36,6 +36,7 @@ from core.domain.services.strategy_evaluation import (
     evaluate_fitness,
     gate_spec,
     holdout_performance,
+    retest_cascade,
     returns_series,
     walk_forward_matrix,
 )
@@ -609,6 +610,14 @@ def generate_strategies(
     rejected = [f for f in finalists if not f["passed_gating"]]
     for rank, f in enumerate(passed, start=1):
         f["rank"] = rank
+
+    # ── Cascada de retests sobre las supervivientes ────────────────
+    # Se aplica al RANKING y no a cada intento del gating: son ~15 backtests
+    # extra por estrategia, y solo tiene sentido gastarlos en las que ya han
+    # pasado todo lo demás. Se reporta, no recorta el cupo.
+    for f in passed:
+        f["retests"] = retest_cascade(df_evo, f["spec"], ppy=ppy, costs=costs,
+                                      seed=cfg.ga.seed)
 
     # Radiografía de estabilidad temporal del campeón: matriz walk-forward
     # (Sharpe OOS por tramo bajo distintos troceos, solo zona de evolución).

@@ -200,6 +200,55 @@ export interface Finalist {
     consistency_score: number
     results: CrossAssetRow[]
   }
+  /** Cascada de retests estilo StrategyQuant (se reporta, no recorta el cupo). */
+  retests?: RetestCascade
+}
+
+/**
+ * Cascada de retests: cada prueba ataca una forma distinta de sobreajuste.
+ *
+ * `survived` es true solo si aguanta las cuatro. Una prueba que no pudo
+ * ejecutarse (serie corta, pocas operaciones) NO cuenta como fallo: ausencia
+ * de evidencia no es evidencia de fragilidad.
+ */
+export interface RetestCascade {
+  survived: boolean
+  checks: {
+    noise: boolean
+    starting_bar: boolean
+    skip_trades: boolean
+    parameter_sensitivity: boolean
+  }
+  failed: string[]
+  noise: {
+    n_runs: number
+    base_sharpe?: number
+    noisy_sharpe_median?: number
+    pct_runs_positive?: number
+    degradation_pct?: number
+  }
+  starting_bar: {
+    n_offsets: number
+    sharpe_std?: number
+    sharpe_min?: number
+    pct_offsets_positive?: number
+    results?: { offset: number; sharpe: number }[]
+  }
+  skip_trades: {
+    n_runs: number
+    full_pnl_pct?: number
+    pnl_median_pct?: number
+    pnl_p5_pct?: number
+    pct_runs_profitable?: number
+  }
+  parameter_sensitivity: {
+    n_neighbors: number
+    base_sharpe?: number
+    neighbor_sharpe_p5?: number
+    pct_neighbors_positive?: number
+    median_degradation_pct?: number
+  }
+  note: string
 }
 
 /** Coordenadas de robustez de una candidata (para el universo 3D). */

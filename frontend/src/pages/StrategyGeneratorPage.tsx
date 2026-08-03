@@ -27,6 +27,7 @@ import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
 import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
 import MultipleTestingCard from '@/components/generator/MultipleTestingCard'
 import CpcvDistributionCard from '@/components/generator/CpcvDistributionCard'
+import RetestCascadeCard from '@/components/generator/RetestCascadeCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -424,6 +425,11 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
           cpcv={winner.gating.metrics.cpcv}
           walkForwardSharpe={winner.gating.metrics.mean_oos_sharpe}
         />
+      )}
+
+      {/* Cuatro perturbaciones: ¿el edge era real o el histórico afortunado? */}
+      {winner?.retests && (
+        <RetestCascadeCard retests={winner.retests} championDesc={winner.description} />
       )}
 
       <Generator3DPanel
