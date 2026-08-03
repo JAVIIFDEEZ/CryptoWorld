@@ -18,6 +18,7 @@ import numpy as np
 from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
+from core.domain.services import significance
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.backtest_report import build_robustness_report
 from core.domain.services.technical_analysis_service import (
@@ -227,6 +228,11 @@ def run_robustness_suite(
         # una expectativa. El titular que debe leerse primero es el de fuera de
         # muestra y deflactado por el nº de configuraciones probadas.
         "headline": {
+            # Magnitud e incertidumbre juntas: el intervalo dice si el Sharpe
+            # es distinguible de cero con este histórico, y el PSR con qué
+            # probabilidad. Separarlos en dos sitios es cómo se acaba mostrando
+            # solo la magnitud.
+            "significance": significance.annotate(best_bt["bar_returns"], ppy),
             "oos_sharpe": wf_anchored.get("mean_oos_sharpe"),
             "in_sample_sharpe": round(float(observed_sharpe), 3),
             "deflated_sharpe": deflated_sharpe.get("dsr"),

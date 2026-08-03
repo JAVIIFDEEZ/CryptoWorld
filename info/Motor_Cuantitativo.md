@@ -6,8 +6,9 @@ honestidad de presentación.
 apertura siguiente, cascada de retests, SPP e incubación.
 **Capa 3** (G3, G6, G7): etiquetado triple-barrera con meta-etiquetado, HRP para
 la cartera, y detección de régimen con estabilidad temporal.
-**Integración** (G3 al sizing, G4 impacto y capacidad): el meta-modelo decide el
-tamaño de la posición, y cada finalista reporta cuánto dinero admite su edge.
+**Integración** (G3 al sizing, G4 impacto y capacidad, G9d significancia): el
+meta-modelo decide el tamaño de la posición, cada finalista reporta cuánto dinero
+admite su edge, y ninguna métrica se muestra ya sin su incertidumbre.
 
 ---
 
@@ -630,18 +631,60 @@ Dos decisiones:
 
 ---
 
+---
+
+# G9 (d) — Significancia junto a cada métrica
+
+**Brecha:** «Sharpe 1.8» no es una afirmación completa. Un Sharpe de 1.8 medido
+sobre 60 velas es compatible con que el Sharpe verdadero sea 0; sobre 3 000 no
+lo es. Reportar solo la magnitud invita a leer como sólido lo que es ruido — el
+mismo error de fondo que corregía el Deflated Sharpe, pero a nivel de cada
+métrica en lugar de la selección.
+
+`domain/services/significance.py` implementa:
+
+- **Error estándar del Sharpe (Lo, 2002)**, corregido por asimetría y curtosis.
+  Los dos términos importan y explican por qué los retornos financieros engañan:
+  la **asimetría negativa** —ganancias pequeñas y pérdidas grandes, el perfil de
+  vender volatilidad— *aumenta* el error, igual que las **colas gordas**, que en
+  cripto son la norma. Asumir normalidad subestima la incertidumbre justo en las
+  estrategias que más lo necesitan; hay un test que lo fija comparando una serie
+  simétrica con otra de igual Sharpe y cola izquierda pesada.
+- **Intervalo de confianza** del Sharpe anualizado, con el dato accionable:
+  `excludes_zero`. Si el intervalo incluye el cero, la magnitud no permite
+  descartar que no haya edge en absoluto.
+- **Probabilistic Sharpe Ratio**: probabilidad de que el Sharpe verdadero supere
+  un umbral. Es la misma familia que el DSR — el DSR es un PSR cuyo umbral se ha
+  elevado para absorber el nº de pruebas. Este mide la incertidumbre de **una
+  serie**; aquel, la del **proceso de selección**.
+- **`min_track_record_length`**: cuántas observaciones harían falta para afirmar
+  el edge con 95 %. Convierte «¿es fiable?» en «¿cuánto histórico falta?», que
+  es accionable en vez de un veredicto seco.
+
+Se expone en el gating de cada finalista y en el titular del Camino A. Una serie
+constante —una estrategia que no opera— devuelve `None`, no un cero: sobre algo
+que no varía no hay magnitud ni incertidumbre que reportar, y un cero sugeriría
+una certeza que no existe.
+
+En el generador, `CapacityCard` muestra capacidad y significancia juntas, porque
+las dos matizan el mismo titular.
+
+---
+
 ## Lo que NO cubre
 
 - **G4 (resto del resto)** — funding en perpetuos, point-in-time y universo sin
   sesgo de supervivencia. Requieren datos que el almacén todavía no guarda
   (`delisted_at`, histórico de funding), así que son trabajo de datos antes que
-  de método.
-- **G9 (d)** — significancia (intervalo o p-valor) junto a cada métrica
-  mostrada, no solo su magnitud.
+  de método: implementar la lógica sin la fuente sería código muerto.
 - El **triple-barrera como etiqueta del backtest**: hoy alimenta al meta-modelo
   y al sizing, pero la salida de las operaciones la sigue decidiendo la regla
   del spec. Sustituirla por las barreras cambiaría la semántica de toda
   estrategia guardada, así que es una decisión de producto, no un detalle.
+- El **modo de sizing `conviction` no está activo en el generador**: existe en
+  el motor y está probado, pero ningún preset lo usa todavía. Activarlo exige
+  entrenar un meta-modelo por estrategia dentro del pipeline, que es coste de
+  cómputo y una decisión de producto sobre cuándo pagarlo.
 
 ---
 
@@ -663,4 +706,5 @@ pytest tests/unit/domain/test_hrp.py                        # 14 tests · G6
 pytest tests/unit/domain/test_regime.py                     # 12 tests · G7
 pytest tests/unit/domain/test_meta_model.py                 # 13 tests · G3 int.
 pytest tests/unit/domain/test_market_impact.py              # 18 tests · G4
+pytest tests/unit/domain/test_significance.py               # 16 tests · G9d
 ```

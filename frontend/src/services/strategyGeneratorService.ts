@@ -147,6 +147,55 @@ export interface CpcvDistribution {
   purge_note?: string
 }
 
+/**
+ * Significancia de una métrica: magnitud e incertidumbre juntas.
+ *
+ * «Sharpe 1.8» no es una afirmación completa: medido sobre 60 velas es
+ * compatible con que el Sharpe verdadero sea 0, y sobre 3 000 no lo es.
+ */
+export interface Significance {
+  confidence_interval: {
+    sharpe: number | null
+    ci_lower?: number
+    ci_upper?: number
+    confidence?: number
+    observations?: number
+    /** Si el intervalo NO incluye el cero, la magnitud sí es concluyente. */
+    excludes_zero?: boolean
+    note?: string
+  }
+  probabilistic_sharpe: {
+    psr: number | null
+    benchmark_sharpe?: number
+    /** Observaciones que harían falta para afirmar el edge con 95 %. */
+    min_track_record_length?: number | null
+    note?: string
+  }
+  significant: boolean
+  note: string
+}
+
+/**
+ * Capacidad: cuánto dinero admite el edge antes de que su propio impacto de
+ * mercado se lo coma. Es una propiedad tan real de la estrategia como su
+ * Sharpe — y la que ningún backtest retail reporta.
+ */
+export interface CapacityEstimate {
+  capacity_usd: number | null
+  base_sharpe_per_period?: number
+  adv_usd?: number
+  n_orders?: number
+  curve?: {
+    aum_usd: number
+    participation_pct: number
+    impact_bps_per_order: number
+    net_sharpe: number
+    sharpe_retained_pct: number
+    feasible: boolean
+  }[]
+  note?: string
+}
+
 export interface GatingMetrics {
   n_trades: number
   total_return_pct: number
@@ -162,6 +211,9 @@ export interface GatingMetrics {
   cpcv?: CpcvDistribution
   cpcv_sharpe_p5?: number | null
   cpcv_sharpe_median?: number | null
+  capacity?: CapacityEstimate
+  capacity_usd?: number | null
+  significance?: Significance
   turnover?: number
   cost_drag_pct?: number
   exit_reasons?: Record<string, number>

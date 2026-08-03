@@ -70,6 +70,23 @@ class TestHeadline:
     def test_simulated_results_disclaimer_travels_with_the_report(self, suite):
         assert "SIMULADOS" in suite["disclaimer"]
 
+    @pytest.mark.unit
+    def test_headline_carries_the_uncertainty_not_just_the_magnitude(self, suite):
+        """«Sharpe 1.8» no es una afirmación completa: sin el intervalo no se
+        sabe si es distinguible de cero con este histórico."""
+        block = suite["headline"]["significance"]
+        assert "confidence_interval" in block
+        assert "probabilistic_sharpe" in block
+        assert isinstance(block["significant"], bool)
+
+    @pytest.mark.unit
+    def test_system_parameter_permutation_is_reported(self, suite):
+        """La mediana de todo el espacio de parámetros acompaña al mejor: la
+        brecha entre ambos es lo que aporta acertar la configuración."""
+        spp = suite["diagnostics"]["system_parameter_permutation"]
+        assert spp["n_combos"] >= 2
+        assert spp["best_sharpe"] >= spp["median_sharpe"]
+
 
 class TestCostsAreApplied:
 

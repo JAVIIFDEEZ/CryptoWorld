@@ -26,6 +26,7 @@ from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
 from core.domain.services import market_impact as impact
+from core.domain.services import significance as sig
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk, spec_sizing
 from core.domain.services.technical_analysis_service import backtest_signals
@@ -796,6 +797,10 @@ def gate_spec(
             # Cuánto dinero admite el edge antes de que su impacto lo anule.
             "capacity": capacity,
             "capacity_usd": capacity.get("capacity_usd"),
+            # La magnitud del Sharpe sin su incertidumbre invita a leer como
+            # sólido lo que es ruido: aquí va el intervalo y la probabilidad de
+            # que el Sharpe verdadero supere cero.
+            "significance": sig.annotate(full["bar_returns"], ppy),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
             "exit_reasons": full["exit_reasons"],

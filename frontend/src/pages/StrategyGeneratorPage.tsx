@@ -28,6 +28,7 @@ import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
 import MultipleTestingCard from '@/components/generator/MultipleTestingCard'
 import CpcvDistributionCard from '@/components/generator/CpcvDistributionCard'
 import RetestCascadeCard from '@/components/generator/RetestCascadeCard'
+import CapacityCard from '@/components/generator/CapacityCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -427,9 +428,17 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
         />
       )}
 
-      {/* Cuatro perturbaciones: ¿el edge era real o el histórico afortunado? */}
+      {/* Cinco perturbaciones: ¿el edge era real o el histórico afortunado? */}
       {winner?.retests && (
         <RetestCascadeCard retests={winner.retests} championDesc={winner.description} />
+      )}
+
+      {/* Cuánto dinero admite el edge, y si su Sharpe es concluyente. */}
+      {(winner?.gating.metrics.capacity || winner?.gating.metrics.significance) && (
+        <CapacityCard
+          capacity={winner.gating.metrics.capacity}
+          significance={winner.gating.metrics.significance}
+        />
       )}
 
       <Generator3DPanel
