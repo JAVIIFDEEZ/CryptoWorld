@@ -331,9 +331,14 @@ def retest_cascade(df, spec: dict, trades: list | None = None, ppy: float = 365.
       · ruido en los precios → dependencia de los datos exactos;
       · desplazamiento del arranque → dependencia del corte del histórico;
       · omisión de operaciones → dependencia de capturarlas todas;
-      · sensibilidad paramétrica → dependencia del parámetro exacto.
+      · sensibilidad paramétrica → dependencia del parámetro exacto;
+      · estabilidad temporal → ¿el beneficio está repartido, o fue una racha?
 
-    `survived` resume si la estrategia aguanta las cuatro. Se REPORTA: no
+    Se reporta además el rendimiento por régimen de volatilidad: un edge que
+    solo vive en mercados turbulentos sigue siendo un edge, pero conviene
+    saberlo antes de asignarle capital.
+
+    `survived` resume si la estrategia aguanta las cinco. Se REPORTA: no
     recorta el ranking. Convertirlo en filtro es usar este booleano.
 
     Si no se pasan `trades`, se recalculan aquí: un backtest más es barato al
@@ -343,10 +348,21 @@ def retest_cascade(df, spec: dict, trades: list | None = None, ppy: float = 365.
     if trades is None:
         trades = _segment_backtest(df, spec, costs)["trades"]
 
+    from core.domain.services import regime as regime_svc
+
     noise = noise_test(df, spec, n_runs=noise_runs, ppy=ppy, seed=seed, costs=costs)
     starting = starting_bar_test(df, spec, ppy=ppy, costs=costs)
     skipping = skip_trades_test(trades or [], seed=seed)
     sensitivity = parameter_sensitivity(df, spec, ppy=ppy, seed=seed, costs=costs)
+
+    # Estabilidad temporal y reparto por régimen: un beneficio concentrado en un
+    # tramo no es un edge, es una racha — y ningún walk-forward que promedie
+    # tramos lo delata, porque el promedio es justo lo que lo esconde.
+    full = _segment_backtest(df, spec, costs)
+    stability = regime_svc.temporal_stability(full["bar_returns"])
+    regimes = regime_svc.detect_regimes(df["close"].to_numpy(dtype=float))
+    by_regime = (regime_svc.performance_by_regime(full["bar_returns"], regimes["labels"])
+                 if regimes.get("n") else {"note": "Serie insuficiente para clasificar regímenes."})
 
     # Cada criterio se da por superado si la prueba pudo ejecutarse Y el
     # resultado aguanta. Una prueba que no pudo correr no cuenta como fallo:
@@ -359,6 +375,7 @@ def retest_cascade(df, spec: dict, trades: list | None = None, ppy: float = 365.
                         or skipping.get("pct_runs_profitable", 0) >= 60.0),
         "parameter_sensitivity": (sensitivity.get("n_neighbors", 0) == 0
                                   or sensitivity.get("pct_neighbors_positive", 0) >= 50.0),
+        "temporal_stability": stability.get("n_buckets", 0) == 0 or bool(stability.get("stable")),
     }
     failed = [name for name, ok in checks.items() if not ok]
 
@@ -370,10 +387,12 @@ def retest_cascade(df, spec: dict, trades: list | None = None, ppy: float = 365.
         "starting_bar": starting,
         "skip_trades": skipping,
         "parameter_sensitivity": sensitivity,
+        "temporal_stability": stability,
+        "by_regime": by_regime,
         "note": (
-            "Sobrevive a las cuatro perturbaciones: ruido en los precios, "
-            "desplazamiento del arranque, omisión de operaciones y cambio de "
-            "parámetros."
+            "Sobrevive a todas las perturbaciones: ruido en los precios, "
+            "desplazamiento del arranque, omisión de operaciones, cambio de "
+            "parámetros y reparto del beneficio en el tiempo."
             if not failed else
             "Falla en: " + ", ".join(failed) + ". El resultado depende de "
             "condiciones concretas del histórico más de lo que un edge real debería."

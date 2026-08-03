@@ -282,6 +282,26 @@ def _live_account(strategy, owner, cap=100.0):
     return acc, conn
 
 
+def _incubate(acc):
+    """Envejece la cartera para que supere la puerta de incubación.
+
+    Promocionar a real exige un periodo mínimo en simulado con operaciones
+    suficientes (ver domain/services/incubation.py). Los tests de este bloque
+    verifican OTRAS cosas —el tope de nocional, el kill-switch, la propiedad de
+    la conexión—, así que la incubación se da por cumplida en lugar de repetirse
+    en cada uno. Su gate tiene sus propios tests en test_incubation.py.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from core.infrastructure.persistence.models import PaperTradingAccount
+
+    PaperTradingAccount.objects.filter(id=acc.id).update(
+        started_at=timezone.now() - timedelta(days=30), trades_count=10,
+    )
+    acc.refresh_from_db()
+    return acc
+
+
 class TestLivePromotion:
 
     @pytest.mark.integration
@@ -328,6 +348,7 @@ class TestLivePromotion:
         acc.live_error = "Ejecución real desactivada: fondos insuficientes."
         acc.live_disabled_at = timezone.now()
         acc.save(update_fields=["live_enabled", "live_error", "live_disabled_at"])
+        _incubate(acc)
 
         resp = authenticated_client.post(
             f"/api/strategies/paper/{acc.id}/live/",
@@ -360,7 +381,7 @@ class TestLivePromotion:
     def test_promotion_endpoint(self, authenticated_client, strategy, test_user):
         from core.infrastructure.persistence.models import ExchangeConnection
         from core.infrastructure.security.crypto import encrypt_secret
-        acc = _account(strategy, owner=test_user)
+        acc = _incubate(_account(strategy, owner=test_user))
         conn = ExchangeConnection.objects.create(
             owner=test_user, exchange="binance",
             api_key_enc=encrypt_secret("K"), api_secret_enc=encrypt_secret("S"),
@@ -384,7 +405,9 @@ class TestLivePromotion:
     def test_promotion_requires_own_connection(self, authenticated_client, strategy, test_user, db):
         from core.infrastructure.persistence.models import ExchangeConnection, User
         from core.infrastructure.security.crypto import encrypt_secret
-        acc = _account(strategy, owner=test_user)
+        # Incubada, para que el 400 salga por la conexión ajena y no por la
+        # puerta de incubación: cada test debe fallar por su motivo.
+        acc = _incubate(_account(strategy, owner=test_user))
         other = User.objects.create_user(email="o@e.com", username="other", password="x")
         foreign = ExchangeConnection.objects.create(
             owner=other, exchange="binance",

@@ -207,9 +207,9 @@ export interface Finalist {
 /**
  * Cascada de retests: cada prueba ataca una forma distinta de sobreajuste.
  *
- * `survived` es true solo si aguanta las cuatro. Una prueba que no pudo
- * ejecutarse (serie corta, pocas operaciones) NO cuenta como fallo: ausencia
- * de evidencia no es evidencia de fragilidad.
+ * `survived` es true solo si aguanta todas. Una prueba que no pudo ejecutarse
+ * (serie corta, pocas operaciones) NO cuenta como fallo: ausencia de evidencia
+ * no es evidencia de fragilidad.
  */
 export interface RetestCascade {
   survived: boolean
@@ -218,6 +218,7 @@ export interface RetestCascade {
     starting_bar: boolean
     skip_trades: boolean
     parameter_sensitivity: boolean
+    temporal_stability: boolean
   }
   failed: string[]
   noise: {
@@ -248,6 +249,27 @@ export interface RetestCascade {
     pct_neighbors_positive?: number
     median_degradation_pct?: number
   }
+  /** ¿El beneficio está repartido en el tiempo, o fue una racha? */
+  temporal_stability: {
+    n_buckets: number
+    bucket_returns_pct?: number[]
+    positive_buckets?: number
+    pct_buckets_positive?: number
+    /** Fracción del beneficio total que aporta el MEJOR periodo. */
+    concentration?: number
+    best_bucket?: number
+    worst_bucket?: number
+    stable?: boolean
+    note?: string
+  }
+  /** Dónde vive el edge: reparto del rendimiento por régimen de volatilidad. */
+  by_regime?: Record<string, {
+    bars: number
+    share_pct?: number
+    total_return_pct?: number
+    sharpe_per_period?: number
+    note?: string
+  }>
   note: string
 }
 
@@ -725,6 +747,30 @@ export interface PortfolioMember {
   interval: string
   fitness: number | null
   window_return_pct: number | null
+  /** Peso asignado por paridad de riesgo jerárquica (HRP). */
+  hrp_weight?: number | null
+}
+
+/**
+ * Asignación por paridad de riesgo jerárquica.
+ *
+ * Equiponderar da el mismo capital a una estrategia tranquila que a otra que
+ * triplica su volatilidad, y trata tres clones del mismo edge como tres
+ * apuestas distintas. HRP agrupa por correlación y reparte por varianza
+ * inversa, sin invertir la matriz de covarianzas — que es lo que hace que
+ * Markowitz amplifique el error de estimación.
+ */
+export interface HrpAllocation {
+  n_assets: number
+  weights?: Record<string, number>
+  order?: number[]
+  ordered_labels?: string[]
+  portfolio_volatility?: number
+  equal_weight_volatility?: number
+  /** 1/HHI: cuántas estrategias aporta REALMENTE la cartera. */
+  effective_n_strategies?: number
+  mean_correlation?: number
+  note?: string
 }
 
 export interface StrategyPortfolio {
@@ -739,6 +785,7 @@ export interface StrategyPortfolio {
     max_drawdown_pct: number
     sharpe: number
   }
+  allocation?: HrpAllocation
   note: string
   error?: string
 }

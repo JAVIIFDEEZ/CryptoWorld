@@ -17,6 +17,10 @@ estrategia está sobreajustada:
   - expected_max_sharpe:        E[max SR₀] — el Sharpe que da el azar con N pruebas.
   - expected_max_sharpe_curve:  esa curva frente a N, para situar la campeona.
   - effective_number_of_trials: N independiente agrupando pruebas correlacionadas.
+  - system_parameter_permutation: la MEDIANA de todo el espacio de parámetros
+                                como estimación realista (Walton), y la brecha
+                                con el mejor como medida de optimismo.
+  - combinatorial_paths:        distribución sobre C(N,k) caminos de bloques.
   - probability_of_backtest_overfitting (PBO): CSCV sobre la matriz de trials.
 
 Determinista: todas las fuentes de aleatoriedad reciben semilla.
@@ -537,6 +541,92 @@ def _partition_sharpe(submatrix: np.ndarray) -> np.ndarray:
     mu = submatrix.mean(axis=0)
     sd = submatrix.std(axis=0, ddof=1)
     return np.divide(mu, sd, out=np.zeros_like(mu), where=sd > 0)
+
+
+def system_parameter_permutation(
+    df, strategy: str, grid_points: int = 4, ppy: float = 365.0,
+    costs=None, max_combos: int = 250,
+) -> dict:
+    """
+    System Parameter Permutation (SPP): la MEDIANA de todas las combinaciones de
+    parámetros como estimación realista, no el máximo que devuelve el optimizador.
+
+    El razonamiento de Dave Walton: un optimizador te da el mejor resultado de
+    entre los que probó, y ese máximo está contaminado por la suerte de la
+    muestra. La mediana sobre todo el espacio de parámetros no lo está — nadie la
+    eligió por buena. La **brecha entre el mejor y la mediana** es entonces una
+    medida directa de cuánto del resultado venía de haber acertado el parámetro:
+    una estrategia con edge de verdad rinde parecido en todo el vecindario y la
+    brecha es pequeña; una sobreajustada tiene un pico estrecho y una brecha
+    enorme.
+
+    Rejilla uniforme de `grid_points` valores por parámetro, acotada por
+    `max_combos` — el producto cartesiano crece muy rápido y no aporta precisión
+    adicional a la mediana pasado cierto punto.
+    """
+    from itertools import product
+
+    space = strategy_param_space(strategy)
+    if not space:
+        return {"n_combos": 0, "note": "La estrategia no declara parámetros optimizables."}
+
+    axes: list[list] = []
+    for p in space:
+        lo, hi = p["low"], p["high"]
+        if p["type"] == "int":
+            values = sorted({int(round(v)) for v in np.linspace(lo, hi, grid_points)})
+        else:
+            values = [float(v) for v in np.linspace(lo, hi, grid_points)]
+        axes.append([(p["name"], v) for v in values])
+
+    combos = list(product(*axes))
+    truncated = len(combos) > max_combos
+    if truncated:
+        # Submuestreo regular: conserva la cobertura del espacio en lugar de
+        # quedarse solo con una esquina de la rejilla.
+        step = len(combos) / max_combos
+        combos = [combos[int(i * step)] for i in range(max_combos)]
+
+    sharpes: list[float] = []
+    best_params: dict | None = None
+    best_sharpe = -np.inf
+    for combo in combos:
+        params = dict(combo)
+        bt = run_backtest_full(df, strategy, params=params, costs=costs)
+        if "error" in bt:
+            continue
+        s = m.sharpe_ratio(bt["bar_returns"], ppy)
+        sharpes.append(s)
+        if s > best_sharpe:
+            best_sharpe, best_params = s, params
+
+    if len(sharpes) < 2:
+        return {"n_combos": len(sharpes), "note": "Combinaciones insuficientes para SPP."}
+
+    arr = np.array(sharpes, dtype=float)
+    median = float(np.median(arr))
+    gap = float(best_sharpe - median)
+    return {
+        "n_combos": int(arr.size),
+        "grid_points": grid_points,
+        "truncated": truncated,
+        "best_sharpe": round(float(best_sharpe), 3),
+        "best_params": best_params,
+        # La estimación honesta: nadie eligió la mediana por buena.
+        "median_sharpe": round(median, 3),
+        "p25_sharpe": round(float(np.percentile(arr, 25)), 3),
+        "p5_sharpe": round(float(np.percentile(arr, 5)), 3),
+        "pct_combos_positive": round(float((arr > 0).mean() * 100), 1),
+        "optimism_gap": round(gap, 3),
+        # Qué fracción del resultado del optimizador se explica por haber
+        # acertado el parámetro en vez de por el edge.
+        "optimism_pct": round(gap / abs(best_sharpe) * 100, 1) if abs(best_sharpe) > 1e-9 else 0.0,
+        "note": (
+            f"Mediana de {arr.size} combinaciones: {median:.2f} frente al "
+            f"{best_sharpe:.2f} del mejor parámetro. La diferencia ({gap:.2f}) es "
+            "lo que aporta haber acertado la configuración, no el edge."
+        ),
+    }
 
 
 def combinatorial_paths(block_returns: list, k: int = 2, ppy: float = 365.0,

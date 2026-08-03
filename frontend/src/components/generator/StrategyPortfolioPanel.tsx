@@ -152,11 +152,16 @@ export default function StrategyPortfolioPanel({ refreshKey = 0 }: Readonly<{ re
         </div>
       </div>
 
-      {/* Miembros */}
+      {/* Miembros, con su peso de asignación */}
       <div className="flex flex-wrap gap-1.5 mt-3">
         {data.members.map((m) => (
           <span key={m.strategy_id} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-slate-300" title={m.name}>
             {m.label}
+            {m.hrp_weight != null && (
+              <span className="ml-1 font-mono text-sky-300" title="Peso asignado por paridad de riesgo jerárquica">
+                {(m.hrp_weight * 100).toFixed(0)}%
+              </span>
+            )}
             {m.window_return_pct != null && (
               <span className={`ml-1 font-mono ${m.window_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {m.window_return_pct >= 0 ? '+' : ''}{m.window_return_pct.toFixed(1)}%
@@ -165,6 +170,33 @@ export default function StrategyPortfolioPanel({ refreshKey = 0 }: Readonly<{ re
           </span>
         ))}
       </div>
+
+      {/* Qué aporta HRP frente a repartir a partes iguales */}
+      {data.allocation && data.allocation.n_assets > 1 && (
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-700/60 text-[10px]">
+          <div>
+            <dt className="text-slate-500">Volatilidad HRP</dt>
+            <dd className="text-sky-300 font-mono">
+              {((data.allocation.portfolio_volatility ?? 0) * 100).toFixed(2)}%
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Equiponderada</dt>
+            <dd className="text-slate-400 font-mono">
+              {((data.allocation.equal_weight_volatility ?? 0) * 100).toFixed(2)}%
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500" title="1/HHI: cuántas estrategias aporta REALMENTE la cartera">
+              Estrategias efectivas
+            </dt>
+            <dd className="text-white font-mono">
+              {data.allocation.effective_n_strategies?.toFixed(1)} de {data.allocation.n_assets}
+            </dd>
+          </div>
+        </dl>
+      )}
+
       <p className="text-[10px] text-slate-600 mt-2">{data.note}</p>
     </div>
   )

@@ -1,7 +1,7 @@
 /**
  * components/generator/RetestCascadeCard.tsx — Cascada de retests del campeón.
  *
- * Cuatro perturbaciones, cada una atacando una forma distinta de sobreajuste.
+ * Cinco perturbaciones, cada una atacando una forma distinta de sobreajuste.
  * La pregunta que responden juntas es: ¿el resultado venía de un edge, o de que
  * el histórico fuera exactamente el que fue?
  *
@@ -25,6 +25,7 @@ function buildRows(r: RetestCascade): Row[] {
   const start = r.starting_bar ?? { n_offsets: 0 }
   const skip = r.skip_trades ?? { n_runs: 0 }
   const sens = r.parameter_sensitivity ?? { n_neighbors: 0 }
+  const stab = r.temporal_stability ?? { n_buckets: 0 }
 
   return [
     {
@@ -63,6 +64,15 @@ function buildRows(r: RetestCascade): Row[] {
         ? `${sens.pct_neighbors_positive?.toFixed(0)}% de ${sens.n_neighbors} vecinos en positivo · degrada ${sens.median_degradation_pct?.toFixed(0)}%`
         : 'Sin vecinos evaluables',
     },
+    {
+      key: 'temporal_stability',
+      label: 'Reparto en el tiempo',
+      question: '¿El beneficio estaba repartido, o fue una racha?',
+      ran: stab.n_buckets > 0,
+      detail: stab.n_buckets > 0
+        ? `el mejor de ${stab.n_buckets} periodos aporta el ${((stab.concentration ?? 0) * 100).toFixed(0)}% del beneficio · ${stab.positive_buckets}/${stab.n_buckets} positivos`
+        : 'Serie insuficiente para partir en periodos',
+    },
   ]
 }
 
@@ -90,8 +100,8 @@ export default function RetestCascadeCard({ retests, championDesc }: Readonly<{
           }`}
         >
           {retests.survived
-            ? 'sobrevive a las cuatro'
-            : `falla ${retests.failed.length} de 4`}
+            ? 'sobrevive a todas'
+            : `falla ${retests.failed.length} de ${rows.length}`}
         </span>
       </div>
       {championDesc && (

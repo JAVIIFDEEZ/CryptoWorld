@@ -8,6 +8,7 @@ perturbaciones. Cada prueba ataca una forma distinta de sobreajuste:
   · desplazamiento del arranque → ¿dependía de dónde se cortó el histórico?
   · omisión de operaciones → ¿dependía de capturarlas TODAS?
   · sensibilidad paramétrica → ¿dependía del parámetro exacto?
+  · estabilidad temporal → ¿el beneficio estaba repartido, o fue una racha?
 
 El caso que da sentido a todo esto es la estrategia que brilla sobre los datos
 reales y se desploma en cuanto las velas se mueven un poco: eso es curve
@@ -130,13 +131,23 @@ class TestSkipTradesTest:
 class TestCascade:
 
     @pytest.mark.unit
-    def test_aggregates_the_four_checks_with_a_verdict(self, spec):
+    def test_aggregates_every_check_with_a_verdict(self, spec):
         out = ev.retest_cascade(_df(), spec, noise_runs=5)
         assert set(out["checks"]) == {
             "noise", "starting_bar", "skip_trades", "parameter_sensitivity",
+            "temporal_stability",
         }
         assert isinstance(out["survived"], bool)
         assert out["survived"] == (out["failed"] == [])
+
+    @pytest.mark.unit
+    def test_reports_where_the_edge_lives(self, spec):
+        """El reparto por régimen no condena a nadie: un edge que solo vive en
+        mercados turbulentos sigue siendo un edge. Lo que no vale es ignorarlo
+        al asignarle capital."""
+        out = ev.retest_cascade(_df(), spec, noise_runs=3)
+        assert "by_regime" in out
+        assert "temporal_stability" in out
 
     @pytest.mark.unit
     def test_a_test_that_could_not_run_is_not_counted_as_a_failure(self, spec):

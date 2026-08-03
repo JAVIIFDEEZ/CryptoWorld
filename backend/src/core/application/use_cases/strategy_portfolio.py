@@ -13,6 +13,10 @@ diversificación real (drawdown conjunto menor que el de cada una por separado).
 
 import logging
 
+import numpy as np
+
+from core.domain.services.hrp import hierarchical_risk_parity
+
 logger = logging.getLogger(__name__)
 
 _OHLCV_LIMIT = 500
@@ -116,6 +120,18 @@ class StrategyPortfolioUseCase:
         stats = portfolio_stats(dates, aligned)
         avg_corr = avg_pairwise_correlation(matrix)
 
+        # ── Asignación por paridad de riesgo jerárquica ──────────────
+        # Equiponderar da el mismo capital a una estrategia tranquila que a una
+        # que triplica su volatilidad, y trata tres clones del mismo edge como
+        # tres apuestas distintas. HRP agrupa por correlación y reparte por
+        # varianza inversa, sin invertir la matriz de covarianzas — que es lo
+        # que hace que Markowitz amplifique el error de estimación.
+        allocation = hierarchical_risk_parity(
+            np.column_stack([aligned[name] for name in names]), labels=names,
+        )
+        for member in members:
+            member["hrp_weight"] = allocation.get("weights", {}).get(member["label"])
+
         return {
             "members": members,
             "labels": names,
@@ -123,6 +139,8 @@ class StrategyPortfolioUseCase:
             "avg_correlation": avg_corr,
             "common_days": len(dates),
             "portfolio": stats,
-            "note": "Cartera equiponderada sobre retornos diarios en la ventana común. "
-                    "Correlación media baja entre estrategias rentables = diversificación real.",
+            "allocation": allocation,
+            "note": "Correlación y estadísticas sobre retornos diarios en la ventana común. "
+                    "Los pesos son HRP (paridad de riesgo jerárquica); la cartera "
+                    "equiponderada se conserva como referencia de comparación.",
         }

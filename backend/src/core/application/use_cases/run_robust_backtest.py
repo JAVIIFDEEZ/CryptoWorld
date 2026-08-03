@@ -49,6 +49,9 @@ class RobustnessConfig:
     # mismos valores por defecto que usa el generador de estrategias.
     commission_bps: float = 10.0
     slippage_bps: float = 5.0
+    # System Parameter Permutation: nº máximo de combinaciones de la rejilla.
+    # 0 lo desactiva (los presets rápidos no lo pagan).
+    spp_max_combos: int = 120
 
 
 # Presets de cómputo: rapidez vs exhaustividad. El usuario elige según
@@ -166,6 +169,14 @@ def run_robustness_suite(
         n_perms=cfg.n_perms, periods_per_year=ppy, seed=cfg.seed, costs=costs,
     )
 
+    # ── System Parameter Permutation ──
+    # La mediana de todo el espacio de parámetros es la estimación que nadie
+    # eligió por buena; la brecha con el mejor mide cuánto del resultado venía
+    # de haber acertado la configuración.
+    spp = robustness.system_parameter_permutation(
+        df, strategy, ppy=ppy, costs=costs, max_combos=cfg.spp_max_combos,
+    ) if cfg.spp_max_combos > 0 else {"n_combos": 0, "note": "SPP desactivado en este preset."}
+
     # ── Detectores de sesgo ──
     lookahead = bias.detect_lookahead_bias(
         df, lambda d: generate_signals(d, strategy, best_params), seed=cfg.seed,
@@ -258,6 +269,7 @@ def run_robustness_suite(
             "permutation": permutation,
             "lookahead": lookahead,
             "recursive_instability": recursive_instability,
+            "system_parameter_permutation": spp,
         },
         "optimization": optimization_public,
         "charts": charts,

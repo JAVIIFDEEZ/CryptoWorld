@@ -1,9 +1,11 @@
-# Motor cuantitativo — CAPAS 1 y 2
+# Motor cuantitativo — CAPAS 1, 2 y 3
 
 **Capa 1** (G1, G8, G9): control de multiplicidad, registro de experimentos y
 honestidad de presentación.
 **Capa 2** (G2, G4.1, G5): validación cruzada combinatoria purgada, relleno a la
-apertura siguiente y cascada de retests.
+apertura siguiente, cascada de retests, SPP e incubación.
+**Capa 3** (G3, G6, G7): etiquetado triple-barrera con meta-etiquetado, HRP para
+la cartera, y detección de régimen con estabilidad temporal.
 
 ---
 
@@ -426,17 +428,129 @@ booleano `survived`.
 
 ---
 
+## SPP — System Parameter Permutation
+
+Un optimizador devuelve el mejor resultado de entre los que probó, y ese máximo
+está contaminado por la suerte de la muestra. La **mediana sobre todo el espacio
+de parámetros** no lo está: nadie la eligió por buena. La brecha entre ambos
+(`optimism_gap`) mide directamente cuánto del resultado venía de haber acertado
+la configuración en lugar del edge.
+
+Rejilla uniforme acotada por `max_combos`, con submuestreo regular para que
+truncar no deje el análisis en una esquina del espacio. Se aplica al Camino A,
+donde hay un espacio de parámetros declarado; para specs componibles el
+equivalente práctico es `parameter_sensitivity`, que ya da la mediana de vecinos.
+
+## Incubación antes del capital real
+
+Un backtest, por bien validado que esté, mide el pasado. La única evidencia que
+el sobreajuste **no puede falsear** es la que llega después de fijar la
+estrategia, sobre datos que no existían cuando se tomó la decisión.
+
+`POST /api/strategies/paper/<id>/live/` exige ahora haber superado la
+incubación: un mínimo de días en simulado, operaciones suficientes y sin
+degradación. Se responde **409** con el detalle de lo que falta — un «no» sin
+explicación empuja a buscar cómo saltárselo, mientras que «te faltan 6 días y 2
+operaciones» lo convierte en un plazo.
+
+Desactivar nunca se bloquea: cortar la exposición siempre está permitido.
+
+Es también la frontera de cumplimiento: poner capital real detrás de una
+estrategia sin evidencia prospectiva es exactamente lo que un supervisor
+señalaría.
+
+---
+
+# CAPA 3 — Método avanzado y cartera
+
+# G3 — Etiquetado triple-barrera y meta-etiquetado
+
+**Brecha:** la «etiqueta» implícita era la regla de salida del spec. Una regla
+fija responde a la pregunta equivocada: lo que hay que saber de una entrada no
+es cuándo se cumple otra condición técnica, sino **qué pasó primero** —
+objetivo, stop, u horizonte agotado.
+
+`domain/services/labeling.py` implementa:
+
+- **Triple-barrera** con barreras escaladas por la volatilidad **estimada hasta
+  t₀**, nunca la posterior: un objetivo del 3 % significa cosas distintas en un
+  mercado tranquilo y en uno convulso, y usar la volatilidad realizada después
+  sería mirar el futuro. Un test lo fija comprobando que un salto en la vela `i`
+  no aparece en la σ de la vela `i`.
+- Convención conservadora **también aquí**: si en una vela se tocan las dos
+  barreras, gana el stop. No se puede saber cuál llegó antes dentro de la vela,
+  y suponer lo favorable es el sesgo que hace que un backtest prometa lo que la
+  ejecución no da.
+- **Meta-etiquetado**: el primario decide la dirección, el meta-modelo aprende
+  *cuándo el primario acierta*. Es un problema mucho más fácil que predecir el
+  mercado, y su probabilidad sirve directamente de tamaño.
+- **Pesos por unicidad media**: dos operaciones sobre las mismas velas comparten
+  los mismos retornos y no son dos observaciones independientes. Ponderar por
+  unicidad corrige el no-IID.
+- **`bet_size`**: por debajo del suelo de convicción el tamaño es cero — no
+  operar es una decisión, y la más rentable sin ventaja. Por encima escala
+  linealmente y se acota; Kelly completo apuesta demasiado cuando la
+  probabilidad está mal estimada, que es siempre.
+
+# G6 — Hierarchical Risk Parity
+
+**Brecha:** `decorrelate_finalists` filtraba clones pero no asignaba pesos. La
+cartera era equiponderada, lo que da el mismo capital a una estrategia tranquila
+que a otra que triplica su volatilidad, y trata tres clones del mismo edge como
+tres apuestas distintas.
+
+Markowitz no es la alternativa: **invierte la matriz de covarianzas**, y con
+activos correlacionados esa matriz está mal condicionada, de modo que al
+invertirla los errores de estimación se amplifican en vez de atenuarse. El
+resultado son carteras concentradas que brillan dentro de muestra y se
+desmoronan fuera.
+
+HRP no invierte nada: clustering jerárquico sobre `d = √(0.5(1−ρ))`,
+cuasi-diagonalización y bisección recursiva por varianza inversa. Se implementa
+con enlace simple propio en lugar de arrastrar `scipy.cluster.hierarchy`, que
+para cien líneas no aporta.
+
+Los pesos se **redondean preservando la suma**: son instrucciones de asignación,
+no estadísticos, y unos pesos que suman 1.0001 son un error. El panel de cartera
+muestra la volatilidad HRP frente a la equiponderada y las «estrategias
+efectivas» (1/HHI): cuántas aporta realmente el libro.
+
+# G7 — Régimen y estabilidad temporal
+
+**Brecha:** el filtro ADX estático no dice en qué régimen vive el edge, y nada
+comprobaba si el beneficio estaba repartido o concentrado.
+
+- **`detect_regimes`** clasifica cada vela en calma / normal / turbulento por
+  volatilidad realizada, con umbrales relativos al propio activo —«turbulento»
+  significa turbulento *para este activo*— e **histéresis**, sin la cual una
+  serie que roza la frontera parpadea de etiqueta y el régimen deja de
+  significar nada. `current_regime` es la versión operativa, que estima con
+  datos hasta la vela.
+
+  **Es un clasificador por cuantiles, no un HMM, y es deliberado.** Un HMM de
+  dos o tres estados sobre una sola serie de retornos añade un ajuste por máxima
+  verosimilitud —más parámetros que estimar, más superficie de sobreajuste—
+  para producir una clasificación que en la práctica sigue de cerca a los
+  cuantiles de volatilidad. En un motor cuyo problema documentado es el
+  sobreajuste, añadir parámetros para llegar al mismo sitio no es una mejora.
+
+- **`temporal_stability`** parte la serie en periodos y mide qué fracción del
+  beneficio aporta el mejor. Una estrategia cuyo beneficio entero sale de un
+  décimo del histórico no tiene edge: tuvo una racha. Ningún walk-forward que
+  promedie tramos lo delata, porque el promedio es justo lo que lo esconde. Es
+  la **quinta prueba** de la cascada de retests.
+
+- **`performance_by_regime`** reparte el rendimiento por régimen. No condena a
+  nadie: un edge que solo vive en mercados turbulentos sigue siendo un edge, y
+  saberlo lo convierte en una decisión de cartera en lugar de una sorpresa.
+
+---
+
 ## Lo que NO cubre
 
 Siguen abiertas las brechas del informe del motor:
-
-- **G3** — triple-barrier y meta-labeling.
 - **G4** (resto) — market impact y capacidad, funding en perpetuos,
   point-in-time y universo sin sesgo de supervivencia.
-- **G5** (resto) — System Parameter Permutation e incubación obligatoria en
-  paper antes de permitir capital real.
-- **G6** — HRP para la construcción de cartera.
-- **G7** — detección de régimen y estabilidad temporal.
 
 De G9 queda el punto (d): mostrar significancia (intervalo o p-valor) junto a
 cada métrica, no solo su magnitud.
@@ -453,5 +567,10 @@ pytest tests/integration/test_experiment_registry.py        # 10 tests · G8+G9
 pytest tests/unit/domain/test_robustness_headline.py        #  6 tests · G9
 pytest tests/unit/domain/test_purged_cpcv.py                # 14 tests · G2
 pytest tests/unit/domain/test_backtest_execution.py         # 16 tests · G4.1
-pytest tests/unit/domain/test_retest_cascade.py             # 14 tests · G5
+pytest tests/unit/domain/test_retest_cascade.py             # 15 tests · G5
+pytest tests/unit/domain/test_spp.py                        #  6 tests · G5
+pytest tests/integration/test_incubation.py                 #  9 tests · G5
+pytest tests/unit/domain/test_labeling.py                   # 19 tests · G3
+pytest tests/unit/domain/test_hrp.py                        # 14 tests · G6
+pytest tests/unit/domain/test_regime.py                     # 12 tests · G7
 ```

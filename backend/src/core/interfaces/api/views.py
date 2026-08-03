@@ -2626,10 +2626,19 @@ class PaperLivePromotionView(APIView):
     "cap_usd"?: float}. La conexión debe pertenecer al usuario; el tope de
     nocional por orden se limita a [10, 10000] USD. Al activar se limpia el
     kill-switch anterior.
+
+    Activar exige haber superado la INCUBACIÓN: un periodo mínimo funcionando en
+    simulado con operaciones suficientes. Es el único filtro que el sobreajuste
+    no puede burlar —no hay nada que ajustar sobre datos que aún no han
+    ocurrido— y se responde con 409 y el detalle de lo que falta.
+
+    Desactivar nunca se bloquea: cortar la exposición siempre está permitido.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, account_id: int):
+        from django.utils import timezone
+        from core.domain.services import incubation
         from core.infrastructure.persistence.models import ExchangeConnection, PaperTradingAccount
 
         acc = PaperTradingAccount.objects.filter(id=account_id, owner=request.user).first()
@@ -2641,6 +2650,21 @@ class PaperLivePromotionView(APIView):
             acc.live_enabled = False
             acc.save(update_fields=["live_enabled", "updated_at"])
             return Response({"id": acc.id, "live_enabled": False}, status=status.HTTP_200_OK)
+
+        # ── Puerta de incubación ──────────────────────────────────────
+        incubation_status = incubation.evaluate(incubation.IncubationFacts(
+            days_running=(timezone.now() - acc.started_at).total_seconds() / 86400.0,
+            trades_count=acc.trades_count,
+            realized_pnl=float(acc.realized_pnl or 0.0),
+            decayed=bool(acc.decayed),
+        ))
+        if not incubation_status["incubated"]:
+            return Response(
+                {"error": incubation_status["note"],
+                 "blocked_by": "incubation",
+                 "incubation": incubation_status},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         connection = ExchangeConnection.objects.filter(
             id=request.data.get("connection_id"), owner=request.user, is_active=True,
@@ -2666,6 +2690,7 @@ class PaperLivePromotionView(APIView):
         return Response({
             "id": acc.id, "live_enabled": True, "live_cap_usd": cap,
             "live_is_testnet": connection.is_testnet,
+            "incubation": incubation_status,
         }, status=status.HTTP_200_OK)
 
 
