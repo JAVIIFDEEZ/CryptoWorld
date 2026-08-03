@@ -2,7 +2,8 @@
 
 **Capa 1** (G1, G8, G9): control de multiplicidad, registro de experimentos y
 honestidad de presentación.
-**Capa 2** (G2): validación cruzada combinatoria purgada.
+**Capa 2** (G2, G4.1): validación cruzada combinatoria purgada y relleno a la
+apertura siguiente.
 
 ---
 
@@ -313,12 +314,73 @@ por eso encuentra el suelo.
 
 ---
 
+# G4.1 — Relleno a la apertura siguiente
+
+**Brecha:** el motor decidía con el cierre de la vela `i` y ejecutaba a **ese
+mismo cierre**. Eso supone observar el cierre y operar a ese precio con latencia
+cero, que no existe.
+
+Es un optimismo que el detector de lookahead **no puede capturar**, y conviene
+entender por qué: las señales del compilador sí son causales (cruces `i-1/i`,
+canales desplazados con `_shift1`), y el detector verifica justamente eso. La
+fuga no estaba en la señal, estaba en el **precio al que se rellenaba**.
+
+## Lo implementado
+
+Una señal de la vela `i` encola una orden que se rellena a la **apertura de la
+vela `i+1`**. La apertura se propaga desde el DataFrame (antes `simulate` solo
+recibía `close`, `high` y `low`); sin ella, el repliegue usa el cierre de la
+vela siguiente — sigue siendo honesto, solo menos preciso.
+
+Dos excepciones, y por qué lo son:
+
+- **Stops y objetivos** se rellenan a su propio precio dentro de la vela que los
+  toca. Son órdenes en reposo en el mercado, no decisiones que se toman al ver
+  un cierre.
+- **La salida por tiempo** (`max_bars`) se rellena a la apertura de la vela en
+  que vence: al abrirla ya se sabe que la posición ha cumplido su plazo, sin
+  necesidad de ver su cierre. Antes salía al cierre, que daba una vela extra de
+  información.
+
+Consecuencia deliberada: **una señal en la última vela no se ejecuta**, porque
+no existe la vela siguiente. Un test lo fija.
+
+`fill_next_bar=False` conserva la convención histórica y existe solo para el
+test de equivalencia con el motor anterior; no debe usarse para medir
+rendimiento.
+
+## Impacto medido
+
+Cinco estrategias semilla sobre la serie sintética, con costes 10+5 bps:
+
+| Estrategia | Cierre `i` (antes) | Apertura `i+1` | Δ |
+|---|---|---|---|
+| seed_spec[0] | −83.85 % | −83.93 % | −0.08 pp |
+| seed_spec[1] | 1423.45 % | 1427.50 % | +4.05 pp |
+| seed_spec[2] | 222.69 % | 219.68 % | −3.01 pp |
+| seed_spec[3] | 1363.56 % | 1352.01 % | −11.55 pp |
+| seed_spec[4] | −91.90 % | −92.03 % | −0.13 pp |
+
+**El efecto es pequeño, y hay que decir por qué.** En cripto el mercado es
+continuo 24/7: la apertura de una vela prácticamente coincide con el cierre de
+la anterior, así que el desplazamiento apenas mueve el precio de relleno. En un
+mercado con sesiones —acciones, futuros— el hueco de apertura es real y el
+mismo cambio tendría mucho más recorrido.
+
+Lo que se corrige, por tanto, no es una inflación grande de rentabilidad: es una
+**suposición estructural** que no se sostiene (ejecutar sin latencia al precio
+que acabas de observar) y que se volvería material en cuanto el motor tocara
+otro mercado o marcos temporales más cortos, donde el hueco pesa más.
+
+---
+
 ## Lo que NO cubre
 
 Siguen abiertas las brechas del informe del motor:
 
 - **G3** — triple-barrier y meta-labeling.
-- **G4** — fill al `open[i+1]`, market impact y capacidad, point-in-time.
+- **G4** (resto) — market impact y capacidad, funding en perpetuos,
+  point-in-time y universo sin sesgo de supervivencia.
 - **G5** — cross-checks que faltan (noise test, SPP, incubación).
 - **G6** — HRP para la construcción de cartera.
 - **G7** — detección de régimen y estabilidad temporal.
@@ -337,4 +399,5 @@ pytest tests/unit/domain/test_trial_registry.py             # 10 tests · G1
 pytest tests/integration/test_experiment_registry.py        # 10 tests · G8+G9
 pytest tests/unit/domain/test_robustness_headline.py        #  6 tests · G9
 pytest tests/unit/domain/test_purged_cpcv.py                # 14 tests · G2
+pytest tests/unit/domain/test_backtest_execution.py         # 16 tests · G4.1
 ```

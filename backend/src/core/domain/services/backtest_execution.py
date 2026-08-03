@@ -11,9 +11,11 @@ añade dos piezas que la convierten de juguete en herramienta realista:
     contra el máximo/mínimo de cada vela (no solo el cierre), con la convención
     conservadora de que, si en la misma vela se tocan stop y objetivo, salta el
     stop primero.
+  · Relleno desplazado: una señal de la vela `i` se ejecuta a la APERTURA de la
+    vela `i+1`, nunca al cierre que la originó. Detalle en `simulate`.
 
-Con costes nulos y sin gestión de riesgo el resultado es idéntico al motor
-anterior (compatibilidad: la batería de tests lo verifica).
+Con `fill_next_bar=False`, costes nulos y sin gestión de riesgo el resultado es
+idéntico al motor anterior (compatibilidad: la batería de tests lo verifica).
 
 Capa de dominio: Python puro.
 """
@@ -105,18 +107,49 @@ def simulate(
     risk: RiskModel | None = None,
     sizing: SizingModel | None = None,
     atr: np.ndarray | None = None,
+    open_: np.ndarray | None = None,
+    fill_next_bar: bool = True,
 ) -> dict:
     """
     Simula la estrategia long-only sobre arrays de precio y señales. Con sizing
     "full" la posición ocupa todo el capital (todo dentro/todo fuera, idéntico al
     motor histórico); con "fraction"/"risk" mantiene parte en liquidez. Devuelve
     trades (con motivo de salida), curva de equity, retornos por vela y costes.
+
+    Convención de ejecución (`fill_next_bar`, activa por defecto)
+    ─────────────────────────────────────────────────────────────
+    Una señal de la vela `i` se calcula con el cierre de esa vela, así que lo
+    más pronto que se puede actuar sobre ella es la **apertura de la vela
+    `i+1`**. Ejecutar al propio `close[i]` supondría observar el cierre y operar
+    a ese mismo precio con latencia cero: es optimismo, y de un tipo que el
+    detector de lookahead no captura porque las señales sí son causales — la
+    fuga no está en la señal, está en el precio al que se rellena.
+
+    El desplazamiento tiene una consecuencia deliberada: una señal en la última
+    vela **no se ejecuta**, porque no existe la vela siguiente. Es correcto: no
+    se puede operar sobre información que llega cuando los datos se acaban.
+
+    Excepciones, y por qué lo son:
+      · Los stops y objetivos se rellenan a su propio precio dentro de la vela
+        que los toca. Son órdenes en reposo en el mercado, no decisiones que
+        se toman al ver un cierre.
+      · La salida por tiempo (`max_bars`) se rellena a la apertura de la vela
+        en que vence: al abrirla ya se sabe que la posición ha agotado su vida,
+        sin necesidad de ver su cierre.
+
+    `fill_next_bar=False` restaura la convención histórica (relleno al cierre de
+    la misma vela) y existe para los tests que comparan este motor con el
+    anterior; no debería usarse para medir rendimiento.
     """
     costs = costs or NO_COSTS
     sizing = sizing or DEFAULT_SIZING
     cr, sr = costs.commission_rate, costs.slippage_rate
     use_risk = risk is not None and risk.active
     n = len(close)
+    # Sin serie de aperturas, el desplazamiento usa el cierre de la vela
+    # siguiente: sigue siendo honesto (no se opera al precio que originó la
+    # señal), solo menos preciso que una apertura real.
+    fill_price_series = open_ if open_ is not None else close
 
     capital = float(initial_capital)
     position = 0.0
@@ -133,18 +166,18 @@ def simulate(
     total_commission = 0.0
     gross_traded = 0.0
 
-    def do_buy(i: int) -> None:
+    def do_buy(i: int, price: float) -> None:
         nonlocal capital, position, in_trade, entry_price, entry_idx, entry_capital, high_water
         nonlocal total_commission, gross_traded, entry_atr
         notional = _position_notional(capital, sizing, risk)   # equity == capital (flat)
         fee = notional * cr
         invested = notional - fee
-        fill = close[i] * (1.0 + sr)
+        fill = price * (1.0 + sr)
         position = invested / fill if fill > 0 else 0.0
-        entry_price = float(close[i])     # referencia de stops: precio observado
+        entry_price = float(price)        # referencia de stops: precio de entrada
         entry_idx = i
         entry_capital = notional
-        high_water = float(close[i])
+        high_water = float(price)
         entry_atr = float(atr[i]) if atr is not None and np.isfinite(atr[i]) and atr[i] > 0 else None
         capital -= notional               # el resto queda en liquidez (sizing parcial)
         in_trade = True
@@ -173,8 +206,24 @@ def simulate(
         total_commission += fee
         gross_traded += gross
 
+    # Orden emitida por la señal de la vela anterior, a la espera de la apertura
+    # de esta (0 = ninguna). Es el mecanismo del desplazamiento de ejecución.
+    pending = 0
+
     for i in range(n):
         exited = False
+
+        # ── 0) Ejecutar la orden pendiente a la APERTURA de esta vela ──
+        # Va antes que todo lo demás porque la apertura es lo primero que
+        # ocurre cronológicamente dentro de la vela.
+        if pending != 0:
+            fill_px = float(fill_price_series[i])
+            if pending == 1 and not in_trade:
+                do_buy(i, fill_px)
+            elif pending == -1 and in_trade:
+                do_sell(i, fill_px, "signal")
+                exited = True
+            pending = 0
 
         # ── 1) Gestión de riesgo intrabar (solo después de la barra de entrada) ──
         if in_trade and use_risk and i > entry_idx:
@@ -204,16 +253,28 @@ def simulate(
                 exited = True
 
         # ── 1b) Salida por tiempo: la posición ha agotado su vida máxima ──
+        # Se rellena a la APERTURA: al abrir la vela ya se sabe que la posición
+        # ha cumplido su plazo, sin necesidad de ver cómo cierra.
         if not exited and in_trade and use_risk and risk.max_bars is not None and i - entry_idx >= risk.max_bars:
-            do_sell(i, float(close[i]), "time_exit")
+            time_exit_px = float(fill_price_series[i]) if fill_next_bar else float(close[i])
+            do_sell(i, time_exit_px, "time_exit")
             exited = True
 
         # ── 2) Acciones por señal (si no se salió por riesgo en esta vela) ──
+        # Con `fill_next_bar` la señal solo ENCOLA la orden: se rellenará a la
+        # apertura de la vela siguiente, que es lo más pronto que se puede
+        # actuar sobre un cierre recién observado.
         if not exited:
             if signals[i] == 1 and not in_trade:
-                do_buy(i)
+                if fill_next_bar:
+                    pending = 1
+                else:
+                    do_buy(i, float(close[i]))
             elif signals[i] == -1 and in_trade:
-                do_sell(i, float(close[i]), "signal")
+                if fill_next_bar:
+                    pending = -1
+                else:
+                    do_sell(i, float(close[i]), "signal")
 
         # ── 3) Equity al cierre de la vela ──
         current_equity = capital + (position * float(close[i]) if in_trade else 0.0)

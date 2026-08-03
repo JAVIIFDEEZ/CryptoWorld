@@ -1,9 +1,14 @@
 """
 tests/unit/domain/test_backtest_execution.py — Motor de ejecución realista.
 
-Verifica costes de transacción (comisión + deslizamiento) y gestión de riesgo
-(stop-loss / take-profit / trailing), y que con costes nulos y sin riesgo el
-resultado es idéntico al motor histórico.
+Verifica costes de transacción (comisión + deslizamiento), gestión de riesgo
+(stop-loss / take-profit / trailing) y la convención de ejecución: una señal de
+la vela `i` se rellena a la APERTURA de la vela `i+1`, no al cierre que la
+originó.
+
+Las series de estos tests son deliberadamente cortas, así que el desplazamiento
+de una vela se nota entero — por eso varias fijan el precio de la vela de
+ejecución: lo que se comprueba es el mecanismo, no una rentabilidad.
 """
 
 import numpy as np
@@ -28,13 +33,46 @@ class TestCosts:
 
     @pytest.mark.unit
     def test_zero_cost_matches_legacy_behaviour(self):
-        # Una compra y una venta: sin costes, el retorno es el del precio.
-        close = [100, 110, 120, 90]
+        """Con el relleno histórico (misma vela) el motor sigue dando lo de antes.
+
+        Se pide explícitamente `fill_next_bar=False`: este test existe para
+        comprobar la equivalencia con el motor anterior, no para medir
+        rendimiento."""
+        close = np.array([100, 110, 120, 90], dtype=float)
         signals = np.array([1, 0, -1, 0])
-        bt = backtest_signals(_df(close), signals)
-        assert bt["total_trades"] == 1
-        assert bt["trades"][0]["pnl_pct"] == pytest.approx(20.0, abs=0.01)  # 100→120
-        assert bt["total_commission_pct"] == 0.0
+        sim = simulate(close, close, close, signals, fill_next_bar=False)
+        assert len(sim["trades"]) == 1
+        assert sim["trades"][0]["pnl_pct"] == pytest.approx(20.0, abs=0.01)  # 100→120
+        assert sim["total_commission"] == 0.0
+
+    @pytest.mark.unit
+    def test_signal_fills_at_the_next_bar_open(self):
+        """La señal de la vela i se rellena a la apertura de la i+1.
+
+        Con apertura distinta del cierre se ve sin ambigüedad de qué precio sale
+        la ejecución: entra a 105 (apertura de la vela 1), no a 100."""
+        df = pd.DataFrame({
+            "timestamp": [1700000000000 + i * 86400000 for i in range(4)],
+            "open":  [100.0, 105.0, 118.0, 130.0],
+            "high":  [100.0, 112.0, 122.0, 132.0],
+            "low":   [100.0, 104.0, 117.0, 129.0],
+            "close": [100.0, 110.0, 120.0, 131.0],
+            "volume": [1.0] * 4,
+        })
+        bt = backtest_signals(df, np.array([1, 0, -1, 0]))
+        trade = bt["trades"][0]
+        assert trade["entry_price"] == pytest.approx(105.0)   # apertura de la vela 1
+        assert trade["exit_price"] == pytest.approx(130.0)    # apertura de la vela 3
+        assert trade["entry_index"] == 1 and trade["exit_index"] == 3
+
+    @pytest.mark.unit
+    def test_signal_on_the_last_bar_is_never_executed(self):
+        """No hay vela siguiente en la que rellenar: la orden no llega a existir.
+
+        Es la consecuencia deliberada del desplazamiento — no se puede operar
+        sobre información que llega justo cuando se acaban los datos."""
+        bt = backtest_signals(_df([100, 110, 120]), np.array([0, 0, 1]))
+        assert bt["total_trades"] == 0
 
     @pytest.mark.unit
     def test_commission_reduces_return(self):
@@ -94,10 +132,14 @@ class TestRisk:
 
     @pytest.mark.unit
     def test_trailing_stop_locks_in_gains(self):
-        # Sube a 130 y luego cae; el trailing del 10% sale cerca del máximo, no en pérdidas.
-        close = [100, 120, 130, 110]
-        high = [100, 122, 132, 125]
-        low = [100, 118, 128, 110]
+        """Sube y luego cae; el trailing del 10% sale cerca del máximo, en ganancias.
+
+        La vela 1 es plana a 100 porque ahí es donde entra la orden (la señal es
+        de la vela 0): así la subida posterior es ganancia del trade y no un
+        salto que la entrada se pierde."""
+        close = [100, 100, 130, 110]
+        high = [100, 100, 132, 125]
+        low = [100, 100, 128, 110]
         signals = np.array([1, 0, 0, 0])
         bt = backtest_signals(_df(close, high, low), signals, risk=RiskModel(trailing_stop_pct=0.10))
         assert bt["trades"][0]["exit_reason"] == "trailing_stop"
@@ -160,8 +202,11 @@ class TestSizing:
     @pytest.mark.unit
     def test_risk_sizing_caps_at_capital(self):
         from core.domain.services.backtest_execution import SizingModel, RiskModel
-        close = [100, 110]
-        signals = np.array([1, -1])
+        # Cuatro velas: la señal de la 0 entra a la apertura de la 1 (100) y la
+        # de la 2 sale a la apertura de la 3 (110). Con relleno desplazado hace
+        # falta una vela más que antes para completar el viaje de ida y vuelta.
+        close = [100, 100, 105, 110]
+        signals = np.array([1, 0, -1, 0])
         bt = backtest_signals(
             _df(close), signals,
             sizing=SizingModel(mode="risk", risk_pct=0.02),

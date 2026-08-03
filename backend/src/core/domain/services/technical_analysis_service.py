@@ -1082,6 +1082,9 @@ def backtest_signals(
     close = df["close"].values
     high = df["high"].values if "high" in df.columns else close
     low = df["low"].values if "low" in df.columns else close
+    # La apertura es el precio al que se rellena una señal de la vela anterior
+    # (ver la convención de ejecución en backtest_execution.simulate).
+    open_ = df["open"].values if "open" in df.columns else close
     n = len(close)
 
     # El stop por ATR necesita la serie de ATR(14); solo se paga si el spec lo usa.
@@ -1091,7 +1094,8 @@ def backtest_signals(
             pd.Series(high), pd.Series(low), pd.Series(close), window=14,
         ).average_true_range().values
 
-    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk, sizing=sizing, atr=atr_arr)
+    sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk,
+                   sizing=sizing, atr=atr_arr, open_=open_)
     trades = sim["trades"]
     equity_curve = sim["equity_curve"]
     final_capital = sim["final_capital"]
