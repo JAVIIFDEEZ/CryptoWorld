@@ -71,23 +71,43 @@ class SizingModel:
       · "risk":     dimensiona para arriesgar `risk_pct` del equity si salta el
                     stop-loss (notional = risk_pct·equity / stop_loss_pct), con
                     apalancamiento máximo 1× (nunca más que el capital).
+      · "conviction": la fracción la decide el META-MODELO vela a vela, según su
+                    probabilidad de que la señal acierte (`conviction`, un mapa
+                    índice→fracción). Es la separación dirección/tamaño: el spec
+                    decide DÓNDE entrar, el meta-modelo CUÁNTO. Índices sin
+                    entrada en el mapa operan con `fraction`, de modo que la
+                    ausencia de convicción degrada a la política previa en lugar
+                    de anular la operación.
     """
-    mode: str = "full"          # "full" | "fraction" | "risk"
-    fraction: float = 1.0       # para "fraction"
+    mode: str = "full"          # "full" | "fraction" | "risk" | "conviction"
+    fraction: float = 1.0       # para "fraction" y repliegue de "conviction"
     risk_pct: float = 0.02      # para "risk": fracción del equity arriesgada
+    # Para "conviction": {índice de vela → fracción del equity}. Se guarda como
+    # tupla de pares porque el dataclass es frozen y debe seguir siendo hashable.
+    conviction: tuple = ()
 
     @property
     def active(self) -> bool:
         return self.mode != "full"
+
+    def conviction_at(self, i: int) -> float:
+        """Fracción que el meta-modelo asigna a la vela `i` (o `fraction`)."""
+        for idx, size in self.conviction:
+            if idx == i:
+                return float(size)
+        return float(self.fraction)
 
 
 NO_COSTS = CostModel()
 DEFAULT_SIZING = SizingModel()
 
 
-def _position_notional(equity: float, sizing: SizingModel, risk: RiskModel | None) -> float:
+def _position_notional(equity: float, sizing: SizingModel, risk: RiskModel | None,
+                       bar: int = -1) -> float:
     """Nocional a invertir en la entrada según el modelo de sizing (capado al equity)."""
-    if sizing.mode == "fraction":
+    if sizing.mode == "conviction":
+        notional = equity * sizing.conviction_at(bar)
+    elif sizing.mode == "fraction":
         notional = equity * sizing.fraction
     elif sizing.mode == "risk" and risk is not None and risk.stop_loss_pct:
         notional = sizing.risk_pct * equity / risk.stop_loss_pct
@@ -169,7 +189,11 @@ def simulate(
     def do_buy(i: int, price: float) -> None:
         nonlocal capital, position, in_trade, entry_price, entry_idx, entry_capital, high_water
         nonlocal total_commission, gross_traded, entry_atr
-        notional = _position_notional(capital, sizing, risk)   # equity == capital (flat)
+        notional = _position_notional(capital, sizing, risk, i)  # equity == capital (flat)
+        if notional <= 0:
+            # Convicción por debajo del suelo: no operar es la decisión correcta,
+            # no un fallo. Se deja pasar la señal sin abrir posición.
+            return
         fee = notional * cr
         invested = notional - fee
         fill = price * (1.0 + sr)

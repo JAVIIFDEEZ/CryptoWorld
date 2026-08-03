@@ -6,6 +6,8 @@ honestidad de presentación.
 apertura siguiente, cascada de retests, SPP e incubación.
 **Capa 3** (G3, G6, G7): etiquetado triple-barrera con meta-etiquetado, HRP para
 la cartera, y detección de régimen con estabilidad temporal.
+**Integración** (G3 al sizing, G4 impacto y capacidad): el meta-modelo decide el
+tamaño de la posición, y cada finalista reporta cuánto dinero admite su edge.
 
 ---
 
@@ -546,14 +548,100 @@ comprobaba si el beneficio estaba repartido o concentrado.
 
 ---
 
+---
+
+# G3 (integración) — El meta-modelo llega al tamaño
+
+La capa 3 dejó el etiquetado y el meta-etiquetado en el dominio, pero sin
+conectar: el `bet_size` existía y nadie lo llamaba. Esto lo cierra.
+
+`domain/services/meta_model.py` entrena el meta-modelo sobre las etiquetas
+triple-barrera y produce la probabilidad de que el primario acierte; el motor de
+ejecución gana un modo de sizing **`conviction`**, donde la fracción del equity
+la decide esa probabilidad vela a vela.
+
+## Por qué esto no es «otro modelo de predicción»
+
+Predecir la dirección del mercado es difícil y los clasificadores fracasan
+haciéndolo. Predecir si **una señal concreta** va a funcionar es un problema
+mucho más acotado: el primario ya ha filtrado el universo a un puñado de
+situaciones con estructura común, y sobre ese subconjunto hay regularidades
+aprendibles.
+
+Y la separación trae una garantía que conviene explicitar: el meta-modelo **solo
+puede reducir** la exposición, nunca invertir la señal. Un error suyo cuesta
+operar de menos, no operar al revés — un modo de fallo mucho más benigno que el
+de un clasificador direccional.
+
+## Rigor del entrenamiento
+
+- **Partición temporal, jamás aleatoria.** Un `train_test_split` mezclado
+  entrena con el futuro y da precisiones espectaculares que no existen. Hay un
+  test que fija que el tramo de evaluación es siempre el final.
+- **Purga del solape** entre train y test. Aquí **sí** aplica el purging del
+  libro —a diferencia del walk-forward del motor, donde el spec viene fijo—
+  porque aquí sí se está ajustando un modelo.
+- **Pesos por unicidad**: las etiquetas triple-barrera se solapan y no son
+  observaciones independientes.
+- **Se declara inútil cuando lo es.** Si el meta-modelo no supera al primario
+  por un margen mínimo, devuelve `usable: False`, y el sizing degrada a tamaño
+  pleno. Operar todas las señales es preferible a filtrar con ruido, y devolver
+  un número que aparenta convicción sería peor que no devolver nada.
+
+En el motor, convicción cero **no abre posición**: no operar es una decisión, no
+un caso degenerado. Una vela sin convicción asignada degrada a la fracción por
+defecto en lugar de anular la operación.
+
+---
+
+# G4 (resto) — Impacto de mercado y capacidad
+
+**Brecha:** todo backtest supone que las órdenes se ejecutan al precio
+observado. Eso es cierto mientras la orden sea pequeña frente al mercado, y deja
+de serlo exactamente cuando la estrategia empieza a gestionar dinero de verdad.
+Una estrategia con Sharpe 3 sobre 10 000 € puede tener Sharpe 0 sobre 10
+millones sin que nada haya cambiado salvo el tamaño.
+
+`domain/services/market_impact.py` implementa el modelo de **raíz cuadrada**
+(Almgren, Kyle, Torre):
+
+```
+impacto (bps) = γ · σ · √(Q / ADV)
+```
+
+La raíz importa en las dos direcciones: doblar el tamaño no dobla el coste, pero
+el coste **nunca deja de crecer** — no existe un tamaño «gratis» a partir del
+cual la ejecución sea neutra. Un test lo fija comprobando que cuadruplicar el
+tamaño duplica exactamente el impacto.
+
+`estimate_capacity` recorre niveles de patrimonio y devuelve el mayor que
+conserva al menos la mitad del Sharpe original con una participación por debajo
+del límite. Esa cifra —la **capacidad**— es una propiedad tan real de la
+estrategia como su Sharpe, y la que ningún backtest retail reporta. Se expone en
+el gating de cada finalista.
+
+Dos decisiones:
+
+- **`gamma` es explícito y configurable, no calibrado.** Calibrarlo sobre el
+  mismo histórico con el que se valida la estrategia añadiría un grado de
+  libertad más al problema que todo este motor intenta contener.
+- **Sin volumen o volatilidad, la capacidad es `None`** con su explicación. Un
+  número inventado sería peor que la ausencia de número.
+
+---
+
 ## Lo que NO cubre
 
-Siguen abiertas las brechas del informe del motor:
-- **G4** (resto) — market impact y capacidad, funding en perpetuos,
-  point-in-time y universo sin sesgo de supervivencia.
-
-De G9 queda el punto (d): mostrar significancia (intervalo o p-valor) junto a
-cada métrica, no solo su magnitud.
+- **G4 (resto del resto)** — funding en perpetuos, point-in-time y universo sin
+  sesgo de supervivencia. Requieren datos que el almacén todavía no guarda
+  (`delisted_at`, histórico de funding), así que son trabajo de datos antes que
+  de método.
+- **G9 (d)** — significancia (intervalo o p-valor) junto a cada métrica
+  mostrada, no solo su magnitud.
+- El **triple-barrera como etiqueta del backtest**: hoy alimenta al meta-modelo
+  y al sizing, pero la salida de las operaciones la sigue decidiendo la regla
+  del spec. Sustituirla por las barreras cambiaría la semántica de toda
+  estrategia guardada, así que es una decisión de producto, no un detalle.
 
 ---
 
@@ -573,4 +661,6 @@ pytest tests/integration/test_incubation.py                 #  9 tests · G5
 pytest tests/unit/domain/test_labeling.py                   # 19 tests · G3
 pytest tests/unit/domain/test_hrp.py                        # 14 tests · G6
 pytest tests/unit/domain/test_regime.py                     # 12 tests · G7
+pytest tests/unit/domain/test_meta_model.py                 # 13 tests · G3 int.
+pytest tests/unit/domain/test_market_impact.py              # 18 tests · G4
 ```

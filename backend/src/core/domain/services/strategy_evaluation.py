@@ -25,6 +25,7 @@ import numpy as np
 from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
+from core.domain.services import market_impact as impact
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk, spec_sizing
 from core.domain.services.technical_analysis_service import backtest_signals
@@ -746,6 +747,15 @@ def gate_spec(
     cpcv = purged_cpcv(df, spec, n_blocks=th.cpcv_blocks, k=th.cpcv_k,
                        embargo_pct=th.cpcv_embargo_pct, ppy=ppy, costs=costs)
 
+    # Capacidad: cuánto dinero admite este edge antes de que su propio impacto
+    # de mercado se lo coma. Es una propiedad tan real de la estrategia como su
+    # Sharpe, y la que ningún backtest retail reporta.
+    capacity = impact.estimate_capacity(
+        full["bar_returns"], full["trades"],
+        adv_usd=impact.average_daily_volume_usd(df),
+        daily_volatility=impact.daily_volatility_of(df),
+    )
+
     mc = robustness.monte_carlo_simulation(
         [t["pnl_pct"] for t in full["trades"]], n_sims=th.mc_sims, seed=seed
     )
@@ -783,6 +793,9 @@ def gate_spec(
             "cpcv": cpcv,
             "cpcv_sharpe_p5": cpcv.get("sharpe_p5"),
             "cpcv_sharpe_median": cpcv.get("sharpe_median"),
+            # Cuánto dinero admite el edge antes de que su impacto lo anule.
+            "capacity": capacity,
+            "capacity_usd": capacity.get("capacity_usd"),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
             "exit_reasons": full["exit_reasons"],
