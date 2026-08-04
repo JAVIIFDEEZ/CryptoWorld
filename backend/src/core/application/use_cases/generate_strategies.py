@@ -311,14 +311,25 @@ def decorrelate_finalists(passed: list[dict], series_fn, threshold: float) -> tu
     """
     Libro decorrelacionado: recorre las finalistas por fitness descendente y
     conserva cada una solo si su serie de retornos tiene |ρ| < `threshold` con
-    TODAS las ya conservadas (greedy). Las descartadas son clones estadísticos
-    del mismo edge: un libro institucional quiere fuentes de retorno distintas.
+    TODAS las ya conservadas (greedy). Un libro institucional quiere fuentes de
+    retorno distintas, no cinco formas de escribir el mismo edge.
+
+    **Las correlacionadas NO se tiran: se adjuntan como VARIANTES** de aquella
+    con la que chocan. La razón es medible: en una ejecución típica cinco
+    estrategias superan el gating completo —con su holdout, su CPCV y sus
+    retests ya pagados— y solo dos llegan al informe. Las otras tres se
+    computaban enteras y desaparecían dejando una línea de texto. Correlacionar
+    con otra no las invalida; significa que explotan el mismo edge, y elegir
+    entre ellas —por caída máxima, por nº de operaciones, por rotación— es una
+    decisión del usuario, no un descarte que el motor deba hacer en silencio.
 
     `series_fn(finalist) -> np.ndarray` inyectable (testeable sin backtests).
-    Devuelve (conservadas, descartadas_con_motivo).
+    Devuelve (conservadas, descartadas_con_motivo). Cada conservada lleva en
+    `variants` las que se le adjuntaron, con sus métricas completas.
     """
     kept: list[dict] = []
     dropped: list[dict] = []
+    by_hash: dict[str, dict] = {}
     for f in sorted(passed, key=lambda x: x["fitness"], reverse=True):
         r = np.asarray(series_fn(f), dtype=float)
         clash = None
@@ -336,10 +347,19 @@ def decorrelate_finalists(passed: list[dict], series_fn, threshold: float) -> tu
                          "corr": round(corr, 3)}
                 break
         if clash is None:
+            f.setdefault("variants", [])
             kept.append(f)
+            by_hash[f["spec_hash"]] = f
         else:
             dropped.append({"spec_hash": f["spec_hash"], "description": f["description"],
                             "fitness": f["fitness"], "correlated_with": clash})
+            # La variante conserva TODO lo que costó calcularla: si el usuario la
+            # prefiere, la tiene validada y no hay que rehacer nada.
+            parent = by_hash.get(clash["kept_hash"])
+            if parent is not None:
+                parent.setdefault("variants", []).append({
+                    **f, "correlation_with_parent": clash["corr"],
+                })
     return kept, dropped
 
 
@@ -693,6 +713,12 @@ def generate_strategies(
             "restarts": len(restart_summaries),
             "refined": refined_count,
             "correlated_dropped": len(corr_dropped),
+            # Estrategias VALIDADAS que salen de la ejecución: las del ranking
+            # más sus variantes. `passed_gating` solo cuenta el libro
+            # decorrelacionado y por eso subestimaba lo encontrado — una
+            # variante superó exactamente los mismos controles.
+            "strategies_found": len(passed) + sum(len(f.get("variants", [])) for f in passed),
+            "variants": sum(len(f.get("variants", [])) for f in passed),
         },
         "walk_forward_matrix": wf_matrix,
         "restarts": restart_summaries,
@@ -700,8 +726,11 @@ def generate_strategies(
             "threshold": cfg.correlation_threshold,
             "dropped": corr_dropped,
             "note": ("El ranking es un libro DECORRELACIONADO: entre aprobadas con "
-                     "|ρ| ≥ umbral solo se conserva la de mayor fitness — clones "
-                     "estadísticos del mismo edge no añaden valor."),
+                     "|ρ| ≥ umbral solo una encabeza el libro — cinco formas del "
+                     "mismo edge no diversifican. Las demás NO se descartan: "
+                     "viajan como `variants` de aquella con la que correlacionan, "
+                     "con sus métricas completas, porque superaron exactamente "
+                     "los mismos controles y elegir entre ellas es del usuario."),
         },
         "ranking": passed,
         "candidates": [_coords(f) for f in finalists],

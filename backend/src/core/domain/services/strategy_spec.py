@@ -263,7 +263,23 @@ CROSS_OPS = ("cross_above", "cross_below")
 COMPARE_OPS = ("above", "below")   # estado persistente: A por encima/debajo de B
 SLOPE_OPS = ("rising", "falling")  # pendiente: la serie sube/baja vs hace n velas
 SLOPE_BARS_RANGE = (2, 10)
-COMBINES = ("AND", "OR")
+COMBINES = ("AND", "OR", "K_OF_N")
+
+# Tipos de condición que admiten negación.
+#
+# `cross` queda fuera a propósito: un cruce es un SUCESO puntual, y su
+# complemento («no hubo cruce en esta vela») es cierto el 99 % del tiempo. Sería
+# una condición siempre verdadera disfrazada, que al entrar en un Y reduce en
+# silencio un bloque de tres condiciones a uno de dos. Los demás tipos describen
+# ESTADOS, y su negación es tan informativa como su afirmación: «el precio NO
+# está en zona de premium» no se puede expresar hoy de ninguna otra forma.
+NEGATABLE = ("threshold", "compare", "slope", "pattern")
+
+# Los patrones también son sucesos: solo se admite negarlos con una ventana de
+# vigencia suficiente, donde «no ha habido barrida en las últimas N velas» pasa
+# a describir un régimen tranquilo en vez del complemento trivial de un suceso.
+MIN_NEGATABLE_LOOKBACK = 3
+
 _MAX_CONDITIONS = 3
 
 
@@ -307,6 +323,8 @@ def catalog_version() -> str:
             "compare": list(COMPARE_OPS), "slope": list(SLOPE_OPS),
             "slope_bars": list(SLOPE_BARS_RANGE), "combines": list(COMBINES),
             "pattern_lookback": list(PATTERN_LOOKBACK_RANGE),
+            "negatable": list(NEGATABLE),
+            "min_negatable_lookback": MIN_NEGATABLE_LOOKBACK,
         },
         "max_conditions": _MAX_CONDITIONS,
     }
@@ -400,6 +418,15 @@ def _random_pattern_condition(rng: np.random.Generator) -> dict:
     }
 
 
+def _can_negate(c: dict) -> bool:
+    """¿Tiene esta condición un estado «off» informativo? (ver `NEGATABLE`)."""
+    if c["type"] not in NEGATABLE:
+        return False
+    if c["type"] == "pattern":
+        return int(c.get("lookback", 1)) >= MIN_NEGATABLE_LOOKBACK
+    return True
+
+
 def random_condition(rng: np.random.Generator) -> dict:
     """
     Condición aleatoria legal. Mezcla de los 5 tipos con pesos que favorecen los
@@ -413,21 +440,41 @@ def random_condition(rng: np.random.Generator) -> dict:
     """
     roll = rng.random()
     if roll < 0.28:
-        return _random_threshold_condition(rng)
-    if roll < 0.48:
-        return _random_cross_condition(rng)
-    if roll < 0.68:
-        return _random_compare_condition(rng)
-    if roll < 0.80:
-        return _random_slope_condition(rng)
-    return _random_pattern_condition(rng)
+        cond = _random_threshold_condition(rng)
+    elif roll < 0.48:
+        cond = _random_cross_condition(rng)
+    elif roll < 0.68:
+        cond = _random_compare_condition(rng)
+    elif roll < 0.80:
+        cond = _random_slope_condition(rng)
+    else:
+        cond = _random_pattern_condition(rng)
+
+    # Negación: un 15 % de las condiciones negables. La ausencia de un estado es
+    # información tan legítima como su presencia —«el precio NO está en zona de
+    # premium», «no ha habido barrida en 5 velas»— y hasta ahora era inexpresable
+    # salvo que existiera por casualidad un indicador espejo.
+    if rng.random() < 0.15 and _can_negate(cond):
+        cond["negate"] = True
+    return cond
 
 
 def _random_block(rng: np.random.Generator) -> dict:
-    k = int(rng.integers(1, _MAX_CONDITIONS + 1))
+    """
+    Bloque aleatorio legal.
+
+    `K_OF_N` solo se sortea con 3 o más condiciones: con dos, k=1 es OR y k=2 es
+    AND, así que no aportaría ninguna lógica nueva y sí tres formas distintas de
+    escribir la misma estrategia — lo que ensucia el hash y engaña al control de
+    diversidad del GA.
+    """
+    n = int(rng.integers(1, _MAX_CONDITIONS + 1))
+    conditions = [random_condition(rng) for _ in range(n)]
+    if n >= 3 and rng.random() < 0.2:
+        return {"combine": "K_OF_N", "k": int(rng.integers(2, n)), "conditions": conditions}
     return {
-        "combine": str(rng.choice(COMBINES)),
-        "conditions": [random_condition(rng) for _ in range(k)],
+        "combine": str(rng.choice(("AND", "OR"))),
+        "conditions": conditions,
     }
 
 
@@ -565,7 +612,20 @@ def _validate_pattern_params(name: str, params: dict) -> bool:
     return True
 
 
+def _validate_negation(c: dict) -> bool:
+    """La negación solo es legal donde tiene un «off» informativo (ver NEGATABLE)."""
+    if not c.get("negate"):
+        return "negate" not in c or c["negate"] is False
+    if c.get("type") not in NEGATABLE:
+        return False
+    if c["type"] == "pattern":
+        return int(c.get("lookback", 1)) >= MIN_NEGATABLE_LOOKBACK
+    return True
+
+
 def _validate_condition(c: dict) -> bool:
+    if not _validate_negation(c):
+        return False
     if c.get("type") == "pattern":
         name = c.get("pattern")
         if name not in PATTERNS:
@@ -612,6 +672,15 @@ def _validate_block(block: dict) -> bool:
         return False
     conds = block.get("conditions", [])
     if not (1 <= len(conds) <= _MAX_CONDITIONS):
+        return False
+    if block["combine"] == "K_OF_N":
+        k = block.get("k")
+        # k estrictamente entre 1 y n: en los extremos K_OF_N ES un OR o un AND,
+        # y admitir esas formas duplicadas daría varios specs distintos para la
+        # misma estrategia.
+        if not isinstance(k, int) or not (2 <= k <= len(conds) - 1):
+            return False
+    elif "k" in block:
         return False
     return all(_validate_condition(c) for c in conds)
 
@@ -715,6 +784,12 @@ def _series(df: pd.DataFrame, indicator: str, params: dict, cache: dict) -> np.n
 
 
 def _condition_bool(df: pd.DataFrame, c: dict, cache: dict) -> np.ndarray:
+    """Evalúa la condición y aplica su negación si la declara (ver `NEGATABLE`)."""
+    out = _condition_bool_raw(df, c, cache)
+    return ~out if c.get("negate") else out
+
+
+def _condition_bool_raw(df: pd.DataFrame, c: dict, cache: dict) -> np.ndarray:
     if c["type"] == "pattern":
         # Sucesos de acción del precio. Ya llegan como booleanos causales desde
         # `price_patterns`; aquí solo se aplica la ventana de vigencia.
@@ -762,8 +837,19 @@ def _condition_bool(df: pd.DataFrame, c: dict, cache: dict) -> np.ndarray:
     return np.where(np.isnan(diff) | np.isnan(prev), False, cb)
 
 
-def _combine(bools: list[np.ndarray], how: str) -> np.ndarray:
+def _combine(bools: list[np.ndarray], how: str, k: int | None = None) -> np.ndarray:
+    """
+    Combina las condiciones de un bloque.
+
+    `K_OF_N` es la generalización de las otras dos: con k=n es AND y con k=1 es
+    OR, y entre medias expresa algo que ninguna de ellas puede decir —«al menos
+    2 de estas 3 confirmaciones»—. Es una familia entera de estrategias que
+    hasta ahora era inalcanzable, no difícil de alcanzar: la lógica de
+    confirmación parcial no se puede escribir encadenando Y y O sin anidar.
+    """
     stack = np.vstack(bools)
+    if how == "K_OF_N":
+        return np.sum(stack, axis=0) >= int(k or 1)
     return np.all(stack, axis=0) if how == "AND" else np.any(stack, axis=0)
 
 
@@ -777,9 +863,9 @@ def compile_signals(df: pd.DataFrame, spec: dict) -> np.ndarray:
     n = len(df)
     cache: dict = {}
     entry = _combine([_condition_bool(df, c, cache) for c in spec["entry"]["conditions"]],
-                     spec["entry"]["combine"])
+                     spec["entry"]["combine"], spec["entry"].get("k"))
     exit_ = _combine([_condition_bool(df, c, cache) for c in spec["exit"]["conditions"]],
-                     spec["exit"]["combine"])
+                     spec["exit"]["combine"], spec["exit"].get("k"))
     # Filtro de régimen: solo se permite ENTRAR si hay tendencia (ADX ≥ umbral).
     # No afecta a las salidas: se debe poder salir en cualquier régimen.
     regime = spec.get("regime")
@@ -847,6 +933,11 @@ def _describe_indicator(leg: dict) -> str:
 
 
 def _describe_condition(c: dict) -> str:
+    text = _describe_condition_raw(c)
+    return f"NO ({text})" if c.get("negate") else text
+
+
+def _describe_condition_raw(c: dict) -> str:
     if c["type"] == "pattern":
         label = price_patterns.PATTERN_LABELS.get(c["pattern"], c["pattern"])
         lb = int(c.get("lookback", 1))
@@ -899,8 +990,13 @@ def _describe_sizing(sizing: dict | None) -> str:
 def describe_spec(spec: dict) -> str:
     """Descripción en español legible de la lógica de la estrategia."""
     def block(b):
+        parts = [_describe_condition(c) for c in b["conditions"]]
+        if b["combine"] == "K_OF_N":
+            # «al menos 2 de: A, B, C» — lógica de confirmación parcial, que no
+            # se puede decir encadenando Y y O sin anidar.
+            return f"al menos {b['k']} de: " + ", ".join(parts)
         sep = " Y " if b["combine"] == "AND" else " O "
-        return sep.join(_describe_condition(c) for c in b["conditions"])
+        return sep.join(parts)
     regime = spec.get("regime")
     regime_txt = f" (solo si ADX≥{regime['adx_min']})" if regime else ""
     return (f"ENTRAR si {block(spec['entry'])}{regime_txt}; SALIR si {block(spec['exit'])}"

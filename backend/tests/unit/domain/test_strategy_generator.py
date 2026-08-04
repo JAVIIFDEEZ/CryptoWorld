@@ -19,13 +19,21 @@ def _known_signal_fitness(spec: dict) -> float:
     Fitness sintético con óptimo conocido: premia entrar con RSI<umbral bajo y
     salir con RSI>umbral alto (la lógica de reversión a la media). Un GA que
     funciona debe converger hacia esa estructura.
+
+    Una condición NEGADA no cuenta: «NO (RSI<30)» es lo contrario de lo que se
+    premia, y puntuarla igual dejaría el óptimo mal definido — el GA podría
+    subir de nota escribiendo justo la estrategia opuesta.
     """
+    def counts(c: dict, op: str) -> bool:
+        return (c.get("type") == "threshold" and c.get("indicator") == "RSI"
+                and c["op"] == op and not c.get("negate"))
+
     score = 0.0
     for c in spec["entry"]["conditions"]:
-        if c.get("type") == "threshold" and c.get("indicator") == "RSI" and c["op"] == "lt":
+        if counts(c, "lt"):
             score += 2.0 - c["threshold"] / 100.0
     for c in spec["exit"]["conditions"]:
-        if c.get("type") == "threshold" and c.get("indicator") == "RSI" and c["op"] == "gt":
+        if counts(c, "gt"):
             score += 1.0 + c["threshold"] / 100.0
     return score
 

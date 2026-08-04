@@ -913,6 +913,100 @@ ENTRAR si hay estrella fugaz (rechazo por arriba) O CCI(26) > -70.97
 
 ---
 
+# Ampliación de la gramática — negación y confirmación parcial
+
+Los patrones añadieron **vocabulario**. Esto añade **sintaxis**: dos formas de
+combinar que multiplican por 32 lo que el generador puede expresar con las
+mismas piezas.
+
+## Negación
+
+La ausencia de un estado es información tan legítima como su presencia. «El
+precio **no** está en zona de premium», «**no** ha habido barrida en 5 velas» —
+inexpresable hasta ahora salvo que existiera por casualidad un indicador espejo,
+y para la mayoría de las condiciones no existe.
+
+Con `"negate": true`, cada condición de estado cuenta por dos.
+
+**Qué NO se puede negar, y por qué.** Un `cross` es un suceso puntual: el
+complemento de «hubo un cruce en esta vela» es cierto el 99 % del tiempo. Sería
+una condición siempre verdadera disfrazada, y dentro de un Y reduciría **en
+silencio** un bloque de tres condiciones a uno de dos — un fallo que no se ve
+por ningún lado. Los patrones son sucesos también, así que solo se negan con
+ventana ≥ 3, donde «no ha habido barrida en N velas» pasa a describir un régimen
+tranquilo en vez del complemento trivial de un instante.
+
+## Confirmación parcial: `k de n`
+
+«Al menos 2 de estas 3» no se puede escribir encadenando Y y O sin anidar. Era
+una familia entera **inalcanzable**, no difícil de alcanzar — y es una de las
+formas más habituales de construir sistemas reales, donde se exige que varias
+señales independientes coincidan sin exigirlas todas.
+
+`K_OF_N` generaliza las otras dos: con k=n es AND, con k=1 es OR. Solo se admite
+con 3+ condiciones y con k estrictamente entre 1 y n; en los extremos sería otra
+forma de escribir lo mismo, y **varios specs distintos para la misma estrategia
+rompen el hash**, que es de lo que depende el control de diversidad del GA.
+
+## Cuánto crece el espacio, contado
+
+Contando **formas** de condición (sin los parámetros continuos, idénticos antes
+y después):
+
+| | Formas de condición | Bloques legales | Specs |
+|---|---|---|---|
+| Antes de todo | 1 312 | 7,6 × 10⁸ | 5,7 × 10¹⁷ |
+| + patrones | 1 472 | 1,1 × 10⁹ | 1,1 × 10¹⁸ |
+| + negación y `k de n` | **2 292** | **6,0 × 10⁹** | **3,6 × 10¹⁹** |
+
+**×64 el espacio total**: ×2 de los patrones y **×32 de la sintaxis**. La
+sintaxis rinde más que el vocabulario porque multiplica sobre *todas* las piezas
+existentes, no solo sobre las nuevas.
+
+## El embudo, medido
+
+Antes de tocar el rendimiento conviene saber **dónde se pierden** las
+estrategias. Ejecución instrumentada del preset equilibrado sobre 1 500 velas:
+
+```
+24  candidatas pasan por el gating   (2 rondas × 12 intentos)
+ 5  superan TODOS los controles      ← holdout, CPCV y retests ya pagados
+ 3  descartadas por correlación
+ 2  llegan al informe
+```
+
+`top_k` es 5 y no era el cuello de botella. **El filtro de correlación tiraba el
+60 % de lo validado.**
+
+El libro decorrelacionado es lo correcto para el *ranking*: cinco formas del
+mismo edge no diversifican nada. Pero correlacionar con otra no invalida una
+estrategia — significa que explotan la misma fuente de retorno. Y entre dos
+estrategias del mismo edge, cuál se prefiere depende de la caída máxima, del
+número de operaciones o de la rotación: **es una decisión del usuario, no un
+descarte que el motor deba hacer en silencio**.
+
+Ahora las correlacionadas viajan como `variants` de la cabeza de libro, **con
+sus métricas completas**: si el usuario prefiere una, ya está validada y no hay
+que recalcular nada. El resumen añade `strategies_found` (ranking + variantes),
+porque `passed_gating` contaba solo el libro y subestimaba lo encontrado.
+
+En la ejecución medida, eso pasa de **2 estrategias entregadas a 5**.
+
+## Qué NO basta con esto
+
+Un espacio 64 veces mayor no da 64 veces más estrategias por sí solo: el GA
+recorre una fracción minúscula en cualquier caso. Lo que cambia es **qué es
+alcanzable**, no cuánto se alcanza por ejecución. Ambas cosas hacen falta, y la
+segunda es cuestión de presupuesto de cómputo y de los topes del embudo
+(`max_gating_attempts`, `top_k`), no de gramática.
+
+Los operadores de mutación acompañan a la sintaxis (`_mutate_negate`,
+`_mutate_k`, y `_mutate_flip_combine` recorriendo AND ↔ OR ↔ `k de n`): sin
+ellos, ambas formas solo podrían llegar del sorteo inicial y nunca desaparecer,
+con lo que media ampliación quedaría accesible únicamente por azar.
+
+---
+
 ## Lo que NO cubre
 
 - **Cobertura real del universo.** El código está y las tareas periódicas
@@ -955,4 +1049,6 @@ pytest tests/unit/domain/test_universe.py                   # 16 tests · G4 cie
 pytest tests/integration/test_funding_store.py              # 17 tests · G4 cierre
 pytest tests/unit/domain/test_price_patterns.py             # 86 tests · acción del precio
 pytest tests/unit/domain/test_pattern_conditions.py         # 19 tests · acción del precio
+pytest tests/unit/domain/test_grammar_expansion.py          # 18 tests · negación y k de n
+pytest tests/unit/domain/test_strategy_variants.py          #  8 tests · variantes del libro
 ```

@@ -9,8 +9,8 @@
 import {
   ScatterChart, Scatter, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis, Cell,
 } from 'recharts'
-import { conditionLabel } from '@/services/strategyGeneratorService'
-import type { Candidate, GenerationHistoryPoint, StrategySpec, SpecCondition } from '@/services/strategyGeneratorService'
+import { combineLabel, conditionLabel } from '@/services/strategyGeneratorService'
+import type { Candidate, GenerationHistoryPoint, StrategySpec, SpecBlock } from '@/services/strategyGeneratorService'
 
 const FRAME = 'rounded-xl border border-slate-700/70 bg-slate-900/50 p-3'
 
@@ -73,7 +73,10 @@ const condLabel = conditionLabel
 
 export function Dna2D({ spec }: Readonly<{ spec: StrategySpec | null }>) {
   if (!spec) return <div className="text-slate-500 text-sm text-center py-16">Sin estrategia ganadora.</div>
-  const block = (title: string, color: string, conds: SpecCondition[], combine: string) => (
+  const block = (title: string, color: string, b: SpecBlock) => {
+    const conds = b.conditions
+    const combine = combineLabel(b)
+    return (
     <div className={FRAME}>
       <p className="text-xs font-semibold mb-2" style={{ color }}>{title}</p>
       <div className="space-y-1.5">
@@ -86,11 +89,12 @@ export function Dna2D({ spec }: Readonly<{ spec: StrategySpec | null }>) {
         ))}
       </div>
     </div>
-  )
+    )
+  }
   return (
     <div className="grid sm:grid-cols-2 gap-3">
-      {block('Entrada', '#60a5fa', spec.entry.conditions, spec.entry.combine)}
-      {block('Salida', '#fbbf24', spec.exit.conditions, spec.exit.combine)}
+      {block('Entrada', '#60a5fa', spec.entry)}
+      {block('Salida', '#fbbf24', spec.exit)}
     </div>
   )
 }

@@ -63,6 +63,11 @@ export interface SpecCondition {
   pattern?: string
   /** Solo en `pattern`: velas de vigencia del suceso. */
   lookback?: number
+  /**
+   * Niega la condición. Solo existe en tipos de ESTADO: el complemento de un
+   * suceso puntual sería cierto casi siempre y no diría nada.
+   */
+  negate?: boolean
 }
 
 /**
@@ -98,6 +103,16 @@ export const PATTERN_SHORT_LABELS: Record<string, string> = {
 
 /** Etiqueta corta y legible de cualquier condición, para vistas gráficas. */
 export function conditionLabel(c: SpecCondition): string {
+  const text = conditionText(c)
+  return c.negate ? `¬${text}` : text
+}
+
+/** Cómo se lee el combinador de un bloque en una vista compacta. */
+export function combineLabel(block: SpecBlock): string {
+  return block.combine === 'K_OF_N' ? `${block.k ?? 2} de ${block.conditions.length}` : block.combine
+}
+
+function conditionText(c: SpecCondition): string {
   if (c.type === 'pattern') {
     const name = PATTERN_SHORT_LABELS[c.pattern ?? ''] ?? c.pattern ?? 'patrón'
     return c.lookback && c.lookback > 1 ? `${name} ≤${c.lookback}v` : name
@@ -108,9 +123,21 @@ export function conditionLabel(c: SpecCondition): string {
   return `${c.a?.indicator} ${c.op === 'cross_above' ? '↗' : '↘'} ${c.b?.indicator}`
 }
 
+/**
+ * Bloque de condiciones.
+ *
+ * `K_OF_N` es confirmación parcial —«al menos k de estas n»—, que no se puede
+ * escribir encadenando Y y O sin anidar. `k` solo viaja con ese combinador.
+ */
+export interface SpecBlock {
+  combine: 'AND' | 'OR' | 'K_OF_N'
+  k?: number
+  conditions: SpecCondition[]
+}
+
 export interface StrategySpec {
-  entry: { combine: 'AND' | 'OR'; conditions: SpecCondition[] }
-  exit: { combine: 'AND' | 'OR'; conditions: SpecCondition[] }
+  entry: SpecBlock
+  exit: SpecBlock
 }
 
 export interface GatingChecks {
@@ -362,6 +389,20 @@ export interface Finalist {
   }
   /** Cascada de retests estilo StrategyQuant (se reporta, no recorta el cupo). */
   retests?: RetestCascade
+  /**
+   * Estrategias que superaron EXACTAMENTE los mismos controles pero
+   * correlacionan con esta, así que no encabezan el libro decorrelacionado.
+   *
+   * No son descartes: explotan el mismo edge, y elegir entre ellas —por caída
+   * máxima, por nº de operaciones, por rotación— es del usuario. Antes se
+   * calculaban enteras y desaparecían.
+   */
+  variants?: StrategyVariant[]
+}
+
+export interface StrategyVariant extends Omit<Finalist, 'rank' | 'variants'> {
+  /** |ρ| con la cabeza de libro. 0.72 y 0.99 son situaciones muy distintas. */
+  correlation_with_parent: number
 }
 
 /**
@@ -496,6 +537,9 @@ export interface GenerationReport {
     restarts?: number
     refined?: number
     correlated_dropped?: number
+    /** Validadas que salen de la ejecución: el ranking MÁS sus variantes. */
+    strategies_found?: number
+    variants?: number
   }
   restarts?: { restart: number; seed: number; gated: number; passed_cumulative: number; evaluations_cumulative: number }[]
   /** Matriz walk-forward del campeón: Sharpe OOS por tramo bajo distintos troceos. */

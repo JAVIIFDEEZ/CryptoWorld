@@ -30,6 +30,7 @@ import CpcvDistributionCard from '@/components/generator/CpcvDistributionCard'
 import RetestCascadeCard from '@/components/generator/RetestCascadeCard'
 import CapacityCard from '@/components/generator/CapacityCard'
 import MetaSizingCard from '@/components/generator/MetaSizingCard'
+import VariantsCard from '@/components/generator/VariantsCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -466,6 +467,11 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
           capacity={winner.gating.metrics.capacity}
           significance={winner.gating.metrics.significance}
         />
+      )}
+
+      {/* Validadas igual que la campeona, apartadas del libro por correlacionar. */}
+      {winner?.variants && winner.variants.length > 0 && (
+        <VariantsCard variants={winner.variants} championDesc={winner.description} />
       )}
 
       {/* ¿Todas las señales valen lo mismo? El meta-modelo responde que no. */}

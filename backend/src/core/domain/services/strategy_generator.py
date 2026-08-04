@@ -26,6 +26,8 @@ from core.domain.services.strategy_spec import (
     COMBINES,
     COMPARE_OPS,
     CROSS_OPS,
+    MIN_NEGATABLE_LOOKBACK,
+    NEGATABLE,
     OSCILLATORS,
     PATTERNS,
     SLOPE_OPS,
@@ -175,12 +177,72 @@ def _mutate_pattern(spec: dict, rng: np.random.Generator) -> dict:
 
 
 def _mutate_flip_combine(spec: dict, rng: np.random.Generator) -> dict:
-    """Cambia el combinador AND↔OR de un bloque al azar."""
+    """
+    Recorre la lógica del bloque: AND ↔ OR ↔ «k de n».
+
+    `K_OF_N` solo entra si el bloque tiene 3 o más condiciones: con dos, k=1 es
+    OR y k=2 es AND, así que sería otra forma de escribir lo mismo — y el hash
+    del spec dejaría de identificar la estrategia, que es de lo que depende el
+    control de diversidad del GA.
+    """
     out = copy.deepcopy(spec)
     side = "entry" if rng.random() < 0.5 else "exit"
     block = out[side]
-    block["combine"] = COMBINES[1] if block["combine"] == COMBINES[0] else COMBINES[0]
+    n = len(block["conditions"])
+
+    if block["combine"] == "K_OF_N":
+        block.pop("k", None)
+        block["combine"] = "AND" if rng.random() < 0.5 else "OR"
+        return out
+
+    if n >= 3 and rng.random() < 0.35:
+        block["combine"] = "K_OF_N"
+        block["k"] = int(rng.integers(2, n))
+        return out
+
+    block["combine"] = "OR" if block["combine"] == "AND" else "AND"
     return out
+
+
+def _mutate_k(spec: dict, rng: np.random.Generator) -> dict:
+    """Mueve el umbral de confirmación `k` de un bloque «k de n»."""
+    out = copy.deepcopy(spec)
+    blocks = [out[side] for side in ("entry", "exit")
+              if out[side]["combine"] == "K_OF_N" and len(out[side]["conditions"]) >= 3]
+    if not blocks:
+        return out
+    b = blocks[int(rng.integers(0, len(blocks)))]
+    b["k"] = int(rng.integers(2, len(b["conditions"])))
+    return out
+
+
+def _mutate_negate(spec: dict, rng: np.random.Generator) -> dict:
+    """
+    Invierte la negación de una condición que la admita.
+
+    Sin este operador, una condición negada solo podía llegar del sorteo inicial
+    y nunca desaparecer, ni aparecer en un genoma que naciera sin ella. La mitad
+    negada del espacio quedaba accesible solo por azar.
+    """
+    out = copy.deepcopy(spec)
+    targets = [c for side in ("entry", "exit") for c in out[side]["conditions"]
+               if _negatable(c)]
+    if not targets:
+        return out
+    c = targets[int(rng.integers(0, len(targets)))]
+    if c.get("negate"):
+        c.pop("negate")
+    else:
+        c["negate"] = True
+    return out
+
+
+def _negatable(c: dict) -> bool:
+    if c["type"] not in NEGATABLE:
+        return False
+    if c["type"] == "pattern":
+        return int(c.get("lookback", 1)) >= MIN_NEGATABLE_LOOKBACK
+    return True
 
 
 def _mutate_replace_condition(spec: dict, rng: np.random.Generator) -> dict:
@@ -252,6 +314,8 @@ _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_flip_op,
     _mutate_pattern,
     _mutate_flip_combine,
+    _mutate_k,
+    _mutate_negate,
     _mutate_replace_condition,
     _mutate_add_condition,
     _mutate_remove_condition,

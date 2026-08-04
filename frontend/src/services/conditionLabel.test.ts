@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { conditionLabel } from './strategyGeneratorService'
+import { combineLabel, conditionLabel } from './strategyGeneratorService'
 import type { SpecCondition } from './strategyGeneratorService'
 
 describe('conditionLabel', () => {
@@ -57,5 +57,31 @@ describe('conditionLabel', () => {
 
   it('no dice undefined ni con una condición de patrón vacía', () => {
     expect(conditionLabel({ type: 'pattern' })).not.toMatch(/undefined/)
+  })
+})
+
+describe('conditionLabel — negación', () => {
+  it('marca la condición negada', () => {
+    expect(conditionLabel({ type: 'threshold', indicator: 'RSI', op: 'lt', threshold: 30, negate: true }))
+      .toBe('¬RSI < 30')
+  })
+
+  it('no marca la que no lo está', () => {
+    expect(conditionLabel({ type: 'threshold', indicator: 'RSI', op: 'lt', threshold: 30 }))
+      .not.toContain('¬')
+  })
+})
+
+describe('combineLabel', () => {
+  it('deja AND y OR tal cual', () => {
+    expect(combineLabel({ combine: 'AND', conditions: [] })).toBe('AND')
+    expect(combineLabel({ combine: 'OR', conditions: [] })).toBe('OR')
+  })
+
+  it('lee «k de n» como confirmación parcial, no como una sigla', () => {
+    expect(combineLabel({
+      combine: 'K_OF_N', k: 2,
+      conditions: [{ type: 'threshold' }, { type: 'threshold' }, { type: 'threshold' }],
+    })).toBe('2 de 3')
   })
 })
