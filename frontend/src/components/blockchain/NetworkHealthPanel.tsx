@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import {
   blockchainService,
   type ChainHealth,
+  type ChainMetricHistory,
   type WalletChain,
 } from '@/services/blockchainService'
 
@@ -35,6 +36,7 @@ export default function NetworkHealthPanel() {
   const [chains, setChains] = useState<WalletChain[]>([])
   const [chain, setChain] = useState('ethereum')
   const [data, setData] = useState<ChainHealth | null>(null)
+  const [history, setHistory] = useState<ChainMetricHistory | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -49,7 +51,16 @@ export default function NetworkHealthPanel() {
       .finally(() => setLoading(false))
   }, [chain])
 
+  // Serie de gas del almacén propio. Es lo que convierte «12 Gwei» en algo
+  // interpretable: un número suelto no dice si eso es mucho o poco.
+  useEffect(() => {
+    blockchainService.getChainHistory(chain, 'gas_average', 7)
+      .then(setHistory)
+      .catch(() => setHistory(null))
+  }, [chain])
+
   const gas = data ? GAS_STYLE[data.gas_level] : GAS_STYLE.unknown
+  const series = history?.points ?? []
 
   return (
     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 mb-6">
@@ -71,6 +82,16 @@ export default function NetworkHealthPanel() {
 
       {!loading && !data && <p className="text-slate-500 text-sm mt-3">No se pudo obtener el estado de la red.</p>}
 
+      {!loading && data?.stale && (
+        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          <p className="text-[11px] text-amber-300">
+            ⚠ Datos del almacén propio, no en vivo
+            {data.data_age_seconds != null && ` · ${Math.round(data.data_age_seconds / 60)} min de antigüedad`}
+          </p>
+          <p className="text-[10px] text-amber-200/70 mt-0.5">{data.note}</p>
+        </div>
+      )}
+
       {!loading && data && (
         <div className="mt-3 space-y-4">
           {/* Gas */}
@@ -85,6 +106,26 @@ export default function NetworkHealthPanel() {
               <GasTier label="Rápido" value={data.gas_fast} tone="text-amber-300" />
             </div>
             <p className="text-[11px] text-slate-400 mt-2">{data.gas_text}</p>
+
+            {/* De dónde sale el veredicto. Un juicio sin su base no es
+                interpretable, y «percentil de su propia historia» y «umbral
+                fijo de hace años» no merecen la misma confianza. */}
+            {data.gas_basis === 'fixed' && (
+              <p className="text-[10px] text-slate-600 mt-1">
+                Veredicto por umbral fijo: aún no hay suficiente histórico propio
+                de esta red para compararlo contra sí misma.
+              </p>
+            )}
+            {data.gas_percentile && (
+              <p className="text-[10px] text-slate-500 mt-1">
+                Rango de los últimos {data.gas_percentile.days} días:{' '}
+                {data.gas_percentile.min}–{data.gas_percentile.max} Gwei
+                (mediana {data.gas_percentile.median}) sobre{' '}
+                {data.gas_percentile.n_points} lecturas.
+              </p>
+            )}
+
+            <GasSparkline points={series} />
           </div>
 
           {/* Métricas de red */}
@@ -121,6 +162,53 @@ function Metric({ label, value, sub, subTone }: Readonly<{ label: string; value:
       <p className="text-[10px] text-slate-500 uppercase">{label}</p>
       <p className="text-sm font-bold font-mono text-white">{value}</p>
       {sub && <p className={`text-[10px] font-mono ${subTone ?? 'text-slate-500'}`}>{sub}</p>}
+    </div>
+  )
+}
+
+/**
+ * Minigráfica del gas de los últimos días.
+ *
+ * Deliberadamente austera —SVG inline, sin librería— porque su única función es
+ * dar CONTEXTO a un número: ver que 12 Gwei viene de bajar desde 40 dice más
+ * que cualquier etiqueta. Mientras el almacén se llena no dibuja nada en vez de
+ * pintar cuatro puntos como si fueran una tendencia.
+ */
+function GasSparkline({ points }: Readonly<{ points: { t: number; v: number }[] }>) {
+  if (points.length < 12) {
+    return (
+      <p className="text-[10px] text-slate-600 mt-2">
+        El histórico propio aún se está llenando ({points.length} lecturas): en unas
+        horas esta zona mostrará la evolución del gas.
+      </p>
+    )
+  }
+
+  const values = points.map((p) => p.v)
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = max - min || 1
+  const w = 100
+  const h = 24
+  const path = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * w
+      const y = h - ((p.v - min) / span) * h
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+
+  return (
+    <div className="mt-2">
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-6" role="img"
+        aria-label={`Evolución del gas: entre ${min} y ${max} Gwei`}>
+        <path d={path} fill="none" stroke="#22d3ee" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <div className="flex justify-between text-[9px] text-slate-600">
+        <span>{min} Gwei</span>
+        <span>{points.length} lecturas</span>
+        <span>{max} Gwei</span>
+      </div>
     </div>
   )
 }

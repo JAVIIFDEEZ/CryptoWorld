@@ -218,6 +218,7 @@ urlpatterns = [
     path("blockchain/wallet/chains/", views.WalletChainsView.as_view(), name="blockchain-wallet-chains"),
     path("blockchain/wallet/history/", views.WalletBalanceHistoryView.as_view(), name="blockchain-wallet-history"),
     path("blockchain/health/", views.ChainHealthView.as_view(), name="blockchain-health"),
+    path("blockchain/history/", views.ChainMetricHistoryView.as_view(), name="blockchain-history"),
     path("blockchain/movements/", views.WhaleMovementsView.as_view(), name="blockchain-movements"),
     path("blockchain/forensics/flow/", views.OnChainFlowTraceView.as_view(), name="blockchain-forensics-flow"),
     path("blockchain/forensics/concentration/", views.OnChainConcentrationView.as_view(), name="blockchain-forensics-concentration"),

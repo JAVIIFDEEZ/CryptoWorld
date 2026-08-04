@@ -192,6 +192,52 @@ export interface ChainHealth {
   transactions_today: string | null
   source: string
   error?: string
+
+  /**
+   * El dato NO viene de la fuente en vivo sino del almacén propio.
+   *
+   * Antes, si Blockscout no respondía, el panel se quedaba vacío. Ahora se
+   * sirve lo último guardado — pero marcado, porque presentar un dato de hace
+   * tres horas como si fuera de ahora sería peor que no mostrar nada.
+   */
+  stale?: boolean
+  stale_reason?: string
+  data_age_seconds?: number | null
+  note?: string
+
+  /**
+   * Dónde cae el gas actual dentro de su PROPIA historia.
+   *
+   * Es la versión autocalibrada de «¿está caro?». Un umbral fijo de 10 Gwei es
+   * una constante arbitraria que envejece con el mercado.
+   */
+  gas_percentile?: {
+    percentile: number
+    n_points: number
+    days: number
+    min: number
+    median: number
+    max: number
+  } | null
+  /** Con qué criterio se emitió el veredicto: percentil propio o umbral fijo. */
+  gas_basis?: 'history' | 'fixed' | 'none'
+}
+
+/** Serie histórica de una métrica on-chain (almacén propio). */
+export interface ChainMetricHistory {
+  chain: string
+  metric: string
+  days: number
+  points: { t: number; v: number }[]
+  coverage: {
+    chain: string
+    points: number
+    metrics: number
+    first: number | null
+    last: number | null
+    span_days: number
+    note: string
+  }
 }
 
 // ── Historial de saldo (curva de patrimonio on-chain) ──────────────
@@ -428,6 +474,18 @@ export const blockchainService = {
   getChainHealth: async (chain: string): Promise<ChainHealth> => {
     const params = new URLSearchParams({ chain })
     const { data } = await apiClient.get(`/blockchain/health/?${params}`)
+    return data
+  },
+
+  /**
+   * Serie histórica de una métrica on-chain desde el almacén propio.
+   *
+   * Es lo que faltaba para poder dibujar algo: hasta ahora el módulo solo tenía
+   * fotos en vivo, y un punto no se grafica.
+   */
+  getChainHistory: async (chain: string, metric = 'gas_average', days = 7): Promise<ChainMetricHistory> => {
+    const params = new URLSearchParams({ chain, metric, days: String(days) })
+    const { data } = await apiClient.get(`/blockchain/history/?${params}`)
     return data
   },
 

@@ -473,6 +473,20 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.sync_ohlcv_history",
         "schedule": 1800.0,  # segundos — solo persiste velas cerradas
     },
+    # Histórico on-chain (cada 10 min). Sin esta tarea el almacén solo se llena
+    # cuando alguien abre el panel: la historia dependería del tráfico y no del
+    # tiempo, y las horas en que nadie mira —justo cuando el gas es más barato—
+    # quedarían en blanco.
+    "sync-chain-metrics": {
+        "task": "core.tasks.sync_chain_metrics",
+        "schedule": 600.0,
+    },
+    # Poda del histórico on-chain (semanal): un almacén que solo crece acaba
+    # siendo un problema operativo.
+    "prune-chain-metrics": {
+        "task": "core.tasks.prune_chain_metrics",
+        "schedule": 604800.0,
+    },
     # Histórico de financiación de perpetuos (cada 6 h: se liquida cada 8 h).
     # Sin él, todo backtest de perpetuo sobreestima el rendimiento, y más
     # cuanto más aguante abierta la posición.

@@ -1291,6 +1291,58 @@ class OhlcvCandle(models.Model):
         return f"{self.symbol} {self.interval} @ {self.open_time}"
 
 
+class ChainMetricPoint(models.Model):
+    """
+    Punto de una serie temporal on-chain — el almacén histórico del módulo de
+    blockchain.
+
+    Hasta ahora ese módulo no persistía nada: cada panel consultaba en vivo a
+    Blockscout o Blockchair y mostraba una foto. Eso tiene tres consecuencias,
+    todas visibles para el usuario:
+
+      · **Si la fuente falla, el panel queda vacío.** Una API pública sin clave
+        con ~1 petición/minuto de límite falla a menudo, y el módulo no tenía a
+        qué replegarse.
+      · **No hay tendencias.** «El gas está a 12 Gwei» no dice nada sin saber a
+        cuánto ha estado. Los umbrales fijos por red (10/30 Gwei) son constantes
+        arbitrarias que envejecen: lo que era caro en 2021 es carísimo hoy.
+      · **No hay gráficas.** Un punto no se puede dibujar.
+
+    El diseño es deliberadamente genérico —(cadena, métrica, instante, valor)—
+    porque las métricas útiles difieren por cadena: Bitcoin tiene hashrate y
+    dificultad, Ethereum tiene gas y utilización, y forzar un esquema con
+    columnas fijas dejaría fuera la mitad.
+
+    Los instantes se agrupan en cubos de 5 minutos: sin ellos, cada visita de
+    cada usuario crearía una fila y el almacén crecería con el tráfico en vez de
+    con el tiempo. Con cubos, la re-ingesta es idempotente y el volumen es
+    predecible (~288 puntos por métrica y día).
+    """
+
+    chain = models.CharField(max_length=20, db_index=True)   # ethereum, bitcoin…
+    metric = models.CharField(max_length=40)                 # gas_average, hashrate…
+    timestamp = models.BigIntegerField()                     # epoch ms UTC (cubo)
+    value = models.FloatField()
+    source = models.CharField(max_length=20, default="blockscout")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "chain_metric_points"
+        verbose_name = "Punto de métrica on-chain"
+        verbose_name_plural = "Puntos de métricas on-chain"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chain", "metric", "timestamp"], name="uq_chain_metric_point",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["chain", "metric", "-timestamp"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.chain}.{self.metric}={self.value} @ {self.timestamp}"
+
+
 class FundingRateRecord(models.Model):
     """
     Tasa de financiación de un perpetuo en un momento de liquidación.

@@ -1261,6 +1261,57 @@ class ChainHealthView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class ChainMetricHistoryView(APIView):
+    """
+    GET /api/blockchain/history/?chain=ethereum&metric=gas_average&days=7
+
+    Serie histórica de una métrica on-chain desde el almacén propio.
+
+    Es lo que faltaba para que el módulo pudiera dibujar algo: hasta ahora todo
+    era una foto en vivo, y un punto no se grafica. También devuelve la cobertura
+    del almacén, para que la interfaz pueda decir «aún no hay suficiente
+    historia» en vez de pintar una gráfica de tres puntos como si fuera una
+    tendencia.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 120
+    _MAX_DAYS = 400
+
+    def get(self, request):
+        from core.application.use_cases import chain_metrics_store as store
+        from core.infrastructure.external_apis.blockscout_client import SUPPORTED_CHAINS
+
+        chain = (request.query_params.get("chain") or "ethereum").strip().lower()
+        metric = (request.query_params.get("metric") or "gas_average").strip()
+        if chain not in SUPPORTED_CHAINS:
+            return Response({"error": f"Red '{chain}' no soportada."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if metric not in store.HEALTH_METRICS:
+            return Response({"error": f"Métrica '{metric}' no disponible.",
+                             "available": list(store.HEALTH_METRICS)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            days = max(1, min(self._MAX_DAYS, int(request.query_params.get("days", 7))))
+        except (TypeError, ValueError):
+            days = 7
+
+        cache_key = f"chain_history:{chain}:{metric}:{days}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        series = store.load_series(chain, metric, days=days)
+        payload = {
+            "chain": chain,
+            "metric": metric,
+            "days": days,
+            "points": [{"t": t, "v": v} for t, v in series],
+            "coverage": store.coverage(chain),
+        }
+        cache.set(cache_key, payload, self._CACHE_TTL)
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class OnChainRiskScoreView(APIView):
     """
     GET /api/blockchain/forensics/risk/?chain=ethereum&address=0x.. — Puntuación

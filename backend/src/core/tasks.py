@@ -745,6 +745,60 @@ def backfill_ohlcv(self, symbol: str, interval: str = "1d",
 
 
 @shared_task(
+    name="core.tasks.sync_chain_metrics",
+    bind=True,
+    max_retries=0,
+)
+def sync_chain_metrics(self) -> dict:
+    """
+    Acumula el histórico on-chain de todas las cadenas soportadas.
+
+    Sin esta tarea, el almacén solo se llenaba cuando alguien abría el panel: la
+    historia dependía del tráfico y no del tiempo, y justo las horas en que
+    nadie mira —de madrugada, cuando el gas es más barato— quedaban en blanco.
+
+    Es también lo que hace útil el repliegue: un panel solo puede sobrevivir a
+    la caída de la fuente si había datos guardados de antes.
+    """
+    from core.application.use_cases.get_chain_health import GetChainHealthUseCase
+    from core.infrastructure.external_apis.blockscout_client import SUPPORTED_CHAINS
+
+    use_case = GetChainHealthUseCase()
+    ok = stale = failed = 0
+    for chain in SUPPORTED_CHAINS:
+        try:
+            res = use_case.execute(chain)
+            if res.get("error"):
+                failed += 1
+            elif res.get("stale"):
+                stale += 1
+            else:
+                ok += 1
+        except Exception as exc:  # noqa: BLE001 — una cadena caída no frena al resto
+            failed += 1
+            logger.warning("sync_chain_metrics %s: %s", chain, exc)
+
+    logger.info("sync_chain_metrics: %d al día, %d del almacén, %d caídas", ok, stale, failed)
+    return {"chains": len(SUPPORTED_CHAINS), "live": ok, "from_store": stale, "failed": failed}
+
+
+@shared_task(
+    name="core.tasks.prune_chain_metrics",
+    bind=True,
+    max_retries=0,
+)
+def prune_chain_metrics(self, older_than_days: int = 400) -> dict:
+    """Poda del histórico on-chain: un almacén que solo crece acaba siendo un
+    problema operativo, y más de un año de gas a 5 minutos no dice nada que no
+    diga el último mes."""
+    from core.application.use_cases.chain_metrics_store import prune
+
+    deleted = prune(older_than_days)
+    logger.info("prune_chain_metrics: %d puntos eliminados", deleted)
+    return {"deleted": deleted, "older_than_days": older_than_days}
+
+
+@shared_task(
     name="core.tasks.sync_funding_history",
     bind=True,
     max_retries=0,
