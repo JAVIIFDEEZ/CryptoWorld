@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from core.domain.services import backtest_metrics as metrics
+from core.domain.services import generation_power as power
 from core.domain.services import meta_sizing
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_evaluation import (
@@ -720,6 +721,17 @@ def generate_strategies(
             "strategies_found": len(passed) + sum(len(f.get("variants", [])) for f in passed),
             "variants": sum(len(f.get("variants", [])) for f in passed),
         },
+        # ¿Tenía esta ejecución datos suficientes para dar un veredicto?
+        # Sin esto, un libro vacío por falta de muestra se presentaba igual que
+        # uno vacío por falta de edge, y son conclusiones opuestas: la primera no
+        # dice nada sobre el mercado.
+        "power": power.assess(
+            candles=len(df), interval=interval, wf_splits=cfg.gating.wf_splits,
+            evolution_candles=len(df_evo),
+            trades_observed=(passed[0]["gating"]["metrics"]["n_trades"] if passed
+                             else (max((f["gating"]["metrics"]["n_trades"]
+                                        for f in finalists), default=None))),
+        ),
         "walk_forward_matrix": wf_matrix,
         "restarts": restart_summaries,
         "correlation_filter": {
@@ -755,7 +767,7 @@ class GenerateStrategiesUseCase:
         self,
         asset_symbol: str,
         interval: str = "1d",
-        limit: int = 730,
+        limit: int | None = None,
         initial_capital: float = 10000.0,
         preset: str = DEFAULT_PRESET,
         optimizer: str = "single",
@@ -770,13 +782,31 @@ class GenerateStrategiesUseCase:
         from dataclasses import replace
 
         symbol = asset_symbol.upper()
+
+        # Velas a pedir POR CALENDARIO, no un recuento fijo. El motor pedía 730
+        # para todos los marcos —un número elegido cuando solo había gráficos
+        # diarios (730 = 2 años)—, con lo que en 1 h se quedaba en 30 días de
+        # histórico y cada tramo del walk-forward cubría cinco días. Ahí no hay
+        # estrategia que valga: no hay operaciones que medir.
+        if limit is None:
+            limit = power.recommended_candles(interval)
+
+        # Si el almacén propio no llega, se retro-carga antes de rendirse: los
+        # exchanges devuelven como mucho 1000 velas por llamada, así que sin
+        # backfill el objetivo de calendario sería inalcanzable por definición.
+        self._ensure_history(symbol, interval, limit)
+
         result = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
         if result is None or result.df.empty or len(result.df) < MIN_CANDLES:
+            available = 0 if result is None or result.df is None else len(result.df)
             return {
                 "error": (
                     f"Se necesitan al menos {MIN_CANDLES} velas para generar "
-                    f"estrategias robustas y no hay suficientes datos para {symbol}."
+                    f"estrategias robustas y solo hay {available} para {symbol} "
+                    f"en {interval}."
                 ),
+                "candles_available": available,
+                "candles_needed": MIN_CANDLES,
             }
 
         cfg = config or config_for_preset(preset)
@@ -815,6 +845,33 @@ class GenerateStrategiesUseCase:
             symbol, preset, report["summary"]["passed_gating"], report["summary"]["candidates_gated"],
         )
         return report
+
+    @staticmethod
+    def _ensure_history(symbol: str, interval: str, target: int) -> None:
+        """
+        Retro-carga el almacén hasta el objetivo, si hace falta.
+
+        Los exchanges devuelven como mucho 1000 velas por llamada, así que sin
+        backfill cualquier objetivo por encima de eso sería inalcanzable por
+        construcción — y el generador se quedaría con 1000 velas creyendo que
+        pidió 4000. Es best-effort: si la red falla, se sigue con lo que haya y
+        el diagnóstico de potencia lo dirá.
+        """
+        if target <= 1000:
+            return
+        try:
+            from core.application.use_cases.ohlcv_store import BackfillOhlcvUseCase, coverage
+            have = coverage(symbol, interval).get("candles", 0)
+            if have >= target:
+                return
+            # Páginas de 1000: las justas para cubrir el hueco, con un tope para
+            # que una ejecución no se convierta en una descarga interminable.
+            pages = min(8, (target - have) // 1000 + 1)
+            BackfillOhlcvUseCase().execute(symbol=symbol, interval=interval,
+                                           target_candles=target, max_pages=pages)
+        except Exception:  # noqa: BLE001 — sin red o sin BD se sigue con lo que haya
+            logger.info("backfill previo a la generación no disponible para %s %s",
+                        symbol, interval, exc_info=True)
 
     @staticmethod
     def _cross_validate(report: dict, symbol: str, interval: str,

@@ -140,6 +140,23 @@ export interface StrategySpec {
   exit: SpecBlock
 }
 
+export interface GenerationPower {
+  candles: number
+  interval: string
+  span_days: number
+  evolution_candles: number
+  wf_splits: number
+  bars_per_fold: number
+  days_per_fold: number
+  trades_observed: number | null
+  /** Operaciones por tramo walk-forward: la unidad que decide si el Sharpe de
+   *  ese tramo significa algo. Por debajo de ~10, apenas discrimina. */
+  trades_per_fold: number | null
+  reliability: 'high' | 'low' | 'insufficient'
+  limits: string[]
+  note: string
+}
+
 export interface GatingChecks {
   min_trades: boolean
   no_lookahead: boolean
@@ -541,6 +558,13 @@ export interface GenerationReport {
     strategies_found?: number
     variants?: number
   }
+  /**
+   * ¿Tenía la ejecución datos suficientes para dar un veredicto?
+   *
+   * Un libro vacío por falta de MUESTRA y uno por falta de EDGE son
+   * conclusiones opuestas, y hasta ahora se presentaban igual.
+   */
+  power?: GenerationPower
   restarts?: { restart: number; seed: number; gated: number; passed_cumulative: number; evaluations_cumulative: number }[]
   /** Matriz walk-forward del campeón: Sharpe OOS por tramo bajo distintos troceos. */
   walk_forward_matrix?: {
