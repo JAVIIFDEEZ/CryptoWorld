@@ -26,6 +26,7 @@ from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
 from core.domain.services import market_impact as impact
+from core.domain.services import meta_sizing
 from core.domain.services import significance as sig
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk, spec_sizing
@@ -54,6 +55,10 @@ class GatingThresholds:
     cpcv_blocks: int = 8             # bloques contiguos del histórico
     cpcv_k: int = 2                  # bloques por camino → C(8,2) = 28 caminos
     cpcv_embargo_pct: float = 0.02   # velas descartadas al inicio de cada bloque
+    # ── Overlay de convicción (meta-modelo → tamaño de posición) ──
+    # Se REPORTA, no bloquea ni sustituye al sizing del spec. Una estrategia no
+    # es peor por no admitir modulación de tamaño; simplemente no la aprovecha.
+    meta_sizing: bool = True
 
 
 def _segment_backtest(df, spec: dict, costs: CostModel | None = None) -> dict:
@@ -757,6 +762,14 @@ def gate_spec(
         daily_volatility=impact.daily_volatility_of(df),
     )
 
+    # Separación dirección/tamaño: el spec dice DÓNDE entrar, el meta-modelo
+    # CUÁNTO. Se mide fuera de muestra y solo se declara aplicable si supera al
+    # primario; una estrategia que no admite modulación no es peor por ello.
+    meta = (meta_sizing.conviction_overlay(df, spec, ppy=ppy, costs=costs)
+            if th.meta_sizing else
+            {"applied": False, "reason": "disabled",
+             "note": "Overlay de convicción desactivado en la configuración."})
+
     mc = robustness.monte_carlo_simulation(
         [t["pnl_pct"] for t in full["trades"]], n_sims=th.mc_sims, seed=seed
     )
@@ -801,6 +814,11 @@ def gate_spec(
             # sólido lo que es ruido: aquí va el intervalo y la probabilidad de
             # que el Sharpe verdadero supere cero.
             "significance": sig.annotate(full["bar_returns"], ppy),
+            # Meta-etiquetado: si el tamaño de la posición puede modularse con
+            # la convicción del meta-modelo, y qué aporta hacerlo (medido en el
+            # tramo que ese modelo no vio al entrenar).
+            "meta_sizing": meta,
+            "meta_sizing_applied": meta.get("applied", False),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
             "exit_reasons": full["exit_reasons"],

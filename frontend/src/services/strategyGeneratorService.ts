@@ -196,6 +196,54 @@ export interface CapacityEstimate {
   note?: string
 }
 
+/**
+ * Overlay de convicción: el spec decide DÓNDE entrar, el meta-modelo CUÁNTO.
+ *
+ * `applied: false` no es un fallo — es el resultado correcto cuando el
+ * meta-modelo no supera al primario. `reason` dice por qué, y la interfaz debe
+ * mostrarlo en lugar de callarlo: filtrar con ruido es peor que no filtrar.
+ */
+export interface MetaSizing {
+  applied: boolean
+  reason?: 'insufficient_events' | 'unlabelable' | 'no_edge' | 'short_holdout' | 'disabled'
+  n_events?: number
+  meta_model?: {
+    usable?: boolean
+    n_events?: number
+    n_train?: number
+    n_test?: number
+    test_start_bar?: number
+    accuracy?: number
+    /** Aciertos del primario operando TODAS sus señales: la línea base honesta. */
+    primary_hit_rate?: number
+    /** Aciertos cuando el meta-modelo dice que sí: donde se pone el dinero. */
+    meta_precision?: number
+    edge_over_primary?: number
+    signals_taken_pct?: number
+    note?: string
+  }
+  labels?: { n_events: number; counts?: { target: number; stop: number; timeout: number } }
+  sizing?: { mean_size_pct: number; signals_taken: number; signals_total: number; floor: number }
+  /** Comparación con y sin convicción en el tramo que el modelo no vio entrenando. */
+  out_of_sample?: {
+    from_bar: number
+    candles: number
+    sharpe_flat: number
+    sharpe_conviction: number
+    sharpe_delta: number
+    return_flat_pct: number
+    return_conviction_pct: number
+    max_drawdown_flat_pct: number
+    max_drawdown_conviction_pct: number
+    exposure_flat_pct: number
+    exposure_conviction_pct: number
+    trades_flat: number
+    trades_conviction: number
+  }
+  improves?: boolean
+  note: string
+}
+
 export interface GatingMetrics {
   n_trades: number
   total_return_pct: number
@@ -214,6 +262,8 @@ export interface GatingMetrics {
   capacity?: CapacityEstimate
   capacity_usd?: number | null
   significance?: Significance
+  meta_sizing?: MetaSizing
+  meta_sizing_applied?: boolean
   turnover?: number
   cost_drag_pct?: number
   exit_reasons?: Record<string, number>

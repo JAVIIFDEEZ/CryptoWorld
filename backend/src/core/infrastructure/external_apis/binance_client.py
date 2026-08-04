@@ -178,6 +178,35 @@ class BinancePublicClient:
         """GET /fapi/v1/openInterest — interés abierto del perpetuo (contratos)."""
         return self._get_futures("/fapi/v1/openInterest", {"symbol": symbol})
 
+    def funding_rate_history(self, symbol: str, start_time: int | None = None,
+                             end_time: int | None = None, limit: int = 1000) -> list:
+        """
+        GET /fapi/v1/fundingRate — histórico de tasas de financiación.
+
+        El funding es el coste real de mantener un perpetuo abierto y se cobra
+        cada 8 horas, así que un backtest de perpetuos que lo ignora sobreestima
+        el rendimiento de forma sistemática y creciente con la duración de la
+        posición. Es el equivalente, en derivados, a backtestear sin comisiones.
+        """
+        params: dict = {"symbol": symbol, "limit": min(int(limit), 1000)}
+        if start_time is not None:
+            params["startTime"] = int(start_time)
+        if end_time is not None:
+            params["endTime"] = int(end_time)
+        return self._get_futures("/fapi/v1/fundingRate", params)
+
+    def futures_exchange_info(self) -> dict:
+        """
+        GET /fapi/v1/exchangeInfo — catálogo de perpetuos con su ESTADO.
+
+        Es la fuente que permite reconstruir el universo sin sesgo de
+        supervivencia: cada símbolo trae `onboardDate` (cuándo empezó a cotizar)
+        y `status` (TRADING, SETTLING, BREAK…). Un universo construido con la
+        lista de hoy contiene solo a los que sobrevivieron, y medir sobre él
+        infla el rendimiento de cualquier estrategia por construcción.
+        """
+        return self._get_futures("/fapi/v1/exchangeInfo")
+
     # ── Internos ───────────────────────────────────────────────────
 
     def _get_futures(self, path: str, params: Optional[dict] = None) -> Any:

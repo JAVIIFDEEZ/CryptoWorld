@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import ta as ta_lib
 
+from core.domain.services import funding as funding_service
 from core.domain.services.backtest_execution import CostModel, RiskModel, SizingModel, simulate
 
 logger = logging.getLogger(__name__)
@@ -1087,15 +1088,23 @@ def backtest_signals(
     open_ = df["open"].values if "open" in df.columns else close
     n = len(close)
 
-    # El stop por ATR necesita la serie de ATR(14); solo se paga si el spec lo usa.
+    # Las barreras por ATR necesitan la serie de ATR(14); solo se paga si el
+    # spec las usa (stop, objetivo o ambos: la triple barrera).
     atr_arr = None
-    if risk is not None and getattr(risk, "atr_stop_mult", None) is not None:
+    if risk is not None and (getattr(risk, "atr_stop_mult", None) is not None
+                             or getattr(risk, "atr_target_mult", None) is not None):
         atr_arr = ta_lib.volatility.AverageTrueRange(
             pd.Series(high), pd.Series(low), pd.Series(close), window=14,
         ).average_true_range().values
 
+    # Financiación del perpetuo: se cobra si el histórico la trae. Que viaje
+    # como columna del DataFrame y no como parámetro aparte es deliberado —
+    # así el coste acompaña siempre a los datos a los que pertenece, y ningún
+    # tramo puede backtestearse por accidente sin él.
+    funding_arr = funding_service.funding_from_dataframe(df)
+
     sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk,
-                   sizing=sizing, atr=atr_arr, open_=open_)
+                   sizing=sizing, atr=atr_arr, open_=open_, funding=funding_arr)
     trades = sim["trades"]
     equity_curve = sim["equity_curve"]
     final_capital = sim["final_capital"]
@@ -1162,6 +1171,7 @@ def backtest_signals(
         "max_drawdown_pct": round(float(max_dd), 2),
         "exposure_pct": round(float(exposure_pct), 2),
         "total_commission_pct": sim["total_commission_pct"],
+        "total_funding_pct": sim["total_funding_pct"],
         "turnover": sim["turnover"],
         "exit_reasons": _exit_reason_counts(trades),
         # Datos completos para la suite de robustez (run_backtest los recorta):

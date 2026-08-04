@@ -368,28 +368,47 @@ RISK_RANGES = {
     "trailing_stop_pct": (0.03, 0.20),
     "max_bars": (5, 60),
     "atr_stop_mult": (1.5, 4.0),
+    "atr_target_mult": (1.5, 6.0),
 }
 
 
 def _random_risk(rng: np.random.Generator) -> dict | None:
-    """Bloque de riesgo aleatorio (o None). Combina stop-loss/take-profit o
-    trailing, para que el GA pueda evolucionar gestión de riesgo, no solo señales."""
+    """Bloque de riesgo aleatorio (o None). Combina stop-loss/take-profit,
+    trailing o triple barrera, para que el GA pueda evolucionar gestión de
+    riesgo —y política de salida— y no solo señales."""
     roll = rng.random()
     if roll < 0.35:
         return None  # sin gestión de riesgo
     risk: dict = {}
-    if roll < 0.6:  # stop-loss (+ a veces take-profit)
+    if roll < 0.55:  # stop-loss (+ a veces take-profit)
         lo, hi = RISK_RANGES["stop_loss_pct"]
         risk["stop_loss_pct"] = round(float(rng.uniform(lo, hi)), 3)
         if rng.random() < 0.6:
             lo, hi = RISK_RANGES["take_profit_pct"]
             risk["take_profit_pct"] = round(float(rng.uniform(lo, hi)), 3)
-    elif roll < 0.8:  # trailing-stop
+    elif roll < 0.72:  # trailing-stop
         lo, hi = RISK_RANGES["trailing_stop_pct"]
         risk["trailing_stop_pct"] = round(float(rng.uniform(lo, hi)), 3)
-    else:  # stop por volatilidad (múltiplos de ATR en la entrada)
+    elif roll < 0.85:  # stop por volatilidad (múltiplos de ATR en la entrada)
         lo, hi = RISK_RANGES["atr_stop_mult"]
         risk["atr_stop_mult"] = round(float(rng.uniform(lo, hi)), 2)
+    else:
+        # ── Triple barrera ────────────────────────────────────────
+        # Stop y objetivo escalados por la volatilidad de la entrada, más un
+        # horizonte que cierra la posición si no ocurre ninguna de las dos.
+        # La pregunta que responde una salida así —«¿qué pasó primero?»— es la
+        # correcta; «¿se cumple otra condición técnica?» no lo es.
+        lo, hi = RISK_RANGES["atr_stop_mult"]
+        stop = round(float(rng.uniform(lo, hi)), 2)
+        lo, hi = RISK_RANGES["atr_target_mult"]
+        # Objetivo asimétrico al alza: la geometría por defecto del método
+        # (2σ arriba, 1σ abajo) es lo que hace rentable una tasa de acierto
+        # por debajo del 50 %.
+        risk["atr_stop_mult"] = stop
+        risk["atr_target_mult"] = round(float(min(hi, max(lo, stop * rng.uniform(1.2, 2.5)))), 2)
+        lo, hi = RISK_RANGES["max_bars"]
+        risk["max_bars"] = int(rng.integers(int(lo), int(hi) + 1))
+        return risk
     # Salida por tiempo: componible con cualquiera de los stops (o sola).
     if rng.random() < 0.3:
         lo, hi = RISK_RANGES["max_bars"]
@@ -566,6 +585,7 @@ def spec_risk(spec: dict):
         trailing_stop_pct=risk.get("trailing_stop_pct"),
         max_bars=int(risk["max_bars"]) if risk.get("max_bars") is not None else None,
         atr_stop_mult=risk.get("atr_stop_mult"),
+        atr_target_mult=risk.get("atr_target_mult"),
     )
 
 
@@ -745,8 +765,14 @@ def _describe_risk(risk: dict | None) -> str:
         parts.append(f"TP {round(risk['take_profit_pct'] * 100, 1)}%")
     if risk.get("trailing_stop_pct") is not None:
         parts.append(f"trailing {round(risk['trailing_stop_pct'] * 100, 1)}%")
-    if risk.get("atr_stop_mult") is not None:
+    if risk.get("atr_stop_mult") is not None and risk.get("atr_target_mult") is not None:
+        # Las tres juntas tienen nombre propio: decirlo es más informativo que
+        # enumerar sus lados por separado.
+        parts.append(f"triple barrera {risk['atr_target_mult']}/{risk['atr_stop_mult']}×ATR")
+    elif risk.get("atr_stop_mult") is not None:
         parts.append(f"stop {risk['atr_stop_mult']}×ATR")
+    elif risk.get("atr_target_mult") is not None:
+        parts.append(f"objetivo {risk['atr_target_mult']}×ATR")
     if risk.get("max_bars") is not None:
         parts.append(f"máx {int(risk['max_bars'])} velas")
     return f" [{' · '.join(parts)}]" if parts else ""

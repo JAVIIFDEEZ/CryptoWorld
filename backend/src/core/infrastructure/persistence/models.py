@@ -178,8 +178,47 @@ class CryptoAsset(models.Model):
     logo_url = models.URLField(max_length=500, null=True, blank=True)
     asset_address = models.CharField(max_length=200, null=True, blank=True)
     decimals = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    # ── Ciclo de vida: la condición para un universo sin sesgo de supervivencia ──
+    # Sin estas dos fechas, cualquier estudio sobre "el universo" lo construye
+    # con la lista de HOY, que contiene solo a los que sobrevivieron. El sesgo no
+    # es pequeño ni acotado: en cripto la mortalidad de activos es alta, y las
+    # muertes se concentran justo en los tramos de mercado que más importan.
+    listed_at = models.DateTimeField(
+        null=True, blank=True, db_index=True,
+        help_text="Inicio de cotización. Antes de esta fecha el activo no era operable.")
+    delisted_at = models.DateTimeField(
+        null=True, blank=True, db_index=True,
+        help_text="Fin de cotización. Nulo = sigue vivo.")
+    DELISTING_REASONS = [
+        ("delisted", "Retirado del exchange"),
+        ("dead", "Proyecto abandonado"),
+        ("merged", "Fusionado con otro activo"),
+        ("renamed", "Renombrado / redenominado"),
+    ]
+    delisting_reason = models.CharField(
+        max_length=16, choices=DELISTING_REASONS, null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def is_active(self) -> bool:
+        """Sigue cotizando hoy."""
+        return self.delisted_at is None
+
+    def was_tradable_at(self, moment) -> bool:
+        """
+        ¿Era este activo operable en `moment`?
+
+        La respuesta correcta a esta pregunta es lo único que separa un universo
+        point-in-time de una lista de supervivientes. `listed_at` nulo significa
+        fecha desconocida: se asume operable, porque inventar una fecha de alta
+        excluiría datos reales, y ese error sí es silencioso.
+        """
+        if self.listed_at is not None and moment < self.listed_at:
+            return False
+        return self.delisted_at is None or moment < self.delisted_at
 
     class Meta:
         db_table = "crypto_assets"
@@ -1250,6 +1289,50 @@ class OhlcvCandle(models.Model):
 
     def __str__(self) -> str:
         return f"{self.symbol} {self.interval} @ {self.open_time}"
+
+
+class FundingRateRecord(models.Model):
+    """
+    Tasa de financiación de un perpetuo en un momento de liquidación.
+
+    El funding es lo que un largo paga a un corto (o al revés) cada 8 horas por
+    mantener la posición abierta. No es un detalle de microestructura: en cripto
+    llega a costar decenas de puntos básicos al día, se cobra tenga o no razón la
+    posición, y su coste crece con la duración. Un backtest de perpetuos que lo
+    ignora no está midiendo la estrategia — está midiendo una versión de ella que
+    nadie puede operar.
+
+    Se guarda el histórico completo, no la última lectura, porque el coste hay
+    que aplicarlo en el momento en que se pagó: el funding es fuertemente
+    autocorrelacionado y su media reciente no representa a la del tramo que se
+    está backtesteando. La unicidad hace idempotente cualquier re-ingesta.
+    """
+
+    symbol = models.CharField(max_length=20, db_index=True)       # BTCUSDT
+    funding_time = models.BigIntegerField()                       # epoch ms UTC
+    # Fracción, NO porcentaje: 0.0001 = 1 bp por liquidación. Se guarda como
+    # float con signo — positivo significa que los largos pagan.
+    funding_rate = models.FloatField()
+    mark_price = models.FloatField(null=True, blank=True)
+    interval_hours = models.PositiveSmallIntegerField(default=8)
+    source = models.CharField(max_length=20, default="binance")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "funding_rate_records"
+        verbose_name = "Tasa de financiación"
+        verbose_name_plural = "Tasas de financiación"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "funding_time"], name="uq_funding_rate",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["symbol", "-funding_time"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.symbol} funding {self.funding_rate:.6f} @ {self.funding_time}"
 
 
 class ConfluenceSnapshot(models.Model):

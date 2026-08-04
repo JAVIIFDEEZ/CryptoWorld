@@ -47,18 +47,31 @@ class RiskModel:
     max_bars: salida por tiempo — cierra la posición tras N velas (las
     estrategias de ruptura profesionales limitan la vida del trade).
     atr_stop_mult: stop a múltiplos del ATR medido EN LA BARRA DE ENTRADA —
-    stop adaptado a la volatilidad del momento, no un % fijo."""
+    stop adaptado a la volatilidad del momento, no un % fijo.
+    atr_target_mult: objetivo simétrico al anterior, también en ATR de entrada.
+
+    Los tres últimos juntos SON la triple barrera de López de Prado expresada en
+    el vocabulario del motor: barrera inferior (`atr_stop_mult`), superior
+    (`atr_target_mult`) y vertical (`max_bars`). Se implementa así, y no como un
+    motor de salidas aparte, porque de este modo hereda la gestión intrabar, la
+    convención conservadora de stop-primero y el desglose por motivo de salida —
+    y, sobre todo, porque el GA puede evolucionarla como cualquier otro bloque.
+
+    Un objetivo en múltiplos de ATR no es lo mismo que uno en porcentaje fijo: un
+    3 % significa cosas muy distintas en un mercado tranquilo y en uno convulso,
+    y esa es exactamente la razón de escalar las barreras con la volatilidad."""
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     trailing_stop_pct: float | None = None
     max_bars: int | None = None
     atr_stop_mult: float | None = None
+    atr_target_mult: float | None = None
 
     @property
     def active(self) -> bool:
         return any(v is not None for v in (
             self.stop_loss_pct, self.take_profit_pct, self.trailing_stop_pct,
-            self.max_bars, self.atr_stop_mult,
+            self.max_bars, self.atr_stop_mult, self.atr_target_mult,
         ))
 
 
@@ -129,6 +142,7 @@ def simulate(
     atr: np.ndarray | None = None,
     open_: np.ndarray | None = None,
     fill_next_bar: bool = True,
+    funding: np.ndarray | None = None,
 ) -> dict:
     """
     Simula la estrategia long-only sobre arrays de precio y señales. Con sizing
@@ -160,6 +174,13 @@ def simulate(
     `fill_next_bar=False` restaura la convención histórica (relleno al cierre de
     la misma vela) y existe para los tests que comparan este motor con el
     anterior; no debería usarse para medir rendimiento.
+
+    `funding` es la tasa de financiación imputada a cada vela (fracción con
+    signo, positiva = paga el largo). Solo se cobra mientras hay posición
+    abierta, sobre el valor de mercado de esa posición y al cierre de la vela —
+    que es cuando ya se sabe cuánto valía. Es el coste que convierte un backtest
+    de perpetuos en algo operable: se paga con la posición abierta tenga o no
+    razón, y su peso crece con la duración del trade.
     """
     costs = costs or NO_COSTS
     sizing = sizing or DEFAULT_SIZING
@@ -184,6 +205,7 @@ def simulate(
     equity_curve = [float(initial_capital)]
     in_market_bars = 0
     total_commission = 0.0
+    total_funding = 0.0
     gross_traded = 0.0
 
     def do_buy(i: int, price: float) -> None:
@@ -266,7 +288,17 @@ def simulate(
                                   (atr_price, "atr_stop")):
                 if price is not None and (stop_price is None or price > stop_price):
                     stop_price, stop_reason = price, reason
-            tp_price = entry_price * (1.0 + risk.take_profit_pct) if risk.take_profit_pct is not None else None
+            # Objetivo vinculante = el más CERCANO entre el fijo y el de ATR.
+            # Simétrico al criterio del stop (allí manda el más alto): en ambos
+            # casos gana la barrera que el precio toca antes, que es la que de
+            # verdad va a cerrar la operación.
+            pct_target = entry_price * (1.0 + risk.take_profit_pct) if risk.take_profit_pct is not None else None
+            atr_target = (entry_price + risk.atr_target_mult * entry_atr
+                          if risk.atr_target_mult is not None and entry_atr else None)
+            tp_price = None
+            for price in (pct_target, atr_target):
+                if price is not None and (tp_price is None or price < tp_price):
+                    tp_price = price
 
             # Convención conservadora: si en la misma vela se tocan stop y objetivo, salta el stop
             if stop_price is not None and lo <= stop_price:
@@ -300,6 +332,17 @@ def simulate(
                 else:
                     do_sell(i, float(close[i]), "signal")
 
+        # ── 2b) Financiación del perpetuo, si la posición sigue abierta ──
+        # Se cobra sobre el valor de mercado al cierre, no sobre el nocional de
+        # entrada: el funding se liquida contra la posición que hay, no contra
+        # la que hubo. Sale de la liquidez, como cualquier otro coste.
+        if in_trade and funding is not None and i < len(funding):
+            rate = float(funding[i])
+            if rate and np.isfinite(rate):
+                paid = position * float(close[i]) * rate
+                capital -= paid
+                total_funding += paid
+
         # ── 3) Equity al cierre de la vela ──
         current_equity = capital + (position * float(close[i]) if in_trade else 0.0)
         equity_curve.append(float(current_equity))
@@ -317,5 +360,10 @@ def simulate(
         "final_capital": float(capital),
         "total_commission": float(total_commission),
         "total_commission_pct": round(total_commission / initial_capital * 100.0, 4) if initial_capital else 0.0,
+        # Se reporta aparte de la comisión: son sangrados de naturaleza distinta
+        # (uno escala con el nº de operaciones, el otro con el tiempo en
+        # mercado) y confundirlos impide saber cuál está matando la estrategia.
+        "total_funding": float(total_funding),
+        "total_funding_pct": round(total_funding / initial_capital * 100.0, 4) if initial_capital else 0.0,
         "turnover": round(gross_traded / initial_capital, 3) if initial_capital else 0.0,
     }

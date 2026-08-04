@@ -150,6 +150,10 @@ def train_meta_model(features, labels: list[dict], primary_side=None,
         "n_events": int(len(y)),
         "n_train": int(train_mask.sum()),
         "n_test": int(len(y_test)),
+        # Vela en la que arranca el tramo reservado. Quien mida el efecto
+        # económico del modelo necesita saber exactamente dónde deja de haber
+        # entrenamiento, o volverá a medir en muestra sin darse cuenta.
+        "test_start_bar": test_start_bar,
         "accuracy": round(accuracy, 4),
         "primary_hit_rate": round(baseline, 4),
         "meta_precision": round(precision, 4),

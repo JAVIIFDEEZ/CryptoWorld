@@ -29,6 +29,7 @@ import MultipleTestingCard from '@/components/generator/MultipleTestingCard'
 import CpcvDistributionCard from '@/components/generator/CpcvDistributionCard'
 import RetestCascadeCard from '@/components/generator/RetestCascadeCard'
 import CapacityCard from '@/components/generator/CapacityCard'
+import MetaSizingCard from '@/components/generator/MetaSizingCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -439,6 +440,11 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
           capacity={winner.gating.metrics.capacity}
           significance={winner.gating.metrics.significance}
         />
+      )}
+
+      {/* ¿Todas las señales valen lo mismo? El meta-modelo responde que no. */}
+      {winner?.gating.metrics.meta_sizing && (
+        <MetaSizingCard meta={winner.gating.metrics.meta_sizing} />
       )}
 
       <Generator3DPanel
