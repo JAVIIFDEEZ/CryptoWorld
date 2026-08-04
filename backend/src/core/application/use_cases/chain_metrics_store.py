@@ -46,6 +46,27 @@ HEALTH_METRICS = (
 )
 
 
+# Prefijo de las series que vienen de Blockchair (BTC, LTC, DOGE…). Se separan
+# de las cadenas EVM de Blockscout a propósito: `ethereum` (gas) y `bc:eth`
+# (dificultad) son fuentes distintas de la misma red, y mezclarlas daría
+# percentiles calculados sobre dos poblaciones diferentes.
+BLOCKCHAIR_PREFIX = "bc:"
+
+
+def known_chains() -> list[str]:
+    """Cadenas con historia guardada (para validar peticiones sin listas fijas)."""
+    from core.infrastructure.persistence.models import ChainMetricPoint
+    return sorted(ChainMetricPoint.objects.values_list("chain", flat=True).distinct())
+
+
+def known_metrics(chain: str) -> list[str]:
+    """Métricas con historia para una cadena."""
+    from core.infrastructure.persistence.models import ChainMetricPoint
+    return sorted(ChainMetricPoint.objects
+                  .filter(chain=(chain or "").strip().lower())
+                  .values_list("metric", flat=True).distinct())
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 

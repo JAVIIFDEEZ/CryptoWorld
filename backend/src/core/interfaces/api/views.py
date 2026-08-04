@@ -1283,12 +1283,19 @@ class ChainMetricHistoryView(APIView):
 
         chain = (request.query_params.get("chain") or "ethereum").strip().lower()
         metric = (request.query_params.get("metric") or "gas_average").strip()
-        if chain not in SUPPORTED_CHAINS:
-            return Response({"error": f"Red '{chain}' no soportada."},
+
+        # La validación se hace contra lo que el almacén TIENE, no contra una
+        # lista fija: así el endpoint sirve tanto las cadenas EVM de Blockscout
+        # (gas, utilización) como las de Blockchair (`bc:btc`: dificultad,
+        # hashrate) sin duplicar catálogos que se desincronizarían.
+        available_metrics = store.known_metrics(chain)
+        if chain not in SUPPORTED_CHAINS and not available_metrics:
+            return Response({"error": f"Sin histórico para '{chain}'.",
+                             "available_chains": store.known_chains()},
                             status=status.HTTP_400_BAD_REQUEST)
-        if metric not in store.HEALTH_METRICS:
-            return Response({"error": f"Métrica '{metric}' no disponible.",
-                             "available": list(store.HEALTH_METRICS)},
+        if metric not in available_metrics and metric not in store.HEALTH_METRICS:
+            return Response({"error": f"Métrica '{metric}' sin histórico en '{chain}'.",
+                             "available": available_metrics},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             days = max(1, min(self._MAX_DAYS, int(request.query_params.get("days", 7))))

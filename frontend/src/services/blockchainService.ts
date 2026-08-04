@@ -60,6 +60,15 @@ export interface MultiChainStatItem {
   label: string
   value: number | string | null
   unit: string
+  /**
+   * Variación frente al propio pasado, del almacén histórico.
+   *
+   * Es lo que hace legible un número que solo no dice nada: «dificultad
+   * 1,2e14» es ilegible; «+3,4 % en 7 días» no. `null` significa «sin
+   * histórico suficiente», que NO es lo mismo que «no ha cambiado».
+   */
+  change_24h_pct?: number | null
+  change_7d_pct?: number | null
 }
 
 export interface MultiChainStatsResponse {
@@ -70,6 +79,11 @@ export interface MultiChainStatsResponse {
   supported: string[]
   stats: MultiChainStatItem[]
   error?: string
+  /** El dato viene del almacén propio, no de Blockchair en vivo. */
+  stale?: boolean
+  stale_reason?: string
+  data_age_seconds?: number | null
+  note?: string
 }
 
 // ── Explorador on-chain de wallets (Blockscout) ────────────────────

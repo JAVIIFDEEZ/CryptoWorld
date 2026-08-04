@@ -18,6 +18,10 @@ const COMPARE_CHAINS = MULTICHAIN_SYMBOLS.slice(0, 6)
 
 export default function MultiChainComparePanel() {
   const [statsByChain, setStatsByChain] = useState<Record<string, MultiChainStatItem[]>>({})
+  // Cadenas servidas desde el almacén propio porque su fuente no respondía.
+  // Antes desaparecían de la comparativa sin decir nada, y el usuario no podía
+  // distinguir «esta cadena no tiene datos» de «esta cadena no existe aquí».
+  const [staleChains, setStaleChains] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -29,13 +33,16 @@ export default function MultiChainComparePanel() {
       )
       if (cancelled) return
       const map: Record<string, MultiChainStatItem[]> = {}
+      const stale: string[] = []
       results.forEach((r, i) => {
         if (r.status === 'fulfilled' && r.value && !r.value.error && r.value.stats?.length) {
           map[COMPARE_CHAINS[i]] = r.value.stats
+          if (r.value.stale) stale.push(COMPARE_CHAINS[i])
         }
       })
       if (Object.keys(map).length < 2) setError('No se pudieron comparar suficientes cadenas.')
       setStatsByChain(map)
+      setStaleChains(stale)
       setLoading(false)
     })()
     return () => { cancelled = true }
@@ -56,11 +63,20 @@ export default function MultiChainComparePanel() {
   }
 
   return (
+    <>
+      {staleChains.length > 0 && (
+        <p className="text-[11px] text-amber-300/80 mb-2">
+          ⚠ {staleChains.join(', ')}: datos del almacén propio, no en vivo — su
+          fuente no respondía. Se muestran para no perder la comparativa, pero no
+          son de este momento.
+        </p>
+      )}
     <Viz3DSwitch
       title="Comparador de blockchains"
       hint={`${data.chains.length} cadenas × ${data.metrics.length} métricas · valores normalizados por métrica`}
       threeD={<MultiChainBars3D data={data} />}
       twoD={<MultiChainBars2D data={data} />}
     />
+    </>
   )
 }
