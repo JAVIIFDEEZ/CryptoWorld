@@ -121,6 +121,74 @@ class TestCoverage:
         assert out["annualized_cost_bps"] > 0
 
 
+class TestWiring:
+    """
+    Que el coste EXISTA no basta: si el pipeline no lo adjunta, el motor sigue
+    midiendo la versión inoperable de la estrategia. Estos tests fijan que el
+    cableado esté hecho, no solo la pieza.
+    """
+
+    @pytest.mark.integration
+    def test_the_historical_path_attaches_funding(self, db):
+        from core.application.use_cases import ohlcv_fetcher, ohlcv_store
+
+        start = 1_700_000_000_000 - 400 * _DAY
+        df = _ohlcv(400, start)
+        ohlcv_store.persist_candles("BTC", "1d", df, source="binance")
+        store.persist_funding("BTC", _rows(1200, start))
+
+        # El almacén no está "fresco" (velas antiguas), así que la cadena baja a
+        # la ruta remota: se simula la respuesta de Binance con las mismas velas.
+        result = ohlcv_fetcher.fetch_ohlcv_dataframe(
+            symbol="BTC", interval="1d", limit=400,
+            binance_client=_FakeBinance(df),
+        )
+        assert result is not None
+        assert "funding_rate" in result.df.columns
+
+    @pytest.mark.integration
+    def test_the_live_path_does_not_pay_for_funding_lookups(self, db):
+        """Las rutas en vivo (limit < 300) no miden rendimiento a lo largo del
+        tiempo: adjuntar el coste allí sería trabajo de BD sin efecto."""
+        from core.application.use_cases import ohlcv_fetcher
+
+        df = _ohlcv(50, 1_700_000_000_000)
+        store.persist_funding("BTC", _rows(150, 1_700_000_000_000))
+        result = ohlcv_fetcher.fetch_ohlcv_dataframe(
+            symbol="BTC", interval="1d", limit=50, binance_client=_FakeBinance(df),
+        )
+        assert "funding_rate" not in result.df.columns
+
+    @pytest.mark.integration
+    def test_data_health_reports_the_survivorship_situation(self, db):
+        """El sesgo de supervivencia es un problema DE DATOS: su sitio es el
+        informe de salud del histórico, no un rincón del motor."""
+        from core.application.use_cases.ohlcv_health import OhlcvHealthUseCase
+        from core.infrastructure.persistence.models import CryptoAsset, OhlcvCandle
+
+        OhlcvCandle.objects.create(symbol="BTC", interval="1d", open_time=1,
+                                   open=1, high=1, low=1, close=1, volume=1)
+        CryptoAsset.objects.create(symbol="BTC", name="Bitcoin")
+
+        out = OhlcvHealthUseCase().execute()
+        assert out["universe"]["reliable"] is False
+        assert "NO corrige" in out["universe"]["note"]
+
+
+class _FakeBinance:
+    """Devuelve las velas dadas en el formato crudo de Binance."""
+
+    def __init__(self, df):
+        self._raw = [
+            [int(r.timestamp), str(r.open), str(r.high), str(r.low), str(r.close),
+             str(r.volume), 0, "0", 0, "0", "0", "0"]
+            for r in df.itertuples(index=False)
+        ]
+
+    def get_klines(self, **kwargs):
+        return self._raw
+
+
 class TestLifecycleSync:
 
     class _Client:

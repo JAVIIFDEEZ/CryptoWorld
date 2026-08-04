@@ -206,11 +206,12 @@ def simulate(
     in_market_bars = 0
     total_commission = 0.0
     total_funding = 0.0
+    trade_funding = 0.0        # financiación del trade abierto (va a su pnl_pct)
     gross_traded = 0.0
 
     def do_buy(i: int, price: float) -> None:
         nonlocal capital, position, in_trade, entry_price, entry_idx, entry_capital, high_water
-        nonlocal total_commission, gross_traded, entry_atr
+        nonlocal total_commission, gross_traded, entry_atr, trade_funding
         notional = _position_notional(capital, sizing, risk, i)  # equity == capital (flat)
         if notional <= 0:
             # Convicción por debajo del suelo: no operar es la decisión correcta,
@@ -225,6 +226,7 @@ def simulate(
         entry_capital = notional
         high_water = float(price)
         entry_atr = float(atr[i]) if atr is not None and np.isfinite(atr[i]) and atr[i] > 0 else None
+        trade_funding = 0.0               # financiación acumulada por ESTE trade
         capital -= notional               # el resto queda en liquidez (sizing parcial)
         in_trade = True
         total_commission += fee
@@ -236,13 +238,19 @@ def simulate(
         gross = position * fill
         fee = gross * cr
         proceeds = gross - fee
-        pnl_pct = (proceeds / entry_capital - 1.0) * 100.0 if entry_capital else 0.0
+        # La financiación pagada mientras la posición estuvo abierta es parte
+        # del resultado de la operación. Dejarla fuera de `pnl_pct` haría que el
+        # Monte Carlo y la tasa de acierto —que se alimentan de estas cifras—
+        # midieran una operación más barata que la real.
+        net = proceeds - trade_funding
+        pnl_pct = (net / entry_capital - 1.0) * 100.0 if entry_capital else 0.0
         trades.append({
             "entry_index": int(entry_idx),
             "exit_index": int(i),
             "entry_price": round(float(entry_price), 4),
             "exit_price": round(float(fill), 4),
             "pnl_pct": round(float(pnl_pct), 2),
+            "funding_paid": round(float(trade_funding), 6),
             "result": "WIN" if pnl_pct > 0 else "LOSS",
             "exit_reason": reason,
         })
@@ -342,6 +350,7 @@ def simulate(
                 paid = position * float(close[i]) * rate
                 capital -= paid
                 total_funding += paid
+                trade_funding += paid
 
         # ── 3) Equity al cierre de la vela ──
         current_equity = capital + (position * float(close[i]) if in_trade else 0.0)

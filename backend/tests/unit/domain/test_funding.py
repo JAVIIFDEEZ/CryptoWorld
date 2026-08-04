@@ -97,6 +97,29 @@ class TestFundingInTheEngine:
         assert out["final_capital"] > 10_000.0
 
     @pytest.mark.unit
+    def test_the_trade_pnl_includes_the_funding_it_paid(self):
+        """El Monte Carlo y la tasa de acierto se alimentan de `pnl_pct`. Si el
+        funding quedara fuera, medirían una operación más barata que la real."""
+        free = self._run(20, rate=0.0)["trades"][0]
+        charged = self._run(20, rate=0.0005)["trades"][0]
+        assert charged["funding_paid"] > 0
+        assert charged["pnl_pct"] < free["pnl_pct"]
+
+    @pytest.mark.unit
+    def test_funding_of_one_trade_does_not_leak_into_the_next(self):
+        """El acumulador es por operación: arrastrarlo cobraría dos veces."""
+        close = np.full(20, 100.0)
+        signals = np.zeros(20, dtype=int)
+        signals[0], signals[4] = 1, -1        # trade corto
+        signals[8], signals[16] = 1, -1       # trade largo
+        out = simulate(close, close, close, signals, 10_000.0, open_=close,
+                       funding=np.full(20, 0.0002))
+        first, second = out["trades"][0], out["trades"][1]
+        assert second["funding_paid"] > first["funding_paid"]
+        assert first["funding_paid"] + second["funding_paid"] == pytest.approx(
+            out["total_funding"])
+
+    @pytest.mark.unit
     def test_nothing_is_charged_while_flat(self):
         """Sin posición no hay nada que financiar. Cobrar igual sería un
         impuesto sobre estar en liquidez, que no existe."""

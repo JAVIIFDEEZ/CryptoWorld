@@ -133,6 +133,21 @@ def _base_fraction(spec: dict) -> float:
     return 1.0
 
 
+def _comparable(spec: dict) -> bool:
+    """
+    ¿Puede compararse este spec con y sin convicción de forma limpia?
+
+    El modo `risk` dimensiona a partir del stop-loss, y ese criterio no es
+    expresable dentro del modo `conviction`. Activar el overlay sobre un spec
+    así cambiaría DOS cosas a la vez —el tamaño por convicción y la pérdida del
+    dimensionamiento por riesgo—, y la diferencia resultante no sería
+    atribuible a ninguna de las dos. Se declara no comparable en lugar de
+    publicar un delta que mezcla dos efectos.
+    """
+    sizing = spec.get("sizing")
+    return not (sizing and sizing.get("mode") == "risk")
+
+
 def _summarize(model: dict) -> dict:
     """Lo publicable del meta-modelo (el estimador entrenado no viaja en JSON)."""
     return {k: v for k, v in model.items() if k not in ("model", "feature_names")}
@@ -150,6 +165,16 @@ def conviction_overlay(df, spec: dict, ppy: float = 365.0,
     haber demostrado antes que la modulación tiene fundamento.
     """
     cfg = config or ConvictionConfig()
+
+    if not _comparable(spec):
+        return {
+            "applied": False,
+            "reason": "incompatible_sizing",
+            "note": ("Este spec dimensiona por riesgo (a partir del stop-loss), "
+                     "criterio que el modo por convicción no puede expresar. "
+                     "Medir la diferencia mezclaría dos cambios y no sería "
+                     "atribuible a ninguno."),
+        }
 
     signals = compile_signals(df, spec)
     events = _signal_bars(signals)
@@ -188,18 +213,31 @@ def conviction_overlay(df, spec: dict, ppy: float = 365.0,
                 "note": "El tramo reservado es demasiado corto para medir el "
                         "efecto del overlay sobre el rendimiento."}
 
-    test_events = [e for e in events if e >= start]
-    sized = meta_model.size_signals(
-        trained, features, test_events,
-        max_fraction=cfg.max_fraction, floor=cfg.floor,
-    )
+    # Los eventos del tramo se toman de las señales RECOMPILADAS sobre el propio
+    # tramo, no de las de la serie completa. No es lo mismo: al truncar, los
+    # indicadores vuelven a calentar y las primeras velas dejan de disparar. Usar
+    # las señales globales dejaría sin convicción precisamente a las entradas que
+    # el tramo sí toma, diluyendo el overlay justo donde se mide.
+    # Las features, en cambio, se leen en la serie completa — que es la
+    # información realmente disponible en ese instante.
+    test_signals = compile_signals(test, spec)
+    test_events = [start + i for i in _signal_bars(test_signals)]
     base_fraction = _base_fraction(spec)
+    # El techo del overlay es el tamaño que el spec ya usaba: el meta-modelo
+    # solo puede ENCOGER la apuesta, nunca agrandarla. Esa asimetría es lo que
+    # hace benigno su modo de fallo —equivocarse cuesta operar de menos— y
+    # además evita que una vela sin features (calentamiento) opere al 100 % en
+    # un spec que dimensionaba al 40 %.
+    ceiling = min(cfg.max_fraction, base_fraction)
+    sized = meta_model.size_signals(
+        trained, features, test_events, max_fraction=ceiling, floor=cfg.floor,
+    )
     sizing = conviction_sizing(sized["sizes"], base_fraction, offset=start)
 
     risk = spec_risk(spec)
-    bt_base = backtest_signals(test, compile_signals(test, spec), costs=costs,
+    bt_base = backtest_signals(test, test_signals, costs=costs,
                                risk=risk, sizing=spec_sizing(spec))
-    bt_meta = backtest_signals(test, compile_signals(test, spec), costs=costs,
+    bt_meta = backtest_signals(test, test_signals, costs=costs,
                                risk=risk, sizing=sizing)
 
     sharpe_base = round(metrics.sharpe_ratio(bt_base["bar_returns"], ppy), 3)

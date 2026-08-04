@@ -239,6 +239,13 @@ def noise_test(df, spec: dict, n_runs: int = 10, atr_fraction: float = 0.25,
             "open": no, "high": nh, "low": nl, "close": nc,
             "volume": df["volume"].values if "volume" in df else np.ones(close.size),
         })
+        # El coste de financiación viaja con la serie perturbada: lo que se
+        # altera aquí son los precios, no lo que costaba mantener la posición.
+        # Reconstruir el DataFrame sin esta columna dejaría a las ejecuciones
+        # ruidosas operando gratis contra una base que sí paga, y la
+        # degradación medida saldría artificialmente baja.
+        if "funding_rate" in df:
+            noisy["funding_rate"] = df["funding_rate"].values
         sharpes.append(metrics.sharpe_ratio(_segment_backtest(noisy, spec, costs)["bar_returns"], ppy))
 
     arr = np.array(sharpes, dtype=float)
@@ -821,6 +828,12 @@ def gate_spec(
             "meta_sizing_applied": meta.get("applied", False),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
+            # Sangrado por financiación del perpetuo. Va aparte de la comisión
+            # porque son costes de naturaleza distinta —uno escala con el nº de
+            # operaciones, el otro con el tiempo en mercado— y sumarlos impide
+            # saber cuál está matando la estrategia. Cero significa aquí «sin
+            # histórico de funding», no «no costó nada».
+            "funding_drag_pct": full.get("total_funding_pct", 0.0),
             "exit_reasons": full["exit_reasons"],
             "monte_carlo": {
                 "prob_profit_pct": mc.get("prob_profit_pct"),

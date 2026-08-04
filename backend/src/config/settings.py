@@ -473,6 +473,19 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.sync_ohlcv_history",
         "schedule": 1800.0,  # segundos — solo persiste velas cerradas
     },
+    # Histórico de financiación de perpetuos (cada 6 h: se liquida cada 8 h).
+    # Sin él, todo backtest de perpetuo sobreestima el rendimiento, y más
+    # cuanto más aguante abierta la posición.
+    "sync-funding-history": {
+        "task": "core.tasks.sync_funding_history",
+        "schedule": 21600.0,
+    },
+    # Altas y bajas del universo (diario): la condición para reconstruirlo
+    # point-in-time y no medir solo sobre los que sobrevivieron.
+    "sync-asset-lifecycle": {
+        "task": "core.tasks.sync_asset_lifecycle",
+        "schedule": 86400.0,
+    },
     # Resolver lecturas de confluencia vencidas (aprendizaje de pesos, 30 min)
     "resolve-confluence-snapshots": {
         "task": "core.tasks.resolve_confluence_snapshots",

@@ -671,20 +671,161 @@ las dos matizan el mismo titular.
 
 ---
 
+# G3 (cierre) — El sizing por convicción entra en el generador
+
+El modo `conviction` existía en el motor y estaba probado, pero ningún preset lo
+usaba. Un modo de sizing que nadie invoca no es una capacidad: es código
+correcto y muerto. `meta_sizing.py` lo conecta con specs reales.
+
+El spec compilado decide **dónde** entrar. Sobre esas mismas señales se etiqueta
+con la triple barrera, se entrena el meta-modelo y su probabilidad se traduce en
+fracción de capital. Por debajo del suelo de convicción el tamaño es cero: la
+señal se deja pasar, porque no operar es una decisión.
+
+## Tres decisiones de rigor
+
+**El mapa de convicción se indexa por la vela de RELLENO, no por la de la
+señal.** El motor ejecuta en la apertura de `s+1` y es ahí donde consulta el
+tamaño; las features, en cambio, se leen en `s`. Indexar ambas cosas igual sería
+decidir el tamaño con el cierre de la vela en cuya apertura se opera — una fuga
+que el detector de lookahead **no** captura, porque las señales sí son causales.
+
+**Los eventos son todas las velas con señal, no solo los trades ejecutados.**
+Restringirse a lo que el backtest pudo tomar (estaba plano) encoge la muestra y
+la sesga hacia los tramos de baja densidad de señal. Que las etiquetas se
+solapen no es problema: para eso están los pesos por unicidad.
+
+**La medición es fuera de muestra.** El overlay se evalúa en el tramo que el
+meta-modelo no vio al entrenar, comparando el mismo spec con y sin convicción.
+Entrenar y medir sobre todo el histórico daría siempre mejora, y sería falsa.
+
+## Impacto medido
+
+Sobre una serie con dos regímenes alternos —donde genuinamente hay algo que
+aprender— y costes de 15 bps por lado:
+
+| | Tamaño plano | Por convicción |
+|---|---|---|
+| Sharpe (fuera de muestra) | 0.05 | **1.47** |
+| Retorno | −12.7 % | +4.3 % |
+| Caída máxima | 55.9 % | **0.9 %** |
+| Exposición | 41.6 % | 13.0 % |
+
+Opera 40 de 296 señales con un tamaño medio del 4 % del capital. Sobre ruido
+puro **no encuentra edge, y no debe**: en ese caso devuelve `applied: false` con
+el motivo, y `MetaSizingCard` lo muestra tal cual. Filtrar con ruido es peor que
+no filtrar.
+
+El modo de fallo es deliberadamente benigno: el meta-modelo solo puede encoger
+la apuesta, nunca invertir la señal ni apalancarla. Equivocarse cuesta operar de
+menos.
+
+---
+
+# G3 (cierre) — La triple barrera como política de salida
+
+`labeling.py` sabía etiquetar con triple barrera; el motor no sabía operarla. Se
+añade `atr_target_mult` —objetivo en múltiplos del ATR de la barra de entrada—
+simétrico al `atr_stop_mult` que ya existía. Con `max_bars`, los tres lados
+quedan expresados en el vocabulario del motor:
+
+```
+risk = {atr_stop_mult: 1.5, atr_target_mult: 3.0, max_bars: 20}
+```
+
+**Por qué así y no como un motor de salidas aparte.** De esta forma hereda la
+gestión intrabar, la convención conservadora de stop-primero y el desglose por
+motivo de salida — y, sobre todo, el GA puede evolucionarla como cualquier otro
+bloque, porque validación y jitter son genéricos sobre `RISK_RANGES`.
+
+Entre objetivo fijo y objetivo por ATR manda el **más cercano**, simétrico al
+criterio del stop (allí manda el más alto): en ambos casos gana la barrera que
+el precio toca antes, que es la que de verdad cierra la operación.
+
+El generador produce barreras asimétricas al alza (objetivo entre 1.2× y 2.5×
+el stop): 2σ arriba y 1σ abajo es lo que hace rentable una tasa de acierto por
+debajo del 50 %.
+
+**No cambia la semántica de nada guardado**: un spec sin el campo se comporta
+exactamente igual que antes.
+
+---
+
+# G4 (cierre) — Funding de perpetuos y universo point-in-time
+
+Los dos errores que quedaban comparten la propiedad que los hace peligrosos:
+**van siempre en la misma dirección**, hacia arriba.
+
+## Funding
+
+Un backtest de perpetuos sin funding no mide la estrategia: mide una versión de
+ella que nadie puede operar. Y el error no es constante — crece con el tiempo
+que la posición permanece abierta, que es justo lo que distingue una estrategia
+de tendencia de una de scalping.
+
+Se guarda el **histórico completo**, no una media, por dos razones:
+
+- El funding es fuertemente autocorrelacionado: se agrupa en rachas largas del
+  mismo signo. Aplicar su media anula justo lo que lo hace peligroso.
+- Su signo se correlaciona con el sentimiento: es más caro estar largo
+  precisamente cuando todo el mundo quiere estarlo. Promediar borra esa
+  coincidencia, que es la que más daña a las estrategias de momento.
+
+El coste viaja como **columna del DataFrame**, no como parámetro, para que
+acompañe siempre a los datos a los que pertenece: así ningún tramo puede
+backtestearse sin él por descuido. Sin histórico **no se añade la columna** en
+lugar de rellenarla con ceros — una columna de ceros afirma que el funding fue
+nulo, y lo que ocurre es que no se sabe.
+
+Se reporta aparte de la comisión (`funding_drag_pct` vs `cost_drag_pct`): uno
+escala con el nº de operaciones y el otro con el tiempo en mercado, y sumarlos
+impide saber cuál está matando la estrategia.
+
+## Universo point-in-time
+
+Cualquier estudio «sobre el universo» se construye por defecto con la lista de
+activos de hoy, que contiene únicamente a los que sobrevivieron. El sesgo no es
+pequeño ni acotado: la mortalidad en cripto es alta, la supervivencia está
+correlacionada con el rendimiento —la variable que se mide— y las muertes se
+concentran en los tramos bajistas, donde una estrategia tiene que demostrar que
+aguanta. El efecto crece hacia atrás: cuanto más largo el histórico, más
+cadáveres faltan.
+
+`universe.py` reconstruye los constituyentes de cualquier fecha y cuantifica el
+sesgo. Dos cifras, no una:
+
+- **`missing_pct`** — cuántos de los que cotizaban entonces han desaparecido. Son
+  los que un estudio ingenuo omite, y son sistemáticamente los peores.
+- **`phantom_pct`** — el problema inverso y menos comentado: activos que hoy
+  existen pero entonces no cotizaban, y que un universo estático mete en una
+  época a la que no pertenecen.
+
+`coverage` declara el universo **NO fiable** cuando las fechas no están, en vez
+de presentar como corrección lo que sería la lista de supervivientes con otro
+nombre. Aparece en el informe de salud del histórico porque es un problema **de
+datos**: ninguna corrección estadística arregla un histórico al que le faltan
+los muertos.
+
+`SyncAssetLifecycleUseCase` puebla el dato desde el catálogo del exchange y
+admite lo que no sabe: la fecha de baja es la de **detección**, no la real.
+Llega tarde, nunca pronto, así que el sesgo residual va en contra de la
+estrategia y no a su favor.
+
+---
+
 ## Lo que NO cubre
 
-- **G4 (resto del resto)** — funding en perpetuos, point-in-time y universo sin
-  sesgo de supervivencia. Requieren datos que el almacén todavía no guarda
-  (`delisted_at`, histórico de funding), así que son trabajo de datos antes que
-  de método: implementar la lógica sin la fuente sería código muerto.
-- El **triple-barrera como etiqueta del backtest**: hoy alimenta al meta-modelo
-  y al sizing, pero la salida de las operaciones la sigue decidiendo la regla
-  del spec. Sustituirla por las barreras cambiaría la semántica de toda
-  estrategia guardada, así que es una decisión de producto, no un detalle.
-- El **modo de sizing `conviction` no está activo en el generador**: existe en
-  el motor y está probado, pero ningún preset lo usa todavía. Activarlo exige
-  entrenar un meta-modelo por estrategia dentro del pipeline, que es coste de
-  cómputo y una decisión de producto sobre cuándo pagarlo.
+- **Cobertura real del universo.** El código está y las tareas periódicas
+  (`sync_funding_history` cada 6 h, `sync_asset_lifecycle` diaria) lo pueblan,
+  pero hasta que hayan corrido sobre datos reales `coverage` seguirá —
+  correctamente — declarando el universo no fiable. Es una espera de datos, no
+  una carencia de método.
+- **Bajas históricas anteriores al despliegue.** La detección por ausencia solo
+  registra lo que muere a partir de ahora. Reconstruir las bajas pasadas exige
+  una fuente externa de delistings que el sistema no tiene.
+- **Cortos.** El motor sigue siendo long-only, así que el funding se cobra
+  siempre en el lado que paga cuando el rate es positivo. La lógica respeta el
+  signo, pero el caso corto no está ejercitado.
 
 ---
 
@@ -707,4 +848,9 @@ pytest tests/unit/domain/test_regime.py                     # 12 tests · G7
 pytest tests/unit/domain/test_meta_model.py                 # 13 tests · G3 int.
 pytest tests/unit/domain/test_market_impact.py              # 18 tests · G4
 pytest tests/unit/domain/test_significance.py               # 16 tests · G9d
+pytest tests/unit/domain/test_meta_sizing.py                # 13 tests · G3 cierre
+pytest tests/unit/domain/test_triple_barrier_exit.py        # 10 tests · G3 cierre
+pytest tests/unit/domain/test_funding.py                    # 14 tests · G4 cierre
+pytest tests/unit/domain/test_universe.py                   # 16 tests · G4 cierre
+pytest tests/integration/test_funding_store.py              # 17 tests · G4 cierre
 ```

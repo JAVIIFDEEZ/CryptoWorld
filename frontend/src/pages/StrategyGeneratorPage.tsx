@@ -666,6 +666,13 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
               ['Max DD', `-${m.max_drawdown_pct}%`],
               ['Trades', `${m.n_trades}`],
               ['Coste comisiones', `-${(m.cost_drag_pct ?? 0).toFixed(2)}%`],
+              // Aparte de la comisión a propósito: una escala con el nº de
+              // operaciones y la otra con el tiempo en mercado. Solo se muestra
+              // si hay histórico — un 0 % aquí diría «no costó nada», y lo que
+              // pasaría en realidad es que no se sabe.
+              ...(m.funding_drag_pct
+                ? [['Financiación', `-${m.funding_drag_pct.toFixed(2)}%`] as [string, string]]
+                : []),
               ['Rotación', `${(m.turnover ?? 0).toFixed(1)}×`],
             ]} />
             <MetricBlock title="Validación final (intacta)" accent="purple" rows={[

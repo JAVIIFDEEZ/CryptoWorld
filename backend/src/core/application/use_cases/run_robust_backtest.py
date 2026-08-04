@@ -242,6 +242,11 @@ def run_robustness_suite(
             "costs_applied": True,
             "commission_bps": cfg.commission_bps,
             "slippage_bps": cfg.slippage_bps,
+            # Financiación del perpetuo: presente solo si el histórico la trae.
+            # `funding_applied: false` significa «no hay dato», NO «fue gratis»,
+            # y el titular debe poder distinguir esas dos cosas.
+            "funding_applied": "funding_rate" in getattr(df, "columns", ()),
+            "funding_drag_pct": best_bt.get("total_funding_pct", 0.0),
             "note": (
                 "El Sharpe fuera de muestra es la cifra a mirar. El in-sample "
                 f"({observed_sharpe:.2f}) sale de optimizar sobre esa misma serie y "

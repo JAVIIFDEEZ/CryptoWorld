@@ -205,7 +205,8 @@ export interface CapacityEstimate {
  */
 export interface MetaSizing {
   applied: boolean
-  reason?: 'insufficient_events' | 'unlabelable' | 'no_edge' | 'short_holdout' | 'disabled'
+  reason?: 'insufficient_events' | 'unlabelable' | 'no_edge' | 'short_holdout'
+    | 'incompatible_sizing' | 'disabled'
   n_events?: number
   meta_model?: {
     usable?: boolean
@@ -266,6 +267,8 @@ export interface GatingMetrics {
   meta_sizing_applied?: boolean
   turnover?: number
   cost_drag_pct?: number
+  /** Sangrado por financiación del perpetuo. 0 = sin histórico, no «gratis». */
+  funding_drag_pct?: number
   exit_reasons?: Record<string, number>
   monte_carlo: { prob_profit_pct: number | null; return_p5_pct: number | null; return_p50_pct: number | null }
   lookahead_leaky: boolean

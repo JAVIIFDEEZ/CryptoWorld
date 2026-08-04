@@ -745,6 +745,66 @@ def backfill_ohlcv(self, symbol: str, interval: str = "1d",
 
 
 @shared_task(
+    name="core.tasks.sync_funding_history",
+    bind=True,
+    max_retries=0,
+)
+def sync_funding_history(self, target_settlements: int = 3000) -> dict:
+    """
+    Mantiene al día el histórico de financiación de los perpetuos relevantes.
+
+    Sin este dato, todo backtest de perpetuo sobreestima el rendimiento, y lo
+    hace más cuanto más tiempo aguante abierta la posición. La ingesta es
+    idempotente y reanudable, así que ejecutarla de más no cuesta nada; no
+    ejecutarla cuesta un sesgo permanente y siempre en la misma dirección.
+    """
+    from core.application.use_cases.funding_store import BackfillFundingUseCase
+    from core.infrastructure.persistence.models import CryptoAsset, PaperTradingAccount
+
+    top = list(
+        CryptoAsset.objects.exclude(market_cap__isnull=True)
+        .order_by("-market_cap").values_list("symbol", flat=True)[:8]
+    )
+    active = list(
+        PaperTradingAccount.objects.filter(is_active=True)
+        .values_list("asset_symbol", flat=True).distinct()
+    )
+    use_case = BackfillFundingUseCase()
+    created = 0
+    results = {}
+    for symbol in dict.fromkeys(top + active):
+        try:
+            res = use_case.execute(symbol=symbol, target_settlements=target_settlements,
+                                   max_pages=3)
+            created += res.get("created", 0)
+            results[symbol] = res.get("settlements", 0)
+        except Exception as exc:  # noqa: BLE001 — un símbolo caído no frena el resto
+            logger.warning("sync_funding %s: %s", symbol, exc)
+    logger.info("sync_funding_history: %d liquidaciones nuevas", created)
+    return {"created": created, "settlements_by_symbol": results}
+
+
+@shared_task(
+    name="core.tasks.sync_asset_lifecycle",
+    bind=True,
+    max_retries=0,
+)
+def sync_asset_lifecycle(self) -> dict:
+    """
+    Sincroniza altas y bajas del universo contra el catálogo del exchange.
+
+    Es lo que convierte la lista de activos en un universo reconstruible
+    point-in-time. Mientras no corra, `universe.coverage` declara el universo
+    NO fiable — que es la respuesta correcta, y preferible a un rigor aparente.
+    """
+    from core.application.use_cases.funding_store import SyncAssetLifecycleUseCase
+
+    result = SyncAssetLifecycleUseCase().execute()
+    logger.info("sync_asset_lifecycle: %s", result)
+    return result
+
+
+@shared_task(
     name="core.tasks.resolve_confluence_snapshots",
     bind=True,
     max_retries=0,

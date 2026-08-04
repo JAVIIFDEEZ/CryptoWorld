@@ -174,6 +174,33 @@ class TestOverlay:
         assert out["note"]
 
     @pytest.mark.unit
+    def test_risk_sizing_is_declared_incomparable_not_silently_replaced(self):
+        """Dimensionar por riesgo parte del stop-loss, y el modo por convicción
+        no puede expresar ese criterio. Aplicarlo igual cambiaría dos cosas a la
+        vez y el delta no sería atribuible a ninguna."""
+        spec = {**SPEC, "sizing": {"mode": "risk", "risk_pct": 0.02}}
+        out = meta_sizing.conviction_overlay(_df(), spec)
+        assert out["applied"] is False
+        assert out["reason"] == "incompatible_sizing"
+
+    @pytest.mark.unit
+    def test_fraction_sizing_is_the_fallback_for_signals_without_conviction(self):
+        """Ausencia de convicción degrada a la política previa del spec, no a
+        invertir todo el capital."""
+        spec = {**SPEC, "sizing": {"mode": "fraction", "fraction": 0.4}}
+        assert meta_sizing._base_fraction(spec) == pytest.approx(0.4)
+
+    @pytest.mark.unit
+    def test_the_overlay_never_bets_more_than_the_spec_already_did(self):
+        """El techo es el tamaño propio del spec: el meta-modelo solo puede
+        encoger la apuesta. Es lo que hace benigno su modo de fallo."""
+        spec = {**SPEC, "sizing": {"mode": "fraction", "fraction": 0.4}}
+        out = meta_sizing.conviction_overlay(_learnable_df(), spec)
+        if not out["applied"]:
+            pytest.skip("Sin meta-modelo utilizable no hay techo que comprobar.")
+        assert out["sizing"]["mean_size_pct"] <= 40.0
+
+    @pytest.mark.unit
     def test_the_trained_estimator_never_travels_in_the_payload(self):
         """El resultado se serializa a JSON (DRF/Celery-Redis): un
         RandomForest dentro reventaría el pipeline."""

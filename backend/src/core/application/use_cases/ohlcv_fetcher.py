@@ -71,6 +71,27 @@ def fetch_ohlcv_dataframe(
     coingecko = coingecko_client or CoinGeckoClient()
     repo = asset_repo or DjangoCryptoAssetRepository()
 
+    def _with_funding(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Adjunta el coste de financiación del perpetuo, si el almacén lo tiene.
+
+        Solo en la ruta HISTÓRICA, que es la del generador y los backtests: son
+        los que miden rendimiento a lo largo del tiempo y por tanto los únicos
+        a los que el funding puede cambiarles el veredicto. Que el coste viaje
+        pegado al DataFrame —y no como parámetro— es lo que hace imposible
+        backtestear un tramo sin él por descuido.
+
+        Best-effort: sin BD o sin histórico, se devuelve el DataFrame tal cual y
+        SIN columna de funding, que es distinto de una columna de ceros.
+        """
+        if limit < 300:
+            return df
+        try:
+            from core.application.use_cases import funding_store
+            return funding_store.attach_funding(df, symbol, interval)
+        except Exception:  # noqa: BLE001 — el coste nunca rompe un análisis
+            return df
+
     # ── 0. Almacén histórico propio ─────────────────────────────
     # Solo para peticiones HISTÓRICAS (limit ≥ 300: generador, backtests,
     # robustez): reproducible, sin latencia externa y capaz de superar las
@@ -83,7 +104,7 @@ def fetch_ohlcv_dataframe(
             if ohlcv_store.store_is_fresh(symbol, interval, limit):
                 df = ohlcv_store.load_dataframe(symbol, interval, limit)
                 if len(df) >= min(limit, 30):
-                    return OhlcvFetchResult(df=df, source="store")
+                    return OhlcvFetchResult(df=_with_funding(df), source="store")
         except Exception:  # noqa: BLE001 — sin BD (tests puros) se sigue con remoto
             pass
 
@@ -102,7 +123,7 @@ def fetch_ohlcv_dataframe(
         df = _binance_klines_to_df(raw)
         if not df.empty:
             _persist(df, "binance")
-            return OhlcvFetchResult(df=df, source="binance")
+            return OhlcvFetchResult(df=_with_funding(df), source="binance")
         logger.warning("Binance devolvió 0 velas para %s.", binance_symbol)
     except BinanceClientError as exc:
         logger.info("Binance no tiene %s (%s). Probando KuCoin...", binance_symbol, exc)
@@ -117,7 +138,7 @@ def fetch_ohlcv_dataframe(
                 len(df), binance_symbol,
             )
             _persist(df, "kucoin")
-            return OhlcvFetchResult(df=df, source="kucoin")
+            return OhlcvFetchResult(df=_with_funding(df), source="kucoin")
     except KuCoinClientError as exc:
         logger.info("KuCoin no tiene %s (%s). Probando CoinGecko...", binance_symbol, exc)
 

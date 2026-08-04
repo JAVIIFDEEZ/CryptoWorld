@@ -22,6 +22,7 @@ const REASONS: Record<string, string> = {
   unlabelable: 'Histórico insuficiente para etiquetar',
   no_edge: 'El meta-modelo no supera al primario',
   short_holdout: 'Tramo reservado demasiado corto',
+  incompatible_sizing: 'El spec ya dimensiona por riesgo',
   disabled: 'Overlay desactivado',
 }
 

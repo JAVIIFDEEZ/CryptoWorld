@@ -67,6 +67,14 @@ class TestHeadline:
         assert "NETAS de costes" in head["note"]
 
     @pytest.mark.unit
+    def test_headline_distinguishes_no_funding_data_from_free_funding(self, suite):
+        """«No hay histórico de financiación» y «la financiación fue gratis» son
+        afirmaciones distintas. Un 0 % sin la bandera diría la segunda."""
+        head = suite["headline"]
+        assert head["funding_applied"] is False
+        assert head["funding_drag_pct"] == 0.0
+
+    @pytest.mark.unit
     def test_simulated_results_disclaimer_travels_with_the_report(self, suite):
         assert "SIMULADOS" in suite["disclaimer"]
 

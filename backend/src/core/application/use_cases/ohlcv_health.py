@@ -60,6 +60,7 @@ class OhlcvHealthUseCase:
             "status": "OK",
             "series": rows,
             "summary": overall_health(rows),
+            "universe": self._universe_health(),
             "note": (
                 "Salud del almacén histórico OHLCV propio: completitud (velas "
                 "presentes vs esperadas), frescura (antigüedad de la última "
@@ -67,3 +68,23 @@ class OhlcvHealthUseCase:
                 "que se deriva del histórico (riesgo, backtests, terminal)."
             ),
         }
+
+    @staticmethod
+    def _universe_health() -> dict:
+        """
+        Sesgo de supervivencia: ¿se puede reconstruir el universo tal como era,
+        o solo la lista de los que llegaron vivos hasta hoy?
+
+        Va en el informe de salud de datos y no en un rincón porque es un
+        problema DE DATOS, no de método: ninguna corrección estadística arregla
+        un histórico al que le faltan los muertos. Y a diferencia del ruido,
+        este error tiene dirección fija — siempre infla el rendimiento.
+        """
+        from core.domain.services import universe
+        from core.infrastructure.persistence.models import CryptoAsset
+
+        assets = universe.from_records(
+            CryptoAsset.objects.values("symbol", "listed_at", "delisted_at",
+                                       "delisting_reason")
+        )
+        return universe.coverage(assets)
