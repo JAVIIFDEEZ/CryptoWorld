@@ -49,7 +49,24 @@ const PRESETS: { value: GenPreset; labelKey: string; hint: string }[] = [
 ]
 
 const POLL_MS = 2000   // más rápido: la telemetría en vivo se refresca cada poll
-const MAX_POLLS = 210  // ~7 min de techo
+
+/**
+ * Techo de espera POR PRESET, no uno único.
+ *
+ * Un tope plano de 7 minutos servía para «rápido» y mentía en «exhaustivo»:
+ * ese preset evoluciona 60 individuos × 25 generaciones × 3 islas y luego pasa
+ * a las supervivientes por CPCV, cascada de retests y Monte Carlo. Sobre un
+ * histórico largo tarda legítimamente más, y el usuario veía «tiempo agotado»
+ * en una ejecución que seguía viva y acabaría bien en el servidor.
+ *
+ * Rendirse antes de tiempo no es un fallo cosmético: descarta trabajo que ya
+ * se ha pagado en cómputo.
+ */
+const MAX_POLLS: Record<GenPreset, number> = {
+  fast: 300,        // 10 min
+  balanced: 600,    // 20 min
+  thorough: 1200,   // 40 min
+}
 
 type Phase = 'idle' | 'running' | 'done' | 'error'
 
@@ -141,8 +158,17 @@ export default function StrategyGeneratorPage() {
             }
           } else if (s.status === 'FAILURE') {
             stopTimers(); setErrorMsg('El generador falló durante la ejecución.'); setPhase('error')
-          } else if (attempts >= MAX_POLLS) {
-            stopTimers(); setErrorMsg('Tiempo de espera agotado. Inténtalo de nuevo.'); setPhase('error')
+          } else if (attempts >= MAX_POLLS[preset]) {
+            stopTimers()
+            // El trabajo NO se pierde: la tarea sigue en el servidor y el
+            // informe queda guardado. Decir «inténtalo de nuevo» invitaba a
+            // repetir un cómputo de decenas de minutos ya pagado.
+            setErrorMsg(
+              'La generación está tardando más de lo previsto y se ha dejado de ' +
+              'consultar. Sigue ejecutándose en el servidor: revisa el Historial ' +
+              'en unos minutos, el resultado aparecerá ahí.',
+            )
+            setPhase('error')
           }
         } catch {
           stopTimers(); setErrorMsg('Error consultando el estado del generador.'); setPhase('error')

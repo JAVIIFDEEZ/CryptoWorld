@@ -5,10 +5,20 @@ Una estrategia es un StrategySpec: bloques de condiciones de entrada y de
 salida sobre el catálogo de indicadores (osciladores: RSI, StochRSI, Stoch,
 CCI, Williams %R, ADX, MFI, CMF, ROC, ATR%, Aroon, TRIX, ratio de volumen;
 series de precio: SMA/EMA/WMA/Hull/KAMA, Bollinger, MACD, Ichimoku, PSAR,
-canales Donchian/Keltner y retrocesos de Fibonacci) con CUATRO tipos de
+canales Donchian/Keltner y retrocesos de Fibonacci) con CINCO tipos de
 condición al estilo de los generadores profesionales (StrategyQuant y afines):
-umbral, cruce, estado (A por encima/debajo de B) y pendiente (al alza/baja en
-n velas). El compilador traduce un spec a un array de señales (1/-1/0) que el
+umbral, cruce, estado (A por encima/debajo de B), pendiente (al alza/baja en
+n velas) y **patrón de acción del precio**.
+
+El quinto tipo existe porque los otros cuatro describen el mercado con NIVELES,
+y hay información que no es un nivel sino un suceso con estructura: una vela que
+se traga a la anterior, un mínimo perforado que se recupera, un hueco sin
+negociar entre dos velas. Ese vocabulario vive en `price_patterns` (velas
+japonesas, FVG, order blocks, barridas de liquidez, CRT, AMD/Power of Three,
+ORB y zonas de Fibonacci) y sin él el generador no puede descubrir esas
+estrategias por mucho que evolucione — no están en su idioma.
+
+El compilador traduce un spec a un array de señales (1/-1/0) que el
 motor de backtest existente (backtest_signals) puede ejecutar — de modo que el
 generador genético produce estrategias NUEVAS sin tocar el motor ni la
 matemática de robustez.
@@ -26,6 +36,9 @@ Condición de cruce (dos indicadores tipo precio):
      "a": {"indicator": "EMA", "params": {"window": 12}},
      "b": {"indicator": "EMA", "params": {"window": 26}},
      "op": "cross_above"|"cross_below"}
+Condición de patrón (suceso de acción del precio, con ventana de vigencia):
+    {"type": "pattern", "pattern": "SWEEP_LOW", "params": {"window": 20},
+     "lookback": 4}   # «ocurrió en alguna de las últimas 4 velas»
 
 Capa de dominio: Python puro, sin BD ni framework.
 """
@@ -38,6 +51,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 import ta as ta_lib
+
+from core.domain.services import price_patterns
 
 # ═══════════════════════════════════════════════════════════════════
 # Catálogo de indicadores (espacio de búsqueda)
@@ -226,6 +241,23 @@ PRICE_LIKE: dict[str, dict] = {
 }
 
 _ALL = {**OSCILLATORS, **PRICE_LIKE}
+
+# ── Acción del precio: sucesos con estructura, no niveles ──────────
+# Los indicadores describen el mercado con NÚMEROS que se comparan contra
+# umbrales. Hay información que ese vocabulario no puede expresar porque no es
+# un nivel sino un suceso: que una vela se trague a la anterior, que el precio
+# perfore un mínimo y vuelva dentro, que quede un hueco sin negociar. Un
+# generador que solo combina osciladores no puede descubrir esas estrategias por
+# mucho que evolucione — no están en su idioma. `price_patterns` las añade y la
+# condición `pattern` las conecta con la gramática.
+PATTERNS = price_patterns.PATTERNS
+
+# Ventana de vigencia del patrón. Sin ella, combinar dos patrones con Y sería
+# casi siempre falso —son sucesos puntuales y no coinciden en la misma vela— y
+# el generador nunca podría expresar secuencias como «hubo barrida y ahora
+# envolvente», que es como se usan de verdad.
+PATTERN_LOOKBACK_RANGE = (1, 8)
+
 THRESHOLD_OPS = ("gt", "lt")
 CROSS_OPS = ("cross_above", "cross_below")
 COMPARE_OPS = ("above", "below")   # estado persistente: A por encima/debajo de B
@@ -258,17 +290,28 @@ def catalog_version() -> str:
         }
         for name, meta in sorted(_ALL.items())
     }
+    # Los patrones son parte del espacio de búsqueda tanto como los
+    # indicadores: añadir uno cambia lo que el generador puede descubrir, y dos
+    # ejecuciones con la misma semilla dejan de ser comparables. Si no entrasen
+    # en la huella, ese cambio pasaría inadvertido — que es justo lo que esta
+    # función existe para impedir.
+    patterns = {
+        name: {p: [kind, lo, hi] for p, (kind, lo, hi) in meta.get("params", {}).items()}
+        for name, meta in sorted(PATTERNS.items())
+    }
     payload = {
         "blocks": blocks,
+        "patterns": patterns,
         "ops": {
             "threshold": list(THRESHOLD_OPS), "cross": list(CROSS_OPS),
             "compare": list(COMPARE_OPS), "slope": list(SLOPE_OPS),
             "slope_bars": list(SLOPE_BARS_RANGE), "combines": list(COMBINES),
+            "pattern_lookback": list(PATTERN_LOOKBACK_RANGE),
         },
         "max_conditions": _MAX_CONDITIONS,
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
-    return f"{len(_ALL)}b-{digest[:12]}"
+    return f"{len(_ALL)}b{len(PATTERNS)}p-{digest[:12]}"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -339,17 +382,45 @@ def _random_slope_condition(rng: np.random.Generator) -> dict:
     }
 
 
+def _random_pattern_condition(rng: np.random.Generator) -> dict:
+    """
+    Condición de ACCIÓN DEL PRECIO: un suceso con estructura, no un nivel.
+
+    Lleva `lookback` porque el patrón es puntual: sin ventana de vigencia,
+    combinarlo con Y contra cualquier otra condición sería casi siempre falso, y
+    el generador descartaría la familia entera por estéril en vez de por mala.
+    """
+    name = str(rng.choice(list(PATTERNS.keys())))
+    lo, hi = PATTERN_LOOKBACK_RANGE
+    return {
+        "type": "pattern",
+        "pattern": name,
+        "params": _sample_params(PATTERNS[name]["params"], rng),
+        "lookback": int(rng.integers(lo, hi + 1)),
+    }
+
+
 def random_condition(rng: np.random.Generator) -> dict:
-    """Condición aleatoria legal. Mezcla de los 4 tipos con pesos que favorecen
-    los tipos más expresivos (umbral y estado) sin abandonar cruces/pendientes."""
+    """
+    Condición aleatoria legal. Mezcla de los 5 tipos con pesos que favorecen los
+    más expresivos (umbral y estado) sin abandonar cruces, pendientes ni acción
+    del precio.
+
+    Los patrones se llevan un 20 %: suficiente para que la familia aparezca en
+    la población inicial y el GA pueda evaluarla, sin inundar la búsqueda con
+    sucesos raros que casi nunca disparan. Que sea el gating quien decida si
+    aportan, no una cuota que se la conceda de antemano.
+    """
     roll = rng.random()
-    if roll < 0.35:
+    if roll < 0.28:
         return _random_threshold_condition(rng)
-    if roll < 0.60:
+    if roll < 0.48:
         return _random_cross_condition(rng)
-    if roll < 0.85:
+    if roll < 0.68:
         return _random_compare_condition(rng)
-    return _random_slope_condition(rng)
+    if roll < 0.80:
+        return _random_slope_condition(rng)
+    return _random_pattern_condition(rng)
 
 
 def _random_block(rng: np.random.Generator) -> dict:
@@ -479,7 +550,31 @@ def _validate_params(indicator: str, params: dict) -> bool:
     return True
 
 
+def _validate_pattern_params(name: str, params: dict) -> bool:
+    """Igual que `_validate_params`, pero contra el catálogo de patrones.
+
+    Muchos patrones no tienen parámetros (una envolvente es una envolvente), así
+    que el conjunto vacío es legal y frecuente."""
+    spec = PATTERNS[name]["params"]
+    if set(params) != set(spec):
+        return False
+    for pname, (_kind, lo, hi) in spec.items():
+        v = params[pname]
+        if not isinstance(v, (int, float)) or not (lo - 1e-9 <= v <= hi + 1e-9):
+            return False
+    return True
+
+
 def _validate_condition(c: dict) -> bool:
+    if c.get("type") == "pattern":
+        name = c.get("pattern")
+        if name not in PATTERNS:
+            return False
+        if not _validate_pattern_params(name, c.get("params", {})):
+            return False
+        lb = c.get("lookback", 1)
+        lo, hi = PATTERN_LOOKBACK_RANGE
+        return isinstance(lb, int) and lo <= lb <= hi
     if c.get("type") == "threshold":
         ind = c.get("indicator")
         if ind not in OSCILLATORS or c.get("op") not in THRESHOLD_OPS:
@@ -620,6 +715,16 @@ def _series(df: pd.DataFrame, indicator: str, params: dict, cache: dict) -> np.n
 
 
 def _condition_bool(df: pd.DataFrame, c: dict, cache: dict) -> np.ndarray:
+    if c["type"] == "pattern":
+        # Sucesos de acción del precio. Ya llegan como booleanos causales desde
+        # `price_patterns`; aquí solo se aplica la ventana de vigencia.
+        key = ("pattern", c["pattern"], tuple(sorted(c.get("params", {}).items())),
+               int(c.get("lookback", 1)))
+        if key not in cache:
+            flags = price_patterns.detect(df, c["pattern"], c.get("params"))
+            cache[key] = price_patterns.occurred_within(flags, int(c.get("lookback", 1)))
+        return cache[key]
+
     if c["type"] == "threshold":
         s = _series(df, c["indicator"], c["params"], cache)
         # Comparaciones con NaN dan False en numpy (el warm-up no dispara señal)
@@ -742,6 +847,11 @@ def _describe_indicator(leg: dict) -> str:
 
 
 def _describe_condition(c: dict) -> str:
+    if c["type"] == "pattern":
+        label = price_patterns.PATTERN_LABELS.get(c["pattern"], c["pattern"])
+        lb = int(c.get("lookback", 1))
+        window = "" if lb <= 1 else f" en las últimas {lb} velas"
+        return f"hay {label}{window}"
     if c["type"] == "threshold":
         sym = ">" if c["op"] == "gt" else "<"
         return f"{_describe_indicator(c)} {sym} {c['threshold']}"
@@ -802,6 +912,14 @@ def max_warmup(spec: dict) -> int:
     longest = 1
     def scan(c):
         nonlocal longest
+        if c["type"] == "pattern":
+            # El calentamiento de un patrón no sale de sus parámetros: una
+            # envolvente no tiene ninguno y aun así necesita 2 velas. El
+            # catálogo lo declara explícitamente.
+            longest = max(longest, int(PATTERNS[c["pattern"]]["warmup"]))
+            for v in c.get("params", {}).values():
+                longest = max(longest, int(v))
+            return
         legs = [c] if c["type"] in ("threshold", "slope") else [c["a"], c["b"]]
         for leg in legs:
             for v in leg["params"].values():
@@ -839,7 +957,20 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
     out = copy.deepcopy(spec)
     for side in ("entry", "exit"):
         for c in out[side]["conditions"]:
-            if c["type"] in ("threshold", "slope"):
+            if c["type"] == "pattern":
+                # El patrón en sí no se cambia (sería otra estructura, no un
+                # vecino); sí sus parámetros y su ventana de vigencia, que es
+                # donde vive la sensibilidad real de este tipo de condición.
+                meta = PATTERNS[c["pattern"]]["params"]
+                for k, v in c.get("params", {}).items():
+                    kind, lo, hi = meta[k]
+                    span = (hi - lo) * 0.1
+                    nv = float(min(hi, max(lo, v + rng.uniform(-span, span))))
+                    c["params"][k] = int(round(nv)) if kind == "int" else round(nv, 2)
+                lo, hi = PATTERN_LOOKBACK_RANGE
+                c["lookback"] = int(min(hi, max(lo, int(c.get("lookback", 1))
+                                               + int(rng.integers(-1, 2)))))
+            elif c["type"] in ("threshold", "slope"):
                 for k, v in c["params"].items():
                     c["params"][k] = _jitter_value(c["indicator"], k, v, rng)
             else:  # cross / compare: dos patas de tipo precio

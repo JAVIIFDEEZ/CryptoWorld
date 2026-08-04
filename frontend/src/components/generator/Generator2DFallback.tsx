@@ -9,6 +9,7 @@
 import {
   ScatterChart, Scatter, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis, Cell,
 } from 'recharts'
+import { conditionLabel } from '@/services/strategyGeneratorService'
 import type { Candidate, GenerationHistoryPoint, StrategySpec, SpecCondition } from '@/services/strategyGeneratorService'
 
 const FRAME = 'rounded-xl border border-slate-700/70 bg-slate-900/50 p-3'
@@ -65,10 +66,10 @@ export function Landscape2D({ history }: Readonly<{ history: GenerationHistoryPo
   )
 }
 
-function condLabel(c: SpecCondition): string {
-  if (c.type === 'threshold') return `${c.indicator} ${c.op === 'gt' ? '>' : '<'} ${c.threshold}`
-  return `${c.a?.indicator} ${c.op === 'cross_above' ? '↗' : '↘'} ${c.b?.indicator}`
-}
+// La etiqueta vive en el servicio porque la comparten esta vista y la hélice
+// 3D: duplicarla fue lo que dejó fuera las condiciones de estado, pendiente y
+// patrón, que aquí salían como «undefined ↗ undefined».
+const condLabel = conditionLabel
 
 export function Dna2D({ spec }: Readonly<{ spec: StrategySpec | null }>) {
   if (!spec) return <div className="text-slate-500 text-sm text-center py-16">Sin estrategia ganadora.</div>

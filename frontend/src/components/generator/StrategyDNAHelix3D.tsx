@@ -13,20 +13,17 @@ import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import Viz3DFrame from '@/components/viz3d/Viz3DFrame'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { conditionLabel } from '@/services/strategyGeneratorService'
 import type { StrategySpec, SpecCondition } from '@/services/strategyGeneratorService'
 
 const R = 2.1            // radio de la hélice
 const TURN = 2.4         // separación angular entre cuentas
 const Y_STEP = 0.95      // separación vertical entre cuentas
 
-function label(c: SpecCondition): string {
-  if (c.type === 'threshold') {
-    const sym = c.op === 'gt' ? '>' : '<'
-    return `${c.indicator}${sym}${c.threshold}`
-  }
-  const arrow = c.op === 'cross_above' ? '↗' : '↘'
-  return `${c.a?.indicator}${arrow}${c.b?.indicator}`
-}
+// Etiqueta compartida con la vista 2D (ver `conditionLabel`): tenerla duplicada
+// era lo que hacía que los tipos de condición añadidos después —estado,
+// pendiente y patrón— apareciesen como «undefined».
+const label = conditionLabel
 
 interface Bead {
   c: SpecCondition

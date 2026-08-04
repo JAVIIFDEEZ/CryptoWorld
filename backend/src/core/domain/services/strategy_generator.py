@@ -27,12 +27,15 @@ from core.domain.services.strategy_spec import (
     COMPARE_OPS,
     CROSS_OPS,
     OSCILLATORS,
+    PATTERNS,
     SLOPE_OPS,
     THRESHOLD_OPS,
     _MAX_CONDITIONS,
+    _random_pattern_condition,
     _random_regime,
     _random_risk,
     _random_sizing,
+    _sample_params,
     jitter_params,
     random_condition,
     random_spec,
@@ -119,12 +122,55 @@ _OPS_BY_TYPE = {
 
 def _mutate_flip_op(spec: dict, rng: np.random.Generator) -> dict:
     """Invierte el operador de una condición (gt↔lt, cross_above↔cross_below,
-    above↔below o rising↔falling, según el tipo)."""
+    above↔below o rising↔falling, según el tipo).
+
+    Las condiciones de patrón no tienen operador que invertir: un suceso ocurre
+    o no ocurre. Se excluyen de la selección en lugar de tratarlas aparte,
+    porque su mutación propia es `_mutate_pattern`."""
     out = copy.deepcopy(spec)
-    conds = [c for side in ("entry", "exit") for c in out[side]["conditions"]]
+    conds = [c for side in ("entry", "exit") for c in out[side]["conditions"]
+             if c["type"] in _OPS_BY_TYPE]
+    if not conds:
+        return out
     c = conds[int(rng.integers(0, len(conds)))]
     ops = _OPS_BY_TYPE[c["type"]]
     c["op"] = ops[1] if c["op"] == ops[0] else ops[0]
+    return out
+
+
+def _mutate_pattern(spec: dict, rng: np.random.Generator) -> dict:
+    """
+    Cambia QUÉ patrón busca una condición de acción del precio.
+
+    Es la mutación estructural de esta familia: el jitter ya afina parámetros y
+    ventana, pero sin esto el GA no podría pasar de «barrida de mínimos» a
+    «hueco de valor» sin destruir la condición entera y volver a sortearla. Con
+    ella puede recorrer la familia conservando el resto del genoma, que es
+    justo lo que hace útil una mutación dirigida.
+
+    Si el spec no tiene ninguna condición de patrón, INTRODUCE una sustituyendo
+    otra al azar: de lo contrario, un genoma que naciera sin patrones no podría
+    adquirirlos nunca por esta vía.
+    """
+    out = copy.deepcopy(spec)
+    targets = [(side, i) for side in ("entry", "exit")
+               for i, c in enumerate(out[side]["conditions"]) if c["type"] == "pattern"]
+    if targets:
+        side, i = targets[int(rng.integers(0, len(targets)))]
+        current = out[side]["conditions"][i]["pattern"]
+        options = [p for p in PATTERNS if p != current]
+        new_name = str(rng.choice(options)) if options else current
+        out[side]["conditions"][i] = {
+            "type": "pattern",
+            "pattern": new_name,
+            "params": _sample_params(PATTERNS[new_name]["params"], rng),
+            "lookback": out[side]["conditions"][i].get("lookback", 1),
+        }
+        return out
+
+    side = "entry" if rng.random() < 0.5 else "exit"
+    conds = out[side]["conditions"]
+    conds[int(rng.integers(0, len(conds)))] = _random_pattern_condition(rng)
     return out
 
 
@@ -204,6 +250,7 @@ _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_condition_params,
     _mutate_threshold,
     _mutate_flip_op,
+    _mutate_pattern,
     _mutate_flip_combine,
     _mutate_replace_condition,
     _mutate_add_condition,

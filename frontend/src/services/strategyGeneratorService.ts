@@ -42,15 +42,70 @@ export interface LaunchResponse {
   poll_url: string
 }
 
-/** Una condición compilable del StrategySpec (umbral o cruce). */
+/**
+ * Una condición compilable del StrategySpec.
+ *
+ * `pattern` es la que no encaja con las demás: no compara dos números, afirma
+ * que ocurrió un SUCESO (una envolvente, una barrida de liquidez, un hueco de
+ * valor) dentro de las últimas `lookback` velas. Por eso no lleva `op` — un
+ * suceso ocurre o no ocurre, no hay operador que invertir.
+ */
 export interface SpecCondition {
-  type: 'threshold' | 'cross'
+  type: 'threshold' | 'cross' | 'compare' | 'slope' | 'pattern'
   indicator?: string
   params?: Record<string, number>
-  op: string
+  op?: string
   threshold?: number
+  bars?: number
   a?: { indicator: string; params: Record<string, number> }
   b?: { indicator: string; params: Record<string, number> }
+  /** Solo en `pattern`: nombre del patrón de acción del precio. */
+  pattern?: string
+  /** Solo en `pattern`: velas de vigencia del suceso. */
+  lookback?: number
+}
+
+/**
+ * Etiquetas cortas de los patrones para las vistas gráficas.
+ *
+ * El backend ya manda una descripción larga en español; esto es para donde solo
+ * caben tres palabras (cuentas de la hélice, cajas del diagrama 2D). Un patrón
+ * que no esté aquí cae a su propio nombre, que sigue siendo legible — nunca a
+ * `undefined`, que es lo que salía antes de existir esta tabla.
+ */
+export const PATTERN_SHORT_LABELS: Record<string, string> = {
+  BULL_ENGULF: 'envolvente ↑',
+  BEAR_ENGULF: 'envolvente ↓',
+  HAMMER: 'martillo',
+  SHOOTING_STAR: 'estrella fugaz',
+  DOJI: 'doji',
+  INSIDE_BAR: 'vela interior',
+  OUTSIDE_BAR: 'vela envolvente',
+  FVG_BULL: 'FVG ↑',
+  FVG_BEAR: 'FVG ↓',
+  SWEEP_LOW: 'barrida ↓',
+  SWEEP_HIGH: 'barrida ↑',
+  OB_BULL: 'order block ↑',
+  OB_BEAR: 'order block ↓',
+  CRT: 'CRT',
+  PO3_BULL: 'AMD ↑',
+  PO3_BEAR: 'AMD ↓',
+  ORB_UP: 'ORB ↑',
+  ORB_DOWN: 'ORB ↓',
+  FIB_DISCOUNT: 'fib descuento',
+  FIB_PREMIUM: 'fib premium',
+}
+
+/** Etiqueta corta y legible de cualquier condición, para vistas gráficas. */
+export function conditionLabel(c: SpecCondition): string {
+  if (c.type === 'pattern') {
+    const name = PATTERN_SHORT_LABELS[c.pattern ?? ''] ?? c.pattern ?? 'patrón'
+    return c.lookback && c.lookback > 1 ? `${name} ≤${c.lookback}v` : name
+  }
+  if (c.type === 'threshold') return `${c.indicator} ${c.op === 'gt' ? '>' : '<'} ${c.threshold}`
+  if (c.type === 'slope') return `${c.indicator} ${c.op === 'rising' ? '↗' : '↘'} ${c.bars}v`
+  if (c.type === 'compare') return `${c.a?.indicator} ${c.op === 'above' ? '>' : '<'} ${c.b?.indicator}`
+  return `${c.a?.indicator} ${c.op === 'cross_above' ? '↗' : '↘'} ${c.b?.indicator}`
 }
 
 export interface StrategySpec {

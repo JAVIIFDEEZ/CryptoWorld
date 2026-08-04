@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from core.domain.services import backtest_metrics as metrics
+from core.domain.services import meta_sizing
 from core.domain.services.backtest_execution import CostModel
 from core.domain.services.strategy_evaluation import (
     GatingThresholds,
@@ -618,6 +619,16 @@ def generate_strategies(
     for f in passed:
         f["retests"] = retest_cascade(df_evo, f["spec"], ppy=ppy, costs=costs,
                                       seed=cfg.ga.seed)
+        # Overlay de convicción, por la MISMA razón: entrenar un meta-modelo
+        # cuesta ~1,4 s por candidata y su resultado no decide nada del gating,
+        # solo se muestra. Gastarlo en las que ya han sobrevivido a todo lo
+        # demás es la diferencia entre segundos y minutos en el preset
+        # exhaustivo. Vive dentro de `gating.metrics` para que la interfaz lo
+        # encuentre donde ya lo buscaba.
+        f["gating"]["metrics"]["meta_sizing"] = meta_sizing.conviction_overlay(
+            df_evo, f["spec"], ppy=ppy, costs=costs)
+        f["gating"]["metrics"]["meta_sizing_applied"] = \
+            f["gating"]["metrics"]["meta_sizing"].get("applied", False)
 
     # Radiografía de estabilidad temporal del campeón: matriz walk-forward
     # (Sharpe OOS por tramo bajo distintos troceos, solo zona de evolución).

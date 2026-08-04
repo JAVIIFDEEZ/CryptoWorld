@@ -813,6 +813,106 @@ estrategia y no a su favor.
 
 ---
 
+# Ampliación del vocabulario — acción del precio
+
+Hasta aquí, todo lo hecho mejoraba **cómo se valida** una estrategia. Esto
+cambia **qué estrategias puede encontrar**.
+
+## El problema
+
+El catálogo describía el mercado únicamente con **niveles**: un RSI vale 32, una
+media vale 104, el ADX supera 25. Las cuatro condiciones existentes —umbral,
+cruce, estado y pendiente— son todas comparaciones entre números.
+
+Hay una familia entera de información que ese vocabulario **no puede
+expresar**, porque no es un nivel sino un **suceso con estructura**:
+
+- que una vela se trague el cuerpo de la anterior,
+- que el precio perfore un mínimo y vuelva dentro en la misma vela,
+- que quede un hueco sin negociar entre dos velas no adyacentes,
+- que un rango estrecho sea barrido por un lado y resuelto por el otro.
+
+Ninguna combinación de osciladores reproduce eso. No es que al generador le
+costara encontrarlas: es que **no estaban en su idioma**, y por tanto eran
+inalcanzables por mucho cómputo que se le echara.
+
+## Lo implementado
+
+`price_patterns.py` — 20 detectores, cada uno un array booleano por vela:
+
+| Familia | Patrones |
+|---|---|
+| Velas japonesas | envolvente alcista/bajista, martillo, estrella fugaz, doji, vela interior, vela envolvente |
+| Estructura | FVG alcista/bajista, bloque de órdenes alcista/bajista |
+| Liquidez | barrida bajo mínimos, barrida sobre máximos, CRT |
+| Secuencia | Power of Three / AMD alcista y bajista |
+| Sesión | ruptura del rango de apertura (ORB) arriba y abajo |
+| Fibonacci | zona de descuento y zona de premium |
+
+Y un quinto tipo de condición en la gramática:
+
+```json
+{"type": "pattern", "pattern": "SWEEP_LOW", "params": {"window": 20}, "lookback": 4}
+```
+
+El GA los sortea (20 % de las condiciones nuevas), los muta —incluida una
+mutación dirigida que cambia *qué* patrón se busca conservando el resto del
+genoma—, los valida, los describe en español y los incluye en la huella del
+catálogo.
+
+## Cuatro decisiones que sostienen esto
+
+**Causalidad estricta, comprobada patrón a patrón.** Es fácil escribir un
+detector que use la vela siguiente para «confirmar» —así se explican en casi
+toda la literatura— y el backtest resultante es ficción. El test parametrizado
+trunca la serie sobre los 20 y exige que el pasado no cambie. Donde un patrón
+necesita confirmación, la señal se emite **en la vela que la aporta**: el FVG se
+marca en la tercera vela, no en la del medio; el bloque de órdenes en la vuelta,
+no en el bloque.
+
+**Umbrales proporcionales, nunca fijos.** Qué es un cuerpo «pequeño» o una mecha
+«larga» se mide contra el rango de la propia vela. Un 0,1 % significa cosas
+distintas en BTC y en una altcoin, y distintas en 2021 y en 2024.
+
+**Ventana de vigencia (`lookback`).** Sin ella, la Y de dos sucesos puntuales es
+casi siempre falsa: no coinciden en la misma vela. El generador habría
+descartado la familia entera **por estéril en vez de por mala**, que es un fallo
+distinto y peor. Con la ventana puede expresar secuencias reales — «hubo barrida
+y ahora envolvente».
+
+**Ninguna afirmación sobre por qué funcionarían.** Los conceptos vienen del
+price action moderno, pero se implementan por su definición mecánica, que es
+objetiva y comprobable. Pasan por el mismo gating que todo lo demás y no reciben
+ninguna cuota que los proteja. Si no tienen edge, mueren igual que un RSI mal
+puesto.
+
+## Coste, medido
+
+Tres detectores nacieron 40× más lentos que el resto (Power of Three 37 ms,
+Fibonacci 17 ms, barridas 8,5 ms) por usar bucles de Python. Dentro del GA
+—miles de genomas × varios tramos walk-forward— eso son horas. Reescritos con
+ventanas móviles vectorizadas: **PO3 de 37 a 2,1 ms, Fibonacci de 17 a 1,0 ms,
+barridas de 8,5 a 0,3 ms**. Una generación completa con el preset rápido pasó de
+24,0 s a 23,4 s: la ampliación **no cuesta tiempo medible**.
+
+Un bloque que el generador no puede permitirse evaluar es un bloque que no
+existe, así que esto no era una optimización opcional.
+
+## Verificación en caliente
+
+Sobre una serie sintética, 4 de las 6 mejores candidatas incorporaron patrones
+por su cuenta:
+
+```
+ENTRAR si PRICE cruza arriba DONCH_UPPER(23) Y hay toma del rango de la vela
+previa (CRT) en las últimas 7 velas; SALIR si PRICE cruza abajo DONCH_LOWER(10)
+
+ENTRAR si hay estrella fugaz (rechazo por arriba) O CCI(26) > -70.97
+(solo si ADX≥18.9); SALIR si PRICE cruza abajo DONCH_LOWER(10)
+```
+
+---
+
 ## Lo que NO cubre
 
 - **Cobertura real del universo.** El código está y las tareas periódicas
@@ -853,4 +953,6 @@ pytest tests/unit/domain/test_triple_barrier_exit.py        # 10 tests · G3 cie
 pytest tests/unit/domain/test_funding.py                    # 14 tests · G4 cierre
 pytest tests/unit/domain/test_universe.py                   # 16 tests · G4 cierre
 pytest tests/integration/test_funding_store.py              # 17 tests · G4 cierre
+pytest tests/unit/domain/test_price_patterns.py             # 86 tests · acción del precio
+pytest tests/unit/domain/test_pattern_conditions.py         # 19 tests · acción del precio
 ```

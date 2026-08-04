@@ -56,9 +56,16 @@ class GatingThresholds:
     cpcv_k: int = 2                  # bloques por camino → C(8,2) = 28 caminos
     cpcv_embargo_pct: float = 0.02   # velas descartadas al inicio de cada bloque
     # ── Overlay de convicción (meta-modelo → tamaño de posición) ──
-    # Se REPORTA, no bloquea ni sustituye al sizing del spec. Una estrategia no
-    # es peor por no admitir modulación de tamaño; simplemente no la aprovecha.
-    meta_sizing: bool = True
+    # Apagado por defecto A PROPÓSITO. Entrenar un meta-modelo cuesta ~1,4 s por
+    # candidata sobre un histórico de 2000 velas, y el resultado no entra en
+    # `checks`: no decide nada, se muestra. Pagarlo en cada intento del gating
+    # —hasta 18 en el preset exhaustivo— es gastar minutos para enseñar una
+    # tarjeta del campeón. El generador lo calcula sobre el RANKING ya
+    # decidido, igual que hace con la cascada de retests.
+    #
+    # Se deja el interruptor porque `gate_spec` también se invoca suelto (API de
+    # robustez de un spec concreto), donde sí hay una sola estrategia que medir.
+    meta_sizing: bool = False
 
 
 def _segment_backtest(df, spec: dict, costs: CostModel | None = None) -> dict:
