@@ -26,6 +26,11 @@ _PUBLIC_KEYS = {
     "avg_loss_pct", "max_drawdown_pct", "trades",
     # Realismo de ejecución (motor v2): costes, rotación y motivos de salida
     "total_commission_pct", "turnover", "exit_reasons",
+    # Financiación del perpetuo. Va aparte de la comisión a propósito: una
+    # escala con el nº de operaciones y la otra con el tiempo en mercado, y
+    # sumarlas impediría saber cuál está sangrando la estrategia. Un 0 aquí
+    # significa «sin histórico de funding», no «no costó nada».
+    "total_funding_pct",
 }
 
 
