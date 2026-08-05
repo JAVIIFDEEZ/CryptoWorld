@@ -127,9 +127,15 @@ class TestRecommendedCandles:
 
     @pytest.mark.unit
     def test_the_cap_bounds_the_compute_cost(self):
-        """El coste del GA es lineal en velas —medido: 584 ≈ 4 min, 8000 ≈ 37
-        min de evolución exhaustiva—, así que un objetivo sin tope convertiría
-        cada ejecución en una espera inaceptable."""
+        """
+        El coste del GA es lineal en velas —medido: 584 ≈ 4 min de evolución
+        exhaustiva, 4000 ≈ 20 min, 8000 ≈ 37—, así que un objetivo sin tope
+        convertiría cada ejecución en una espera inaceptable.
+
+        El tope se subió mientras se creía que la búsqueda en dos fases
+        desacoplaba el coste; esa comprobación salió negativa y el tope volvió a
+        donde el coste manda.
+        """
         assert power.recommended_candles("1m") <= 4000
 
     @pytest.mark.unit

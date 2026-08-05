@@ -1007,6 +1007,163 @@ con lo que media ampliación quedaría accesible únicamente por azar.
 
 ---
 
+# La muestra — por qué el generador no encontraba casi nada
+
+Todo lo anterior mejora **cómo se valida** y **qué se puede expresar**. Esto
+corrige algo más elemental: durante todo ese tiempo, el motor estaba juzgando
+con datos insuficientes y presentando el resultado como si fuera un veredicto
+sobre el mercado.
+
+## La causa: una constante
+
+El generador pedía **730 velas para todos los marcos**. Ese número se eligió
+cuando solo existían gráficos diarios (730 = 2 años). El mismo número en otros
+marcos es otra cosa completamente:
+
+| Marco | 730 velas son… | Cada tramo walk-forward |
+|---|---|---|
+| 1d | 730 días | 116 días |
+| 4h | 122 días | 19 días |
+| **1h** | **30 días** | **4,8 días** |
+
+Sobre 1 h, el motor evaluaba 1477 configuraciones contra **un mes de datos**,
+partido en cinco tramos de cinco días. Una estrategia que opera dos veces por
+semana deja **una operación por tramo**.
+
+## Por qué eso invalida todo lo que viene después
+
+No es que el gating fuera demasiado estricto. Es que **no había nada que medir**:
+
+- El **Sharpe de un tramo con dos operaciones** no es una medida ruidosa: no es
+  una medida. Su error estándar supera varias veces a su magnitud.
+- El **Monte Carlo** remuestrea la secuencia de operaciones. Con 14 trades, su
+  percentil 5 no distingue una estrategia mala de una con mala suerte — y
+  `mc_p5_positive` era exactamente el check que rechazaba el 100 % de las
+  candidatas.
+- El **control de multiplicidad** decía «el azar produce 0,160 con 1477 pruebas
+  y tu campeona da 0,065». Correcto, y con 30 días de datos, inevitable.
+
+## La atribución falsa
+
+La pantalla decía: *«Ninguna estrategia superó el gating… es el resultado
+esperado cuando el mercado/marco no ofrece un edge robusto»*.
+
+Con 30 días de datos **eso es falso**. No se descubrió nada sobre el mercado; se
+descubrió que faltaban datos. Informar mal es peor que no informar: lleva a
+descartar un activo por una conclusión que el motor no estaba en condiciones de
+sacar.
+
+`generation_power` separa las dos causas y habla en **operaciones**, que es la
+unidad que decide si un Sharpe significa algo. Sobre el caso real:
+
+> Este veredicto **NO es concluyente sobre el mercado**. El histórico cubre solo
+> 30 días; cada tramo contiene ~2,8 operaciones: el Sharpe de un tramo así no es
+> una medida ruidosa, es que no es una medida; 14 operaciones en total: con menos
+> de 30, el percentil 5 del Monte Carlo no distingue una estrategia mala de una
+> con mala suerte.
+
+---
+
+# Búsqueda en dos fases — años de datos sin años de cómputo
+
+Arreglar el número de velas chocaba de frente con el coste. El del GA es
+**lineal en velas**, medido:
+
+| Velas | Evolución exhaustiva (1477 genomas) |
+|---|---|
+| 584 | 3,9 min |
+| 1 500 | 8,7 min |
+| 4 000 | 20,1 min |
+| 8 000 | 37,2 min |
+
+Tres años de gráficos horarios (26 000 velas) llevarían la búsqueda a más de dos
+horas. Y sin tres años, lo que se encuentre está ajustado a un solo régimen.
+Ambas cosas no pueden ser ciertas a la vez… salvo separando dos preguntas que se
+respondían con el mismo cálculo.
+
+## La observación
+
+El fitness del GA solo tiene que **ORDENAR** genomas entre sí. No necesita ser
+una estimación insesgada del rendimiento — de eso se encarga el gating, que sí
+corre sobre el histórico completo. Y para ordenar bien basta una muestra
+representativa.
+
+## Por qué no vale cualquier submuestra
+
+- **Un tramo contiguo** haría que el GA optimizara para un solo régimen: el
+  mismo sesgo que se quiere evitar, ahora deliberado.
+- **Velas sueltas al azar** destruyen la serie temporal. Los indicadores tienen
+  memoria y las operaciones duran varias velas.
+
+La forma correcta es **muestreo por bloques**: tramos contiguos repartidos por
+todo el histórico. Dentro de cada bloque la serie es real; entre bloques hay
+saltos, y por eso **jamás se concatenan los precios** —eso inventaría el
+movimiento más grande de la serie en cada costura— sino los **retornos** de
+backtestear cada bloque por separado.
+
+## Tres reglas que sostienen la validez
+
+1. **Calentamiento por bloque**, que no puntúa. Sin él, el arranque de cada
+   bloque mediría cómo se ceba una media de 200 velas, no la estrategia.
+2. **La muestra es fija durante toda la ejecución.** Si cambiara entre genomas,
+   se compararían estrategias medidas sobre datos distintos y el ranking sería
+   ruido con aspecto de selección.
+3. **Cobertura verificada, no supuesta** (`coverage_ratio`).
+
+## Y una comprobación que puede desmentirlo
+
+El informe incluye `search_sampling.rank_agreement`: la **correlación de rangos
+(Spearman)** entre el fitness de la muestra y el Sharpe fuera de muestra del
+histórico completo, medida sobre las finalistas. Si los dos órdenes no se
+parecen, el muestreo está buscando a ciegas — y el informe lo dice en lugar de
+presentar el atajo como si estuviera demostrado.
+
+Se usa Spearman y no Pearson a propósito: lo que importa es el orden, no que las
+magnitudes coincidan. De hecho no deben coincidir, porque son medidas distintas
+sobre datos distintos.
+
+## El resultado de esa comprobación: NEGATIVO
+
+Sobre una serie sintética de 12 000 velas con regímenes alternos y 40 genomas:
+
+| | |
+|---|---|
+| Ahorro de cómputo | **×7,1** (556 ms vs 3930 ms por genoma) |
+| Proyección a 1477 genomas | 13,7 min vs 97 min |
+| **Correlación de rangos** | **−0,384** |
+| Coincidencia del top-10 | 3/10 |
+
+**El muestreo ordenaba casi al revés que el histórico completo.** El ahorro era
+real; la validez, no.
+
+La causa resultó ser un error de escala en el propio fitness: `target_trades=25`
+se aplicaba sobre el 15 % de las velas, lo que equivale a exigir ~167 operaciones
+sobre el histórico entero. Casi todo genoma caía en la penalización, el fitness
+pasaba a medir *quién opera más* — y eso anticorrelaciona con la calidad, porque
+las estrategias que sobre-operan sangran en comisiones cuando se las mide entero.
+Los umbrales de operaciones se escalan ahora con la fracción muestreada.
+
+**La búsqueda en dos fases queda APAGADA por defecto** (`search_blocks=0`) hasta
+que la comprobación la respalde. Encender un atajo cuya validación falla sería
+exactamente lo que el resto de este motor existe para impedir. El código, sus
+tests y la comprobación quedan listos para activarla cuando la evidencia lo
+permita.
+
+## Lo que desbloquearía
+
+Con el coste de la búsqueda desacoplado de la longitud de la serie, el techo de
+velas dejaría de estar dictado por la evolución:
+
+| Marco | Hoy (tope de coste) | Con la fase 2 activa |
+|---|---|---|
+| 15m | 42 días | 146 días |
+| 1h | 167 días | 583 días |
+| 4h | 667 días | 1000 días |
+
+Ese salto sigue pendiente de que la comprobación autorice el atajo.
+
+---
+
 ## Lo que NO cubre
 
 - **Cobertura real del universo.** El código está y las tareas periódicas
@@ -1051,4 +1208,6 @@ pytest tests/unit/domain/test_price_patterns.py             # 86 tests · acció
 pytest tests/unit/domain/test_pattern_conditions.py         # 19 tests · acción del precio
 pytest tests/unit/domain/test_grammar_expansion.py          # 18 tests · negación y k de n
 pytest tests/unit/domain/test_strategy_variants.py          #  8 tests · variantes del libro
+pytest tests/unit/domain/test_generation_power.py           # 16 tests · potencia de la muestra
+pytest tests/unit/domain/test_block_sampling.py             # 15 tests · búsqueda en dos fases
 ```

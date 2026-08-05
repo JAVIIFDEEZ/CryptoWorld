@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from core.domain.services import backtest_metrics as metrics
+from core.domain.services import block_sampling
 from core.domain.services import generation_power as power
 from core.domain.services import meta_sizing
 from core.domain.services.backtest_execution import CostModel
@@ -68,6 +69,21 @@ class GenerationConfig:
     refine_neighbors: int = 0          # vecinos jitter para refinar cada finalista (0 = off)
     correlation_threshold: float = 0.7  # |ρ| máx. entre finalistas del libro (decorrelación)
     cross_check_assets: int = 0        # nº de activos extra donde validar cada finalista (0 = off)
+    # ── Búsqueda en dos fases (muestreo por bloques) ──────────────
+    # El fitness del GA solo tiene que ORDENAR genomas; el veredicto lo da el
+    # gating sobre el histórico COMPLETO. Evaluar el fitness sobre una muestra
+    # de bloques repartidos por todo el histórico desacopla el coste de la
+    # búsqueda de la longitud de la serie — que es lo que impedía usar años de
+    # datos. `search_blocks=0` desactiva el muestreo (histórico entero).
+    #
+    # APAGADO POR DEFECTO hasta que la evidencia lo respalde. La comprobación
+    # que acompaña a la idea (`rank_agreement`) es la que debe autorizarla, y
+    # sobre una serie sintética de 12 000 velas dio Spearman −0.38 en su primera
+    # versión: el muestreo ordenaba casi al revés que el histórico completo.
+    # Encender un atajo cuya validación falla sería exactamente lo que el resto
+    # del motor existe para impedir.
+    search_blocks: int = 0
+    search_scored_bars: int = 1800     # velas puntuables repartidas entre bloques
     ga: GAConfig = GAConfig()
     gating: GatingThresholds = GatingThresholds()
 
@@ -308,6 +324,53 @@ def _partition(df, holdout_fraction: float):
     return df_evo, df_holdout, split
 
 
+def _rank_agreement(finalists: list[dict]) -> dict:
+    """
+    ¿El orden que dio la muestra se parece al del histórico completo?
+
+    Es la comprobación que valida —o desmiente— la búsqueda en dos fases. El GA
+    ordena por fitness de bloques; el gating vuelve a medir cada finalista sobre
+    el histórico entero. Si esos dos órdenes no se parecen, el muestreo estaría
+    buscando a ciegas y habría que saberlo.
+
+    Se usa Spearman (correlación de RANGOS), no Pearson: lo que importa es el
+    orden, no que las magnitudes coincidan — de hecho no deben coincidir, porque
+    son medidas distintas sobre datos distintos.
+
+    Con menos de cuatro finalistas no se calcula: una correlación de rangos sobre
+    tres puntos toma pocos valores posibles y ninguno significa nada.
+    """
+    pairs = [(f["fitness"], f["gating"]["metrics"]["mean_oos_sharpe"])
+             for f in finalists
+             if f.get("fitness") is not None
+             and f.get("gating", {}).get("metrics", {}).get("mean_oos_sharpe") is not None]
+    if len(pairs) < 4:
+        return {"n": len(pairs), "spearman": None,
+                "note": "Muy pocas finalistas para medir si el orden de la muestra "
+                        "coincide con el del histórico completo."}
+
+    a = np.argsort(np.argsort([p[0] for p in pairs]))
+    b = np.argsort(np.argsort([p[1] for p in pairs]))
+    if a.std() < 1e-12 or b.std() < 1e-12:
+        return {"n": len(pairs), "spearman": None,
+                "note": "Sin dispersión entre finalistas: no hay orden que comparar."}
+    rho = float(np.corrcoef(a, b)[0, 1])
+    return {
+        "n": len(pairs),
+        "spearman": round(rho, 3),
+        "note": (
+            f"Correlación de rangos {rho:.2f} entre el fitness de la muestra y el "
+            "Sharpe fuera de muestra del histórico completo. "
+            + ("La muestra ordena las candidatas igual que el histórico entero: "
+               "buscar sobre ella no pierde información de selección."
+               if rho >= 0.5 else
+               "El orden de la muestra se parece poco al del histórico completo: "
+               "la búsqueda por bloques podría estar dejando fuera buenas "
+               "candidatas en esta serie.")
+        ),
+    }
+
+
 def decorrelate_finalists(passed: list[dict], series_fn, threshold: float) -> tuple[list, list]:
     """
     Libro decorrelacionado: recorre las finalistas por fitness descendente y
@@ -442,12 +505,25 @@ def generate_strategies(
     # selección) y la deflación del Sharpe por el nº de configuraciones probadas.
     trial_registry = TrialRegistry(seed=cfg.ga.seed)
 
+    # ── Muestra de bloques para la FASE 1 (búsqueda) ─────────────────
+    # Se construye UNA VEZ y se usa para todos los genomas: si cambiara entre
+    # evaluaciones se estarían comparando estrategias medidas sobre datos
+    # distintos, y el ranking sería ruido con aspecto de selección.
+    search_blocks = (
+        block_sampling.plan_blocks(
+            len(df_evo), n_blocks=cfg.search_blocks,
+            warmup=200, target_scored=cfg.search_scored_bars)
+        if cfg.search_blocks > 0 and len(df_evo) > cfg.search_scored_bars * 1.5
+        else None
+    )
+
     def fitness_fn(spec: dict) -> float:
         h = spec_hash(spec)
         if h not in fitness_memo:
             ev = evaluate_fitness(
                 df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
-                costs=costs, parsimony=cfg.parsimony, with_returns=True)
+                costs=costs, parsimony=cfg.parsimony, with_returns=True,
+                blocks=search_blocks)
             trial_registry.add(h, ev.get("bar_returns"))
             fitness_memo[h] = ev["fitness"]
         return fitness_memo[h]
@@ -731,6 +807,17 @@ def generate_strategies(
             trades_observed=(passed[0]["gating"]["metrics"]["n_trades"] if passed
                              else (max((f["gating"]["metrics"]["n_trades"]
                                         for f in finalists), default=None))),
+        ),
+        # Fase 1 de la búsqueda: sobre qué se ordenaron las candidatas, y si ese
+        # orden se parece al del histórico completo. Sin esta comprobación, el
+        # muestreo sería un atajo sin evidencia de que preserva lo que importa.
+        "search_sampling": (
+            {**block_sampling.describe(search_blocks, len(df_evo)),
+             "rank_agreement": _rank_agreement(finalists)}
+            if search_blocks else
+            {"n_blocks": 0,
+             "note": "El fitness se calculó sobre el histórico completo de la "
+                     "zona de evolución (sin muestreo)."}
         ),
         "walk_forward_matrix": wf_matrix,
         "restarts": restart_summaries,

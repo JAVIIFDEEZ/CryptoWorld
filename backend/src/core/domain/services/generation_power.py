@@ -162,11 +162,16 @@ def recommended_candles(interval: str, target_days: float = 1000.0,
     El objetivo son ~1000 días (dos ciclos largos), que es lo mínimo para que lo
     que sobreviva no esté ajustado a un único régimen de mercado.
 
-    El tope existe porque el coste del algoritmo genético es LINEAL en velas
-    —medido: 584 velas ≈ 4 min de evolución exhaustiva, 4000 ≈ 20 min, 8000 ≈ 37
-    min—, así que un objetivo sin límite convertiría cada ejecución en una
-    espera inaceptable. En los marcos cortos manda el tope y no el calendario, y
-    el diagnóstico de potencia lo dice en vez de callarlo.
+    El tope lo dicta el coste de la búsqueda, que es LINEAL en velas —medido:
+    584 ≈ 4 min de evolución exhaustiva, 4000 ≈ 20 min, 8000 ≈ 37—. Un objetivo
+    sin límite convertiría cada ejecución en una espera inaceptable.
+
+    Este tope se subió a 14 000 mientras se creía que la búsqueda en dos fases
+    (`block_sampling`) desacoplaba el coste de la longitud de la serie. La
+    comprobación de esa idea salió NEGATIVA (correlación de rangos −0.38 con el
+    orden del histórico completo), así que el tope vuelve a donde el coste
+    manda. En los marcos cortos manda el tope y no el calendario, y el
+    diagnóstico de potencia lo dice en vez de callarlo.
     """
     minutes = _INTERVAL_MINUTES.get(interval)
     if not minutes:

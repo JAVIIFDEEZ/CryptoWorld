@@ -25,6 +25,7 @@ import numpy as np
 from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
+from core.domain.services import block_sampling
 from core.domain.services import market_impact as impact
 from core.domain.services import meta_sizing
 from core.domain.services import significance as sig
@@ -484,6 +485,96 @@ def returns_series(df, spec: dict, costs: CostModel | None = None) -> np.ndarray
     return np.asarray(_segment_backtest(df, spec, costs)["bar_returns"], dtype=float)
 
 
+def _fitness_on_blocks(df, spec, blocks, n_splits, ppy, min_trades, target_trades,
+                       costs, parsimony, with_returns) -> dict:
+    """
+    Fitness sobre la muestra de bloques.
+
+    Cada bloque hace de tramo fuera de muestra por sí mismo: son tramos
+    DISJUNTOS del histórico, así que el Sharpe de cada uno mide el spec sobre
+    datos que no comparten con los demás. Eso es lo que sustituye aquí al
+    walk-forward — y es una sustitución legítima porque el walk-forward, en este
+    punto, tampoco entrena nada: el spec ya viene fijo del GA.
+
+    La penalización por sobreajuste cambia de forma en consecuencia: sin tramo
+    «in-sample» que comparar, se usa la DISPERSIÓN entre bloques. Una estrategia
+    que rinde igual en los seis tramos es preferible a otra con la misma media y
+    un único bloque llevándose todo el mérito — que es la firma de haber
+    encontrado un tramo afortunado, no un edge.
+    """
+    # ── Los umbrales de operaciones se escalan con la muestra ────────
+    # Sin esto, exigir 25 operaciones sobre el 15 % de las velas equivale a
+    # exigir ~167 sobre el histórico completo: casi todo genoma cae en la
+    # penalización, el fitness pasa a medir «quién opera más» y el orden
+    # resultante ANTICORRELACIONA con el del histórico entero (medido: Spearman
+    # −0.38 antes de esta corrección). Es el error que hace inútil un muestreo
+    # por lo demás correcto.
+    scored = sum(b.scored_bars for b in blocks)
+    fraction = scored / len(df) if len(df) else 1.0
+    scaled_target = max(4, int(round(target_trades * fraction)))
+    scaled_min = max(2, int(round(min_trades * fraction)))
+
+    agg = block_sampling.evaluate_blocks(
+        df, blocks, lambda sub: _segment_backtest(sub, spec, costs))
+
+    returns = np.asarray(agg["bar_returns"], dtype=float)
+    n_trades = agg["total_trades"]
+    if returns.size < 30:
+        return {"fitness": -5.0, "mean_oos_sharpe": 0.0, "mean_is_sharpe": 0.0,
+                "efficiency": 0.0, "overfit_gap": 0.0, "n_trades": n_trades,
+                "total_return_pct": 0.0, "max_drawdown_pct": 0.0, "turnover": 0.0,
+                "cost_drag_pct": 0.0, "complexity": spec_complexity(spec),
+                "n_blocks": agg["n_blocks"], "source": "blocks",
+                **({"bar_returns": []} if with_returns else {})}
+
+    per_block: list[float] = []
+    for block in blocks:
+        sub = df.iloc[block.warmup_start:block.end]
+        if len(sub) < 30:
+            continue
+        bt = _segment_backtest(sub, spec, costs)
+        skip = block.score_start - block.warmup_start
+        br = np.asarray(bt["bar_returns"], dtype=float)[skip:]
+        if br.size >= 20:
+            per_block.append(metrics.sharpe_ratio(br, ppy))
+
+    mean_sharpe = float(np.mean(per_block)) if per_block else 0.0
+    # Dispersión entre bloques: castiga que el resultado dependa de un tramo.
+    dispersion = float(np.std(per_block)) if len(per_block) > 1 else 0.0
+
+    trade_penalty = 0.0 if n_trades >= scaled_target else (scaled_target - n_trades) / scaled_target
+    complexity_penalty = parsimony * max(0, spec_complexity(spec) - 3)
+
+    fitness = mean_sharpe - 0.5 * dispersion - 1.0 * trade_penalty - complexity_penalty
+    if n_trades < scaled_min or not per_block:
+        fitness -= 3.0
+
+    result = {
+        "fitness": round(float(fitness), 4),
+        "mean_oos_sharpe": round(mean_sharpe, 4),
+        "mean_is_sharpe": round(mean_sharpe, 4),
+        "efficiency": 1.0,
+        "overfit_gap": round(dispersion, 4),
+        "n_trades": n_trades,
+        "total_return_pct": round(float((np.prod(1.0 + returns) - 1.0) * 100.0), 2),
+        "max_drawdown_pct": 0.0,
+        "turnover": 0.0,
+        "cost_drag_pct": 0.0,
+        "complexity": spec_complexity(spec),
+        # De dónde sale este número. Un fitness de bloques y uno de histórico
+        # completo NO son comparables entre ejecuciones, y callarlo invitaría a
+        # compararlos.
+        "source": "blocks",
+        "n_blocks": len(per_block),
+        "block_sharpe_dispersion": round(dispersion, 4),
+        "sampled_fraction": round(fraction, 4),
+        "scaled_target_trades": scaled_target,
+    }
+    if with_returns:
+        result["bar_returns"] = agg["bar_returns"]
+    return result
+
+
 def evaluate_fitness(
     df,
     spec: dict,
@@ -494,6 +585,7 @@ def evaluate_fitness(
     costs: CostModel | None = None,
     parsimony: float = 0.0,
     with_returns: bool = False,
+    blocks: list | None = None,
 ) -> dict:
     """
     Fitness robustez-aware (NO retorno in-sample): Sharpe OOS del walk-forward
@@ -507,7 +599,18 @@ def evaluate_fitness(
     calculado, así que devolverla es gratis y evita repetirlo: es lo que permite
     al buscador quedarse con las series de los genomas que evalúa y alimentar
     con ellas el PBO y el Deflated Sharpe.
+
+    `blocks` activa la evaluación por muestreo de bloques (`block_sampling`). El
+    fitness solo tiene que ORDENAR genomas entre sí —el veredicto lo da el
+    gating sobre el histórico completo—, y ordenar bien no exige medirlo todo.
+    Es lo que permite buscar sobre años de datos sin pagar años de cómputo: sin
+    ello, el coste del GA es lineal en velas y tres años de gráficos horarios
+    llevarían la búsqueda a más de dos horas.
     """
+    if blocks:
+        return _fitness_on_blocks(df, spec, blocks, n_splits, ppy, min_trades,
+                                  target_trades, costs, parsimony, with_returns)
+
     full = _segment_backtest(df, spec, costs)
     n_trades = full["total_trades"]
     wf = walk_forward_oos(df, spec, n_splits, ppy, costs=costs)
