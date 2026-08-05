@@ -399,13 +399,19 @@ def _run_nsga(df_evo, cfg: "GenerationConfig", ppy: float, costs, on_generation=
     candidatos a gating), la historia para la visualización, el nº de
     evaluaciones y la frontera con sus objetivos.
     """
+    # Objetivos de operaciones derivados de la potencia estadística, no fijos:
+    # lo que tiene que poder discriminar es cada tramo del walk-forward, y hay
+    # `wf_splits`. Ver `power.fitness_trade_targets`.
+    min_trades, target_trades = power.fitness_trade_targets(cfg.gating.wf_splits)
+
     def objectives(spec: dict) -> tuple:
         ev = evaluate_fitness(df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
                               costs=costs, parsimony=cfg.parsimony,
+                              min_trades=min_trades, target_trades=target_trades,
                               with_returns=registry is not None)
         if registry is not None:
             registry.add(spec_hash(spec), ev.get("bar_returns"))
-        if ev["n_trades"] < 8 or ev["efficiency"] == 0:
+        if ev["n_trades"] < min_trades or ev["efficiency"] == 0:
             return (-99.0, -99.0, -99.0)            # degeneradas: dominadas por todo
         return (ev["mean_oos_sharpe"], -ev["max_drawdown_pct"] / 100.0, -ev["overfit_gap"])
 
@@ -677,12 +683,23 @@ def generate_strategies(
         else None
     )
 
+    # Cuántas operaciones exige el fitness, derivadas de la potencia estadística
+    # y no fijas. El fitness penalizaba por debajo de 25 y mataba por debajo de
+    # 8, dos números elegidos cuando el generador trabajaba con 730 velas
+    # diarias. Con 4000 velas de 4 h y cuatro tramos, 25 operaciones son seis por
+    # tramo — y por encima de 25 el fitness no penalizaba nada, así que el GA
+    # convergía tranquilamente hacia estrategias que operan una vez al mes y que
+    # después el gating mataba sin que la búsqueda pudiera aprender por qué.
+    # Ver `power.fitness_trade_targets`.
+    fit_min_trades, fit_target_trades = power.fitness_trade_targets(cfg.gating.wf_splits)
+
     def fitness_fn(spec: dict) -> float:
         h = spec_hash(spec)
         if h not in fitness_memo:
             ev = evaluate_fitness(
                 df_evo, spec, n_splits=cfg.gating.wf_splits, ppy=ppy,
                 costs=costs, parsimony=cfg.parsimony, with_returns=True,
+                min_trades=fit_min_trades, target_trades=fit_target_trades,
                 blocks=search_blocks)
             trial_registry.add(h, ev.get("bar_returns"))
             fitness_memo[h] = ev["fitness"]

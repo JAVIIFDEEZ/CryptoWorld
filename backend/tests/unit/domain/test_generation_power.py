@@ -147,3 +147,59 @@ class TestRecommendedCandles:
     @pytest.mark.unit
     def test_an_unknown_interval_falls_back_to_the_old_default(self):
         assert power.recommended_candles("3s") == 730
+
+
+class TestFitnessTradeTargets:
+    """
+    Por qué el objetivo de operaciones del fitness no puede ser una constante.
+
+    El fitness penalizaba por debajo de 25 operaciones y mataba por debajo de 8,
+    dos números elegidos cuando el generador trabajaba con 730 velas diarias. Con
+    4000 velas de 4 h —666 días, cuatro tramos de walk-forward— 25 operaciones
+    reparten seis por tramo, y ahí el error estándar del Sharpe supera a su
+    propia magnitud.
+
+    Lo grave no era la medición: era que por encima de 25 el fitness no
+    penalizaba nada. El GA convergía hacia estrategias que operan una vez al mes
+    y el gating las mataba después —Monte Carlo sin nada que remuestrear, PBO
+    alto— sin que la búsqueda tuviera forma de aprender que ese era el problema.
+    """
+
+    @pytest.mark.unit
+    def test_the_targets_scale_with_the_number_of_folds(self):
+        """La escala correcta es el nº de TRAMOS: lo que tiene que poder
+        discriminar es cada tramo del walk-forward."""
+        assert power.fitness_trade_targets(3) < power.fitness_trade_targets(5)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("splits", [3, 4, 5])
+    def test_the_target_asks_for_a_usable_fold(self, splits):
+        _, target = power.fitness_trade_targets(splits)
+        assert target == power.GOOD_TRADES_PER_FOLD * splits
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("splits", [3, 4, 5])
+    def test_the_floor_is_where_a_fold_stops_meaning_anything(self, splits):
+        floor, _ = power.fitness_trade_targets(splits)
+        assert floor == power.MIN_TRADES_PER_FOLD * splits
+
+    @pytest.mark.unit
+    def test_the_floor_is_always_below_the_target(self):
+        """Si coincidieran, la penalización suave y la muerte del genoma serían
+        el mismo umbral y el fitness perdería su gradiente."""
+        for splits in (1, 2, 3, 4, 8):
+            floor, target = power.fitness_trade_targets(splits)
+            assert 0 < floor < target
+
+    @pytest.mark.unit
+    def test_a_degenerate_split_count_still_gives_something_usable(self):
+        """`wf_splits` viene de la configuración; un 0 no puede producir un
+        objetivo de cero operaciones, que dejaría pasar cualquier cosa."""
+        floor, target = power.fitness_trade_targets(0)
+        assert floor >= power.MIN_TRADES_PER_FOLD and target >= power.GOOD_TRADES_PER_FOLD
+
+    @pytest.mark.unit
+    def test_the_default_preset_asks_for_far_more_than_the_old_flat_25(self):
+        """El preset equilibrado usa cuatro tramos: 40 operaciones, no 25."""
+        _, target = power.fitness_trade_targets(4)
+        assert target > 25

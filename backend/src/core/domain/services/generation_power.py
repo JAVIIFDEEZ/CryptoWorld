@@ -178,3 +178,35 @@ def recommended_candles(interval: str, target_days: float = 1000.0,
         return 730
     needed = int(target_days * 1440 / minutes)
     return max(floor, min(cap, needed))
+
+
+def fitness_trade_targets(wf_splits: int) -> tuple[int, int]:
+    """
+    `(min_trades, target_trades)` para el fitness del GA, derivados de la potencia.
+
+    Por qué no pueden ser constantes
+    ────────────────────────────────
+    El fitness penalizaba por debajo de 25 operaciones y mataba por debajo de 8,
+    dos números fijos elegidos cuando el generador trabajaba con 730 velas
+    diarias. Con 4000 velas de 4 h —666 días, cuatro tramos de walk-forward— una
+    estrategia con 25 operaciones reparte **seis por tramo**, y ahí el error
+    estándar del Sharpe supera a su propia magnitud: el tramo no discrimina.
+
+    Lo grave no es que la medición sea mala, es que el fitness no penalizaba
+    nada por encima de 25. El GA convergía tranquilamente hacia estrategias que
+    operan una vez al mes, y después el gating las mataba —Monte Carlo sin nada
+    que remuestrear, PBO alto— sin que la búsqueda tuviera forma de aprender que
+    ese era el problema. La búsqueda optimizaba hacia una esquina de la que
+    nada podía salir aprobado.
+
+    La escala correcta es el nº de TRAMOS, no el de velas: lo que tiene que
+    poder discriminar es cada tramo del walk-forward, y hay `wf_splits`.
+
+    Se devuelven los totales sobre el histórico completo, que es lo que cuenta
+    `evaluate_fitness`. Como los tramos OOS cubren en torno al 80 % de la serie,
+    exigir `GOOD_TRADES_PER_FOLD × wf_splits` en total equivale a pedir unas
+    ocho por tramo: algo por debajo del ideal, y a propósito — es una presión
+    del fitness, no una barrera del gating.
+    """
+    folds = max(1, int(wf_splits))
+    return MIN_TRADES_PER_FOLD * folds, GOOD_TRADES_PER_FOLD * folds
