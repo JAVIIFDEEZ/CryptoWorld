@@ -474,7 +474,19 @@ export interface GatingMetrics {
   /** Sangrado por financiación del perpetuo. 0 = sin histórico, no «gratis». */
   funding_drag_pct?: number
   exit_reasons?: Record<string, number>
-  monte_carlo: { prob_profit_pct: number | null; return_p5_pct: number | null; return_p50_pct: number | null }
+  monte_carlo: {
+    prob_profit_pct: number | null
+    return_p5_pct: number | null
+    return_p50_pct: number | null
+    /**
+     * El bootstrap devuelve un percentil 5 con cualquier número de operaciones,
+     * y con doce ese número no es una cola estimada con poca precisión: es una
+     * cola inventada a partir de doce datos. Cuando esto es `true`, nada de este
+     * bloque puede presentarse como medido.
+     */
+    under_powered?: boolean
+    min_trades_for_bootstrap?: number
+  }
   lookahead_leaky: boolean
 }
 

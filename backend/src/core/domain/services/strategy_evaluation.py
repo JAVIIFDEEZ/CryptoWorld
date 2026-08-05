@@ -26,6 +26,7 @@ from core.domain.services import backtest_metrics as metrics
 from core.domain.services import backtest_robustness as robustness
 from core.domain.services import backtest_bias as bias
 from core.domain.services import block_sampling
+from core.domain.services import generation_power as power
 from core.domain.services import market_impact as impact
 from core.domain.services import meta_sizing
 from core.domain.services import significance as sig
@@ -45,7 +46,12 @@ DEFAULT_COSTS = CostModel(commission_bps=10.0, slippage_bps=5.0)
 @dataclass(frozen=True)
 class GatingThresholds:
     """Umbrales del gating de robustez (defaults sensatos, configurables)."""
-    min_trades: int = 12
+    # `None` = derivar de la potencia estadística (ver `__post_init__`). Era 12
+    # fijo, y 12 operaciones no bastan para que los propios controles del gating
+    # midan algo: la eficiencia walk-forward sería un cociente entre Sharpes de
+    # tres operaciones cada uno, y el Monte Carlo remuestrearía doce números.
+    # Sigue siendo configurable — pasar un entero lo fija y manda sobre todo.
+    min_trades: int | None = None
     max_pbo: float = 0.5
     min_wf_efficiency: float = 0.4
     min_mc_p5_pct: float = 0.0       # percentil 5 del retorno Monte Carlo > 0
@@ -77,6 +83,12 @@ class GatingThresholds:
     # detrás de otro que compensa. Cada lado activo tiene que sostenerse solo.
     min_side_trades: int = 5         # menos que esto es un lado decorativo
     min_side_oos_sharpe: float = 0.0  # un lado que pierde fuera de muestra no es cobertura
+
+    def __post_init__(self) -> None:
+        # El mínimo de operaciones se deriva del nº de tramos y del bootstrap del
+        # Monte Carlo, no se elige. Ver `power.gating_min_trades`.
+        if self.min_trades is None:
+            object.__setattr__(self, "min_trades", power.gating_min_trades(self.wf_splits))
 
 
 def _segment_backtest(df, spec: dict, costs: CostModel | None = None,
@@ -1325,6 +1337,14 @@ def gate_spec(
                 "prob_profit_pct": mc.get("prob_profit_pct"),
                 "return_p5_pct": mc_p5,
                 "return_p50_pct": mc.get("return_pct", {}).get("p50"),
+                # El bootstrap devuelve un percentil 5 con cualquier número de
+                # operaciones, y con doce ese número no es una cola estimada con
+                # poca precisión: es una cola inventada a partir de doce datos.
+                # Se marca para que ninguna superficie lo presente como medido.
+                # El gating ya no llega aquí con tan pocas —`min_trades` lo
+                # impide— pero `gate_spec` también se invoca suelto.
+                "under_powered": n_trades < power.MIN_TRADES_FOR_MONTE_CARLO,
+                "min_trades_for_bootstrap": power.MIN_TRADES_FOR_MONTE_CARLO,
             },
             "lookahead_leaky": lookahead["is_leaky"],
         },

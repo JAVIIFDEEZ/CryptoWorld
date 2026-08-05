@@ -637,8 +637,13 @@ class TestNearMisses:
 
     @pytest.mark.unit
     def test_a_shortfall_below_a_minimum_counts_the_same_way(self):
-        out = near_miss(self._gate({"n_trades": 7}, min_trades=False))
-        assert out["gap"] == 5 and out["gap_ratio"] == pytest.approx(5 / 12, abs=1e-3)
+        """El margen se lee contra el umbral vigente, no contra una constante:
+        fijar aquí el número de operaciones haría que el test se rompiera cada
+        vez que el gating recalibra, sin que nada estuviera mal."""
+        th = GatingThresholds()
+        out = near_miss(self._gate({"n_trades": 7}, min_trades=False), th)
+        assert out["gap"] == th.min_trades - 7
+        assert out["gap_ratio"] == pytest.approx((th.min_trades - 7) / th.min_trades, abs=1e-3)
 
     @pytest.mark.unit
     def test_a_zero_threshold_falls_back_to_the_scale_of_the_metric(self):
@@ -684,3 +689,50 @@ class TestNearMisses:
         invitación a bajar el listón."""
         out = near_miss(self._gate({"pbo": 0.55}, pbo=False))
         assert "NO se mueve" in out["note"]
+
+
+class TestGatingSampleFloor:
+    """
+    Un control que no puede medir no puede aprobar.
+
+    El gating exigía 12 operaciones, un número fijo. Con doce, la eficiencia
+    walk-forward es un cociente entre Sharpes de tres operaciones cada uno, y el
+    percentil 5 del Monte Carlo no es una cola estimada con poca precisión: es
+    una cola inventada a partir de doce datos. Y lo peligroso no es que suspenda
+    de más — es que puede APROBAR igual de fácil, metiendo un falso positivo en
+    un libro destinado a capital real.
+    """
+
+    @pytest.mark.unit
+    def test_the_floor_is_derived_not_picked(self):
+        from core.domain.services import generation_power as gp
+        th = GatingThresholds()
+        assert th.min_trades == gp.gating_min_trades(th.wf_splits)
+
+    @pytest.mark.unit
+    def test_it_moves_with_the_number_of_folds(self):
+        assert GatingThresholds(wf_splits=10).min_trades > GatingThresholds(wf_splits=4).min_trades
+
+    @pytest.mark.unit
+    def test_an_explicit_value_still_wins(self):
+        """Sigue siendo configurable: quien pase un número manda sobre la
+        derivación. Los tests y la API de robustez dependen de ello."""
+        assert GatingThresholds(min_trades=8).min_trades == 8
+
+    @pytest.mark.unit
+    def test_it_always_resolves_to_an_int(self):
+        """`asdict` mete los umbrales en el informe, y un `None` ahí se leería
+        como «sin mínimo»."""
+        from dataclasses import asdict
+        assert isinstance(asdict(GatingThresholds())["min_trades"], int)
+
+    @pytest.mark.unit
+    def test_the_monte_carlo_declares_itself_under_powered(self):
+        """Aunque el gating ya no llegue con tan pocas operaciones, `gate_spec`
+        también se invoca suelto desde la API de robustez. El percentil 5 sale
+        igual; lo que no puede es presentarse como medido."""
+        from core.domain.services.strategy_evaluation import gate_spec
+        out = gate_spec(_df(600), _rsi_long(), GatingThresholds(wf_splits=3, mc_sims=60,
+                                                               pbo_neighbors=4))
+        mc = out["metrics"]["monte_carlo"]
+        assert mc["under_powered"] == (out["metrics"]["n_trades"] < mc["min_trades_for_bootstrap"])

@@ -203,3 +203,51 @@ class TestFitnessTradeTargets:
         """El preset equilibrado usa cuatro tramos: 40 operaciones, no 25."""
         _, target = power.fitness_trade_targets(4)
         assert target > 25
+
+
+class TestGatingMinTrades:
+    """
+    El mínimo del GATING no es el del fitness, y no cumple la misma función.
+
+    El del fitness es una PRESIÓN: empuja la búsqueda hacia estrategias con
+    muestra. Este es una CONDICIÓN de admisibilidad — por debajo, los propios
+    controles del gating no miden nada, y aprobar con ellos sería fabricar la
+    apariencia de una validación.
+    """
+
+    @pytest.mark.unit
+    def test_the_bootstrap_floor_binds_at_the_usual_split_counts(self):
+        """Con tres o cuatro tramos manda el Monte Carlo, no el reparto por
+        tramo. Y da lo mismo con los dos: lo que hace falta para que un
+        bootstrap tenga cola no depende de en cuántos trozos se parta la serie."""
+        assert power.gating_min_trades(3) == power.MIN_TRADES_FOR_MONTE_CARLO
+        assert power.gating_min_trades(4) == power.MIN_TRADES_FOR_MONTE_CARLO
+
+    @pytest.mark.unit
+    def test_many_folds_take_over_from_the_bootstrap(self):
+        """Con suficientes tramos manda la otra restricción: cada uno necesita
+        operaciones propias para que su Sharpe signifique algo."""
+        assert power.gating_min_trades(10) == power.MIN_TRADES_PER_FOLD * 10
+        assert power.gating_min_trades(10) > power.MIN_TRADES_FOR_MONTE_CARLO
+
+    @pytest.mark.unit
+    def test_the_gate_is_never_above_what_the_fitness_aims_for(self):
+        """Si el gating exigiera más de lo que el fitness persigue, la búsqueda
+        estaría optimizando hacia una esquina de la que nada puede salir
+        aprobado — que es exactamente el fallo que se corrigió antes."""
+        for splits in (3, 4, 5, 8):
+            _, target = power.fitness_trade_targets(splits)
+            assert power.gating_min_trades(splits) <= target
+
+    @pytest.mark.unit
+    def test_the_gate_is_above_the_fitness_floor(self):
+        """El suelo del fitness mata genomas degenerados durante la búsqueda; el
+        del gating decide si se puede emitir un veredicto. El segundo tiene que
+        ser el más exigente de los dos."""
+        for splits in (3, 4, 5):
+            floor, _ = power.fitness_trade_targets(splits)
+            assert power.gating_min_trades(splits) > floor
+
+    @pytest.mark.unit
+    def test_a_degenerate_split_count_still_demands_a_bootstrap(self):
+        assert power.gating_min_trades(0) >= power.MIN_TRADES_FOR_MONTE_CARLO

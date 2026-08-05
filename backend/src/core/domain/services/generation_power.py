@@ -210,3 +210,33 @@ def fitness_trade_targets(wf_splits: int) -> tuple[int, int]:
     """
     folds = max(1, int(wf_splits))
     return MIN_TRADES_PER_FOLD * folds, GOOD_TRADES_PER_FOLD * folds
+
+
+def gating_min_trades(wf_splits: int) -> int:
+    """
+    Operaciones mínimas para que el GATING pueda emitir un veredicto.
+
+    No es el mismo número que el del fitness ni cumple la misma función. El del
+    fitness es una PRESIÓN: empuja la búsqueda hacia estrategias con muestra. Este
+    es una CONDICIÓN de admisibilidad — por debajo, los propios controles del
+    gating no miden nada, y aprobar con ellos sería fabricar la apariencia de una
+    validación.
+
+    Dos restricciones, y manda la más exigente:
+
+      · **Por tramo** — `MIN_TRADES_PER_FOLD × wf_splits`. La eficiencia
+        walk-forward es un cociente entre Sharpes de tramo; con dos o tres
+        operaciones por tramo, es ruido dividido por ruido.
+      · **Bootstrap** — `MIN_TRADES_FOR_MONTE_CARLO`. El control `mc_p5_positive`
+        remuestrea la secuencia de operaciones. Con doce, el percentil 5 que sale
+        no es una cola estimada con poca precisión: es una cola inventada a
+        partir de doce números, y puede APROBAR igual de fácil que suspender.
+        Ese es el sentido peligroso del error — un falso positivo que entra en un
+        libro destinado a capital real.
+
+    En la práctica manda la segunda (30), y por eso el número es el mismo con
+    tres tramos que con cuatro. Es deliberado: lo que hace falta para que un
+    bootstrap tenga cola no depende de en cuántos trozos se parta el histórico.
+    """
+    folds = max(1, int(wf_splits))
+    return max(MIN_TRADES_PER_FOLD * folds, MIN_TRADES_FOR_MONTE_CARLO)
