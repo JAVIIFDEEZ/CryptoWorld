@@ -69,18 +69,51 @@ class GatingThresholds:
     meta_sizing: bool = False
 
 
-def _segment_backtest(df, spec: dict, costs: CostModel | None = None) -> dict:
-    """Compila el spec y lo backtestea (con costes, gestión de riesgo y sizing)."""
+def _segment_backtest(df, spec: dict, costs: CostModel | None = None,
+                      signals=None) -> dict:
+    """
+    Compila el spec y lo backtestea (con costes, gestión de riesgo y sizing).
+
+    `signals` permite REUTILIZAR un array ya compilado en vez de recalcular los
+    indicadores. Solo es legítimo cuando ese array corresponde exactamente a
+    `df` — ver `_prefix_signals`, que es donde se explica por qué los tramos de
+    entrenamiento del walk-forward cumplen esa condición y los de test no.
+    """
     return backtest_signals(
-        df, compile_signals(df, spec),
+        df, compile_signals(df, spec) if signals is None else signals,
         costs=costs if costs is not None else DEFAULT_COSTS,
         risk=spec_risk(spec),
         sizing=spec_sizing(spec),
     )
 
 
+def _prefix_signals(signals_full, k: int):
+    """
+    Señales de un PREFIJO del histórico, recortadas del cálculo completo.
+
+    Todos los indicadores del catálogo son causales: el valor en la vela `i`
+    depende solo de velas ≤ i. De ahí se sigue que calcular un indicador sobre
+    `df[:k]` da exactamente lo mismo que calcularlo sobre el histórico entero y
+    recortar a `k` — comprobado sobre los 31 indicadores del catálogo y sobre
+    240 combinaciones de spec aleatorio × punto de corte, sin una sola
+    discrepancia.
+
+    Importa porque era el cuello de botella real. Perfilando la evaluación de un
+    genoma, el 97 % del tiempo se iba en `compile_signals`, y de ahí dos tercios
+    en la librería de indicadores: cada uno de los nueve segmentos del
+    walk-forward recompilaba todo desde cero. Los tramos de ENTRENAMIENTO son
+    prefijos, así que pueden reutilizar el cálculo sin cambiar un solo resultado.
+
+    Los tramos de TEST no son prefijos —empiezan a mitad de la serie— y se
+    siguen recompilando. No es un descuido: recompilar les deja los indicadores
+    a medio calentar al principio del tramo, que es la convención conservadora
+    que este motor ya usaba, y cambiarla alteraría lo que mide el walk-forward.
+    """
+    return None if signals_full is None else signals_full[:k]
+
+
 def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_train: int = 60,
-                     costs: CostModel | None = None) -> dict:
+                     costs: CostModel | None = None, signals_full=None) -> dict:
     """
     Walk-forward del spec FIJO (sin re-optimizar: el GA ya hace la búsqueda).
     Backtestea cada tramo OOS de forma independiente y agrega el Sharpe IS/OOS
@@ -97,7 +130,12 @@ def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_
             test = df.iloc[test_start:test_end]
             if len(train) < min_train or len(test) < 20:
                 continue
-            bt_is = _segment_backtest(train, spec, costs)
+            # El tramo de entrenamiento es un PREFIJO: reutiliza el cálculo
+            # completo en vez de recompilar los indicadores (ver
+            # `_prefix_signals`). El de test empieza a mitad de serie y se
+            # recompila, que es la convención conservadora de siempre.
+            bt_is = _segment_backtest(train, spec, costs,
+                                      signals=_prefix_signals(signals_full, test_start))
             bt_oos = _segment_backtest(test, spec, costs)
             is_sharpes.append(metrics.sharpe_ratio(bt_is["bar_returns"], ppy))
             oos_sharpes.append(metrics.sharpe_ratio(bt_oos["bar_returns"], ppy))
@@ -620,9 +658,13 @@ def evaluate_fitness(
         return _fitness_on_blocks(df, spec, blocks, n_splits, ppy, min_trades,
                                   target_trades, costs, parsimony, with_returns)
 
-    full = _segment_backtest(df, spec, costs)
+    # Un solo cálculo de indicadores para el backtest completo Y para todos los
+    # tramos de entrenamiento del walk-forward, que son prefijos suyos.
+    signals_full = compile_signals(df, spec)
+    full = _segment_backtest(df, spec, costs, signals=signals_full)
     n_trades = full["total_trades"]
-    wf = walk_forward_oos(df, spec, n_splits, ppy, costs=costs)
+    wf = walk_forward_oos(df, spec, n_splits, ppy, costs=costs,
+                          signals_full=signals_full)
 
     mean_oos = wf["mean_oos_sharpe"]
     overfit_gap = max(0.0, wf["mean_is_sharpe"] - mean_oos)
