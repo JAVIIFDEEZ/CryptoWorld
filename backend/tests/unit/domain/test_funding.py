@@ -144,6 +144,61 @@ class TestFundingInTheEngine:
         assert a["total_funding"] == 0.0
 
 
+class TestFundingOnTheShortSide:
+    """
+    En un perpetuo, una tasa positiva significa que los LARGOS pagan a los
+    cortos. La misma cifra es coste en un lado e ingreso en el otro.
+
+    No es un detalle contable: es una asimetría económica real que inclina el
+    atractivo relativo de los dos lados. Aplicar el funding con el mismo signo a
+    ambos —el error fácil— premiaría o castigaría a uno sin motivo, y el
+    generador acabaría prefiriendo un lado por una razón inventada.
+    """
+
+    @staticmethod
+    def _run(short: bool, rate: float = 0.0003, n_bars_held: int = 10):
+        n = n_bars_held + 3
+        close = np.full(n, 100.0)
+        opens = np.zeros(n, dtype=int)
+        opens[0] = 1
+        opens[n_bars_held + 1] = -1
+        blank = np.zeros(n, dtype=int)
+        return simulate(close, close, close, blank if short else opens, 10_000.0,
+                        open_=close, funding=np.full(n, rate),
+                        short_signals=opens if short else None)
+
+    @pytest.mark.unit
+    def test_a_positive_rate_is_a_cost_for_the_long_and_income_for_the_short(self):
+        assert self._run(short=False)["total_funding"] > 0
+        assert self._run(short=True)["total_funding"] < 0
+
+    @pytest.mark.unit
+    def test_a_negative_rate_flips_both_sides(self):
+        """Los regímenes de funding negativo existen (mercado bajista con exceso
+        de cortos) y ahí el que cobra es el largo."""
+        assert self._run(short=False, rate=-0.0003)["total_funding"] < 0
+        assert self._run(short=True, rate=-0.0003)["total_funding"] > 0
+
+    @pytest.mark.unit
+    def test_the_two_sides_pay_the_same_magnitude(self):
+        """Sobre el mismo nocional y el mismo tiempo en mercado, lo que uno paga
+        es lo que el otro cobra."""
+        paid = self._run(short=False)["total_funding"]
+        received = self._run(short=True)["total_funding"]
+        assert abs(paid + received) < abs(paid) * 0.05
+
+    @pytest.mark.unit
+    def test_the_short_trade_pnl_reflects_the_funding_it_collected(self):
+        """Si el cobro no entrase en `pnl_pct`, el Monte Carlo y la tasa de
+        acierto —que se alimentan de esa cifra— medirían una operación más pobre
+        que la real."""
+        collected = self._run(short=True)["trades"][0]
+        assert collected["funding_paid"] < 0
+        paid = self._run(short=True, rate=-0.0003)["trades"][0]
+        assert paid["funding_paid"] > 0
+        assert collected["pnl_pct"] > paid["pnl_pct"]
+
+
 class TestReporting:
 
     @pytest.mark.unit

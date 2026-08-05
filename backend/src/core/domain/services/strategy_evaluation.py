@@ -1163,11 +1163,16 @@ def gate_spec(
             "meta_sizing_applied": meta.get("applied", False),
             "turnover": full["turnover"],
             "cost_drag_pct": full["total_commission_pct"],
-            # Sangrado por financiación del perpetuo. Va aparte de la comisión
-            # porque son costes de naturaleza distinta —uno escala con el nº de
-            # operaciones, el otro con el tiempo en mercado— y sumarlos impide
-            # saber cuál está matando la estrategia. Cero significa aquí «sin
-            # histórico de funding», no «no costó nada».
+            # Financiación del perpetuo. Va aparte de la comisión porque son
+            # costes de naturaleza distinta —uno escala con el nº de operaciones,
+            # el otro con el tiempo en mercado— y sumarlos impide saber cuál está
+            # matando la estrategia. Cero significa aquí «sin histórico de
+            # funding», no «no costó nada».
+            #
+            # El SIGNO importa desde que hay cortos: una tasa positiva significa
+            # que los largos pagan a los cortos, así que positivo es coste y
+            # NEGATIVO es ingreso. Quien lo muestre no puede dar por hecho que
+            # siempre resta.
             "funding_drag_pct": full.get("total_funding_pct", 0.0),
             "exit_reasons": full["exit_reasons"],
             "monte_carlo": {

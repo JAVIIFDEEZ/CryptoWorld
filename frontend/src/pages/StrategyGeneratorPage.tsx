@@ -776,8 +776,15 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
               // operaciones y la otra con el tiempo en mercado. Solo se muestra
               // si hay histórico — un 0 % aquí diría «no costó nada», y lo que
               // pasaría en realidad es que no se sabe.
+              // El signo importa desde que hay cortos: en un perpetuo, una tasa
+              // positiva significa que los largos PAGAN a los cortos, así que
+              // la misma cifra es coste en un lado e ingreso en el otro.
+              // Escribir siempre «-» delante convertía un cobro en «--0.50%».
               ...(m.funding_drag_pct
-                ? [['Financiación', `-${m.funding_drag_pct.toFixed(2)}%`] as [string, string]]
+                ? [[
+                    m.funding_drag_pct > 0 ? 'Financiación pagada' : 'Financiación cobrada',
+                    `${m.funding_drag_pct > 0 ? '-' : '+'}${Math.abs(m.funding_drag_pct).toFixed(2)}%`,
+                  ] as [string, string]]
                 : []),
               ['Rotación', `${(m.turnover ?? 0).toFixed(1)}×`],
             ]} />
