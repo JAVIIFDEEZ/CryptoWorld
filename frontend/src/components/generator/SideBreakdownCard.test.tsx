@@ -22,6 +22,8 @@ function side(over: Partial<SidePerformance> = {}): SidePerformance {
     profit_factor: 1.9,
     standalone_oos_sharpe: 1.12,
     standalone_folds: 4,
+    standalone_trades: 26,
+    standalone_sharpe: 1.05,
     ...over,
   }
 }
@@ -89,5 +91,51 @@ describe('SideBreakdownCard', () => {
       minOosSharpe={0.5}
     />)
     expect(within(container).getAllByText(/✗ aislado 0\.30/)).toHaveLength(2)
+  })
+
+  it('marca por separado si el Sharpe de cada lado se distingue de cero', () => {
+    /* Agregada, la significancia dice algo que no es de nadie: un Sharpe
+       conjunto claramente distinguible de cero puede venir de un lado sólido y
+       otro que es puro ruido. */
+    render(<SideBreakdownCard sides={{
+      long: side({ significance: { significant: true, note: 'sí' } }),
+      short: side({ significance: { significant: false, note: 'podría ser ruido' } }),
+    }} />)
+
+    expect(screen.getByText('✓ Sharpe distinguible de cero')).toBeInTheDocument()
+    expect(screen.getByText('~ podría ser ruido')).toBeInTheDocument()
+  })
+
+  it('da la capacidad de cada lado en dinero legible', () => {
+    render(<SideBreakdownCard sides={{
+      long: side({ capacity: { capacity_usd: 2_400_000 } as SidePerformance['capacity'] }),
+      short: side({ capacity: { capacity_usd: 180_000 } as SidePerformance['capacity'] }),
+    }} />)
+
+    expect(screen.getByText('capacidad $2.4M')).toBeInTheDocument()
+    expect(screen.getByText('capacidad $180K')).toBeInTheDocument()
+  })
+
+  it('la capacidad conjunta la marca el lado más estrecho, no la suma', () => {
+    /* Los dos lados comparten una sola posición. Sumar sus capacidades
+       sobredimensionaría la estrategia justo en el lado donde el impacto de
+       mercado haría daño. */
+    render(<SideBreakdownCard sides={{
+      long: side({ binding_capacity_usd: 180_000 }),
+      short: side({ binding_capacity_usd: 180_000 }),
+    }} />)
+
+    expect(screen.getByText('$180K')).toBeInTheDocument()
+    expect(screen.getByText(/la marca el lado más estrecho, no la suma/)).toBeInTheDocument()
+  })
+
+  it('enseña el Sharpe del lado operando solo, que es lo que decide el gating', () => {
+    render(<SideBreakdownCard sides={{
+      long: side({ standalone_sharpe: 1.44, standalone_trades: 31 }),
+      short: side({ standalone_sharpe: -0.2, standalone_trades: 12 }),
+    }} />)
+
+    expect(screen.getByText('1.44')).toBeInTheDocument()
+    expect(screen.getByText('31')).toBeInTheDocument()
   })
 })

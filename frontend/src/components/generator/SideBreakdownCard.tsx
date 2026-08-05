@@ -26,6 +26,14 @@ function signed(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
 }
 
+/** $1.2M / $340K / $8.5K — la capacidad se lee de un vistazo, no en dígitos. */
+function money(value: number): string {
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`
+  return `$${Math.round(value)}`
+}
+
 function SideColumn({ label, accent, stats, minOosSharpe }: Readonly<{
   label: string; accent: string; stats: SidePerformance; minOosSharpe: number
 }>) {
@@ -42,6 +50,9 @@ function SideColumn({ label, accent, stats, minOosSharpe }: Readonly<{
     // operaciones no significa que no pierda.
     ['Factor beneficio', stats.profit_factor != null ? stats.profit_factor.toFixed(2) : 'sin pérdidas',
       'text-slate-200'],
+    // Este lado operando SOLO, que es lo que decide el gating.
+    ['Sharpe aislado', stats.standalone_sharpe.toFixed(2), 'text-slate-200'],
+    ['Operaciones aislado', `${stats.standalone_trades}`, 'text-slate-400'],
   ]
   return (
     <div className="bg-slate-800/60 rounded-lg p-3">
@@ -64,6 +75,27 @@ function SideColumn({ label, accent, stats, minOosSharpe }: Readonly<{
           </div>
         ))}
       </dl>
+
+      {/* Significancia y capacidad de ESTE lado. Agregadas dicen algo que no es
+          de nadie: un Sharpe conjunto distinguible de cero puede venir de un
+          lado sólido y otro que es ruido. */}
+      <div className="mt-2 pt-2 border-t border-slate-700/40 space-y-1">
+        {stats.significance && (
+          <p
+            className={`text-[10px] ${stats.significance.significant ? 'text-emerald-400' : 'text-amber-400'}`}
+            title={stats.significance.note}
+          >
+            {stats.significance.significant
+              ? '✓ Sharpe distinguible de cero'
+              : '~ podría ser ruido'}
+          </p>
+        )}
+        {stats.capacity?.capacity_usd != null && (
+          <p className="text-[10px] text-slate-400" title={stats.capacity.note ?? ''}>
+            capacidad {money(stats.capacity.capacity_usd)}
+          </p>
+        )}
+      </div>
     </div>
   )
 }
@@ -74,6 +106,10 @@ export default function SideBreakdownCard({ sides, failures, minOosSharpe = 0 }:
   failures?: string[]
   minOosSharpe?: number
 }>) {
+  // El cuello de botella lo marca el lado más estrecho de los que operan: los
+  // dos comparten una sola posición, así que las capacidades no se suman.
+  const binding = sides.long.binding_capacity_usd ?? sides.short.binding_capacity_usd
+
   return (
     <div className="bg-slate-900/40 rounded-lg border border-slate-700/60 p-3">
       <p className="text-[10px] uppercase text-slate-400 mb-2 flex items-center gap-1.5">
@@ -94,6 +130,13 @@ export default function SideBreakdownCard({ sides, failures, minOosSharpe = 0 }:
             </li>
           ))}
         </ul>
+      )}
+      {binding != null && (
+        <p className="mt-2 text-[11px] text-slate-300">
+          Capacidad de la estrategia entera:{' '}
+          <span className="font-mono text-amber-300">{money(binding)}</span>
+          <span className="text-slate-500"> — la marca el lado más estrecho, no la suma.</span>
+        </p>
       )}
       <p className="mt-2 text-[10px] text-slate-500 leading-relaxed">
         Los dos lados comparten una sola posición, así que sus operaciones no suman las

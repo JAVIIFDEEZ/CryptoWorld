@@ -39,6 +39,7 @@ from core.domain.services.strategy_evaluation import (
     evaluate_fitness,
     gate_spec,
     holdout_performance,
+    near_miss,
     retest_cascade,
     returns_series,
     walk_forward_matrix,
@@ -78,12 +79,28 @@ class GenerationConfig:
     # búsqueda de la longitud de la serie — que es lo que impedía usar años de
     # datos. `search_blocks=0` desactiva el muestreo (histórico entero).
     #
-    # APAGADO POR DEFECTO hasta que la evidencia lo respalde. La comprobación
-    # que acompaña a la idea (`rank_agreement`) es la que debe autorizarla, y
-    # sobre una serie sintética de 12 000 velas dio Spearman −0.38 en su primera
-    # versión: el muestreo ordenaba casi al revés que el histórico completo.
-    # Encender un atajo cuya validación falla sería exactamente lo que el resto
-    # del motor existe para impedir.
+    # APAGADO POR DEFECTO, y con tres mediciones detrás que dicen por qué.
+    #
+    # El criterio fijado antes de medir era **Spearman ≥ 0,5** entre el orden que
+    # da el muestreo y el Sharpe fuera de muestra del histórico completo. Sobre
+    # una serie sintética de 12 000 velas:
+    #
+    #   1ª  −0,384  El muestreo ordenaba casi al revés.
+    #   2ª  −0,340  Primera hipótesis (escalar `target_trades`): descartada, no
+    #               movió nada. El diagnóstico real era otro — el fitness por
+    #               bloques no aplicaba la penalización de rotación que sí aplica
+    #               el completo, así que no eran dos muestras de un objetivo,
+    #               eran dos objetivos distintos.
+    #   3ª  +0,096  Con la penalización igualada. El signo se corrigió, que
+    #               confirma el diagnóstico, pero +0,10 no ordena nada: el
+    #               top-10 coincide en 3 de 10.
+    #
+    # El ahorro sería real (×3,9 por genoma; 18 min en vez de 70 para 1477
+    # genomas), pero de nada sirve buscar cuatro veces más rápido si el orden
+    # que sale es ruido: el GA seleccionaría por él generación tras generación.
+    # Encender un atajo cuya validación falla es exactamente lo que el resto del
+    # motor existe para impedir. No se sube este número sin volver a medir
+    # `rank_agreement` y superar el 0,5.
     search_blocks: int = 0
     search_scored_bars: int = 1800     # velas puntuables repartidas entre bloques
     ga: GAConfig = GAConfig()
@@ -122,6 +139,33 @@ DEFAULT_PRESET = "balanced"
 
 def config_for_preset(preset: str) -> GenerationConfig:
     return _PRESETS.get(preset, _PRESETS[DEFAULT_PRESET])
+
+
+def _near_miss_list(rejected: list[dict], thresholds) -> list[dict]:
+    """
+    Las rechazadas que fallaron UN SOLO control, de más cerca a más lejos.
+
+    Se ordenan por el margen RELATIVO al umbral, que es lo único que hace
+    comparables controles medidos en unidades distintas: un cociente de
+    eficiencia, un recuento de operaciones y un porcentaje de retorno no se
+    pueden ordenar por su diferencia bruta. Las que no tienen margen numérico
+    —el control por lado— van al final: no es que estén lejos, es que su
+    distancia no se mide en una escala.
+    """
+    rows = []
+    for f in rejected:
+        miss = near_miss(f["gating"], thresholds)
+        if miss is None:
+            continue
+        rows.append({
+            "spec_hash": f["spec_hash"],
+            "description": f["description"],
+            "fitness": f["fitness"],
+            "direction": spec_direction(f["spec"]),
+            **miss,
+        })
+    rows.sort(key=lambda r: (r["gap_ratio"] is None, r["gap_ratio"] or 0.0))
+    return rows
 
 
 def _json_safe(value):
@@ -807,6 +851,10 @@ def generate_strategies(
             # variante superó exactamente los mismos controles.
             "strategies_found": len(passed) + sum(len(f.get("variants", [])) for f in passed),
             "variants": sum(len(f.get("variants", [])) for f in passed),
+            # Rechazadas a las que les faltó UN SOLO control. No entran en el
+            # libro ni cambia su veredicto: se cuentan porque un cero aquí y un
+            # ocho describen ejecuciones muy distintas.
+            "near_misses": len(_near_miss_list(rejected, cfg.gating)),
         },
         # ¿Tenía esta ejecución datos suficientes para dar un veredicto?
         # Sin esto, un libro vacío por falta de muestra se presentaba igual que
@@ -848,9 +896,16 @@ def generate_strategies(
             {
                 **_coords(f),
                 "failed_checks": [k for k, v in f["gating"]["checks"].items() if not v],
+                "near_miss": near_miss(f["gating"], cfg.gating),
             }
             for f in rejected
         ],
+        # Las que se quedaron a un solo control, ordenadas de más cerca a más
+        # lejos. Los umbrales NO se mueven por esto: es la distancia lo que se
+        # informa, porque «rechazada por Monte Carlo» tapa la diferencia entre
+        # quedarse a dos centésimas y quedarse a diez puntos. Elegir el listón
+        # después de ver el salto es justo el sesgo que el gating frena.
+        "near_misses": _near_miss_list(rejected, cfg.gating),
     }
     if progress_cb is not None:
         progress_cb(_json_safe({"phase": "done", "history": list(live_history),

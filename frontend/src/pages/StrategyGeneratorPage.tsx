@@ -39,6 +39,7 @@ import MetaSizingCard from '@/components/generator/MetaSizingCard'
 import VariantsCard from '@/components/generator/VariantsCard'
 import SideBreakdownCard from '@/components/generator/SideBreakdownCard'
 import EmptyBookExplanation from '@/components/generator/EmptyBookExplanation'
+import NearMissesCard from '@/components/generator/NearMissesCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -558,6 +559,10 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
         </div>
       ) : (
         <EmptyBookExplanation power={report.power} report={report} />
+      )}
+
+      {(report.near_misses?.length ?? 0) > 0 && (
+        <NearMissesCard misses={report.near_misses ?? []} />
       )}
 
       {report.rejected.length > 0 && <RejectedList report={report} />}

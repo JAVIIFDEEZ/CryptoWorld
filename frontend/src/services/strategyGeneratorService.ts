@@ -56,9 +56,48 @@ export interface SidePerformance {
   profit_factor: number | null
   standalone_oos_sharpe: number
   standalone_folds: number
+  standalone_trades: number
+  standalone_sharpe: number
+  /** ¿El Sharpe de ESTE lado se distingue de cero, o es magnitud sin incertidumbre? */
+  significance?: { significant: boolean; note: string; confidence_interval?: Record<string, number | null> }
+  /** Cuánto dinero admite este lado por su cuenta. */
+  capacity?: CapacityEstimate
+  /**
+   * Cuello de botella de la estrategia entera: los dos lados comparten una sola
+   * posición, así que la capacidad conjunta no es la suma — la marca el lado más
+   * estrecho de los que operan de verdad.
+   */
+  binding_capacity_usd?: number | null
 }
 
 export type SideBreakdown = { long: SidePerformance; short: SidePerformance }
+
+/**
+ * Una candidata que falló UN SOLO control del gating, y por cuánto.
+ *
+ * `gap_ratio` es el margen RELATIVO a la escala del propio control — lo único
+ * que hace comparables un recuento de operaciones, un cociente de eficiencia y
+ * un porcentaje de retorno. Es `null` cuando el control no se mide en una
+ * escala (el de «cada lado se sostiene solo»), que no es lo mismo que estar
+ * lejos.
+ *
+ * Nada de esto mueve un umbral. El veredicto es el que era.
+ */
+export interface NearMiss {
+  spec_hash: string
+  description: string
+  fitness: number
+  direction?: GenDirection
+  check: string
+  label: string
+  observed: number | null
+  required: number | null
+  gap: number | null
+  gap_ratio: number | null
+  /** Solo en el control por lado: qué lado falló y por qué, en texto. */
+  reasons?: string[]
+  note: string
+}
 
 /**
  * ¿Hay desglose por lado?
@@ -627,6 +666,7 @@ export interface GenerationReport {
     /** Validadas que salen de la ejecución: el ranking MÁS sus variantes. */
     strategies_found?: number
     variants?: number
+    near_misses?: number
   }
   /**
    * ¿Tenía la ejecución datos suficientes para dar un veredicto?
@@ -652,7 +692,9 @@ export interface GenerationReport {
   }
   ranking: Finalist[]
   candidates: Candidate[]
-  rejected: (Candidate & { failed_checks: string[] })[]
+  rejected: (Candidate & { failed_checks: string[]; near_miss?: NearMiss | null })[]
+  /** Rechazadas a las que les faltó un solo control, de más cerca a más lejos. */
+  near_misses?: NearMiss[]
   persisted?: { id: number; spec_hash: string; rank: number; status?: StrategyStatus }[]
   /** Registro append-only de esta ejecución + contexto acumulado del activo. */
   experiment_run?: {

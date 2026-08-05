@@ -965,9 +965,10 @@ def side_performance(df, spec: dict, full_trades: list, ppy: float = 365.0,
       · **Atribución** — nº de operaciones y P&L que ese lado aportó en la
         ejecución conjunta. Sale gratis de los trades ya calculados y responde a
         «¿de dónde salió el resultado?».
-      · **Aislamiento** — el walk-forward del lado operando SOLO. Cuesta un
-        backtest más por lado y responde a otra pregunta: «¿se sostendría este
-        lado si desactivara el otro?».
+      · **Aislamiento** — el lado operando SOLO: su walk-forward, su
+        significancia y su capacidad. Cuesta dos backtests más por lado y
+        responde a otra pregunta: «¿se sostendría este lado si desactivara el
+        otro?».
 
     Hacen falta las dos. La atribución no basta como criterio porque los dos
     lados compiten por la misma posición —el motor mantiene una sola a la vez—,
@@ -975,19 +976,38 @@ def side_performance(df, spec: dict, full_trades: list, ppy: float = 365.0,
     turnos buenos. Y el aislamiento no basta como descripción porque la
     estrategia que se va a desplegar es la conjunta, no ninguna de las dos.
 
+    Por qué la significancia y la capacidad también van POR LADO
+    ───────────────────────────────────────────────────────────
+    Agregadas dicen algo que no es de nadie. Un Sharpe conjunto claramente
+    distinguible de cero puede venir de un lado sólido y otro que es ruido, y en
+    el agregado esa mezcla se lee como una sola estrategia significativa. La
+    capacidad es peor todavía: mide cuánto dinero admite el edge antes de que su
+    propio impacto se lo coma, y si un lado admite diez veces menos que el otro,
+    dimensionar la estrategia por la cifra conjunta la sobredimensiona en el lado
+    estrecho — que es exactamente donde el impacto haría daño.
+
     En specs de un solo lado no hay nada que desglosar: devuelve `{}`.
     """
     if spec_direction(spec) != "both":
         return {}
 
     out: dict = {}
+    adv = impact.average_daily_volume_usd(df)
+    daily_vol = impact.daily_volatility_of(df)
     for side in ("long", "short"):
         trades = [t for t in full_trades if t.get("side") == side]
         pnls = [float(t["pnl_pct"]) for t in trades]
         wins = [p for p in pnls if p > 0]
         losses = [-p for p in pnls if p < 0]
         gross_loss = sum(losses)
-        alone = walk_forward_oos(df, _isolate_side(spec, side), wf_splits, ppy, costs=costs)
+
+        isolated = _isolate_side(spec, side)
+        alone = walk_forward_oos(df, isolated, wf_splits, ppy, costs=costs)
+        # El backtest del lado solo sobre el histórico completo: de aquí salen la
+        # significancia y la capacidad, que necesitan la serie de retornos y las
+        # operaciones de ESE lado, no las de la ejecución conjunta.
+        alone_bt = _segment_backtest(df, isolated, costs)
+
         out[side] = {
             "n_trades": len(trades),
             "share_of_trades_pct": round(100.0 * len(trades) / len(full_trades), 1)
@@ -1001,7 +1021,26 @@ def side_performance(df, spec: dict, full_trades: list, ppy: float = 365.0,
             "profit_factor": round(sum(wins) / gross_loss, 2) if gross_loss > 1e-9 else None,
             "standalone_oos_sharpe": alone["mean_oos_sharpe"],
             "standalone_folds": alone["n_folds"],
+            "standalone_trades": alone_bt["total_trades"],
+            "standalone_sharpe": round(metrics.sharpe_ratio(alone_bt["bar_returns"], ppy), 3),
+            # ¿El Sharpe de ESTE lado se distingue de cero, o es magnitud sin
+            # incertidumbre? Un lado puede aprobar el mínimo de Sharpe OOS y aun
+            # así tener un intervalo que cruza el cero de lado a lado.
+            "significance": sig.annotate(alone_bt["bar_returns"], ppy),
+            # Cuánto dinero admite este lado por su cuenta. Dimensionar por la
+            # cifra conjunta sobredimensiona el lado estrecho.
+            "capacity": impact.estimate_capacity(
+                alone_bt["bar_returns"], alone_bt["trades"],
+                adv_usd=adv, daily_volatility=daily_vol,
+            ),
         }
+    # La capacidad de la estrategia bidireccional no es la suma de las dos: los
+    # dos lados comparten una sola posición, así que el cuello de botella lo
+    # marca el lado más estrecho de los que operan de verdad.
+    binding = [s["capacity"].get("capacity_usd") for s in out.values()
+               if s["n_trades"] > 0 and s["capacity"].get("capacity_usd") is not None]
+    for stats in out.values():
+        stats["binding_capacity_usd"] = min(binding) if binding else None
     return out
 
 
@@ -1033,6 +1072,113 @@ def _sides_stand_alone(breakdown: dict, th: GatingThresholds) -> tuple[bool, lis
                 f"el lado {label} pierde en aislamiento (Sharpe OOS "
                 f"{stats['standalone_oos_sharpe']}, mínimo {th.min_side_oos_sharpe})")
     return not reasons, reasons
+
+
+# Cómo se lee el margen de cada control: la métrica que lo decide, el umbral que
+# tiene que batir, si batirlo es estar por encima o por debajo, la etiqueta
+# legible, y de dónde sacar la ESCALA cuando el propio umbral no sirve de
+# referencia.
+#
+# Lo de la escala no es un detalle. El margen bruto no ordena nada: quedarse a
+# 5 operaciones de 12 y quedarse a 0,05 de un PBO de 0,5 son distancias en
+# unidades distintas. Dividir por el umbral las hace comparables… salvo cuando
+# el umbral es CERO, que es justo el caso del Monte Carlo. Ahí la referencia
+# natural es la propia distribución de la que sale el percentil: quedarse
+# −0,02 % por debajo del cero en una estrategia cuyo escenario mediano da +40 %
+# es rozar la línea; −18 % no lo es, y sin escala las dos se leen igual.
+_CHECK_MARGINS: dict[str, tuple[str, str, str, str, str | None]] = {
+    # check: (métrica, atributo del umbral, sentido, etiqueta, métrica de escala)
+    "min_trades": ("n_trades", "min_trades", "min", "operaciones", None),
+    "wf_efficiency": ("wf_efficiency", "min_wf_efficiency", "min",
+                      "eficiencia walk-forward", None),
+    "pbo": ("pbo", "max_pbo", "max", "probabilidad de sobreajuste (PBO)", None),
+    "mc_p5_positive": ("monte_carlo.return_p5_pct", "min_mc_p5_pct", "min",
+                       "percentil 5 del Monte Carlo", "monte_carlo.return_p50_pct"),
+}
+
+
+def _metric(metrics: dict, path: str):
+    """Lee una métrica del gating, admitiendo rutas anidadas («a.b»)."""
+    node = metrics
+    for part in path.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def near_miss(gate: dict, th: GatingThresholds | None = None) -> dict | None:
+    """
+    Una candidata que falló UN SOLO control, y por cuánto.
+
+    Para qué sirve, y para qué NO
+    ─────────────────────────────
+    No mueve nada. El veredicto es el que era y la estrategia sigue fuera del
+    libro. Lo que aporta es la distancia, que hoy se pierde: «rechazada por
+    Monte Carlo» tapa la diferencia entre quedarse a dos centésimas del umbral y
+    quedarse a diez puntos, y son situaciones distintas — la primera dice que
+    hay algo ahí que merece otra ejecución con más histórico o con la semilla
+    cambiada, la segunda dice que no.
+
+    La tentación evidente es usar esto para relajar el umbral cuando algo se
+    queda cerca. Eso sería exactamente el sesgo que el gating existe para
+    frenar: elegir el listón después de ver el salto. El margen se REPORTA; el
+    umbral solo se mueve por evidencia previa y para todas las ejecuciones.
+
+    Devuelve `None` si falló más de un control (no hay una causa que señalar) o
+    si falló el detector de lookahead — ahí no hay margen que medir: una fuga de
+    futuro no es una cuestión de grado, es una descalificación.
+    """
+    th = th or GatingThresholds()
+    failed = [k for k, v in gate["checks"].items() if not v]
+    if len(failed) != 1:
+        return None
+    check = failed[0]
+    m = gate["metrics"]
+
+    if check == "no_lookahead":
+        return None
+
+    if check == "sides_stand_alone":
+        # Este control no tiene un número contra un umbral: tiene dos lados y
+        # uno de ellos no se sostiene. El motivo ya viene escrito.
+        return {"check": check, "label": "cada lado se sostiene solo",
+                "observed": None, "required": None, "gap": None, "gap_ratio": None,
+                "reasons": m.get("side_failures", []),
+                "note": ("Falló solo este control: el resto del gating lo pasó entero. "
+                         "Repetir la búsqueda en una sola dirección quitaría de en "
+                         "medio el lado que la hunde.")}
+
+    if check not in _CHECK_MARGINS:
+        return None
+    metric_key, th_attr, sense, label, scale_key = _CHECK_MARGINS[check]
+    observed = _metric(m, metric_key)
+    if observed is None:
+        return None
+    required = getattr(th, th_attr)
+    gap = (required - observed) if sense == "min" else (observed - required)
+    if gap <= 0:
+        return None       # no debería pasar, pero no se inventa un margen negativo
+
+    # Margen RELATIVO, que es lo que hace comparables controles medidos en
+    # unidades distintas. Referencia: el propio umbral; y si el umbral es cero,
+    # la métrica de escala que declare el control (ver `_CHECK_MARGINS`).
+    scale = abs(float(required))
+    if scale <= 1e-9 and scale_key:
+        scale = abs(float(_metric(m, scale_key) or 0.0))
+    gap_ratio = round(float(gap) / scale, 4) if scale > 1e-9 else None
+
+    return {
+        "check": check,
+        "label": label,
+        "observed": round(float(observed), 4),
+        "required": round(float(required), 4),
+        "gap": round(float(gap), 4),
+        "gap_ratio": gap_ratio,
+        "note": ("Falló solo este control: el resto del gating lo pasó entero. "
+                 "El umbral NO se mueve por esto — se informa la distancia para "
+                 "que se vea la diferencia entre quedarse cerca y quedarse lejos."),
+    }
 
 
 def gate_spec(

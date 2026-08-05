@@ -30,7 +30,7 @@ import pytest
 from core.domain.services import strategy_generator as G
 from core.domain.services.strategy_evaluation import (
     GatingThresholds, _isolate_side, _leak_probe, _segment_backtest,
-    _sides_stand_alone, side_performance, spec_complexity,
+    _sides_stand_alone, near_miss, side_performance, spec_complexity,
 )
 from core.domain.services.strategy_spec import (
     DIRECTIONS, SHORT_SIGNALS, SIGNALS, compile_long_signals, compile_short_signals,
@@ -528,3 +528,159 @@ class TestLiveSignals:
     def test_an_empty_history_holds_and_still_says_the_direction(self):
         state = signal_state(pd.DataFrame(), _rsi_short())
         assert state["signal"] == "HOLD" and state["direction"] == "short"
+
+
+class TestPerSideCapacityAndSignificance:
+    """
+    Agregadas, la capacidad y la significancia dicen algo que no es de nadie.
+
+    Un Sharpe conjunto claramente distinguible de cero puede venir de un lado
+    sólido y otro que es ruido, y en el agregado esa mezcla se lee como una sola
+    estrategia significativa. La capacidad es peor: si un lado admite diez veces
+    menos dinero que el otro, dimensionar por la cifra conjunta sobredimensiona
+    el lado estrecho — exactamente donde el impacto haría daño.
+    """
+
+    @staticmethod
+    def _breakdown():
+        df = _df()
+        spec = _rsi_both()
+        trades = _segment_backtest(df, spec)["trades"]
+        return side_performance(df, spec, trades)
+
+    @pytest.mark.unit
+    def test_each_side_carries_its_own_significance(self):
+        sides = self._breakdown()
+        for stats in sides.values():
+            assert "significant" in stats["significance"]
+            assert "confidence_interval" in stats["significance"]
+
+    @pytest.mark.unit
+    def test_each_side_carries_its_own_capacity(self):
+        sides = self._breakdown()
+        for stats in sides.values():
+            assert "capacity" in stats and "capacity_usd" in stats["capacity"]
+
+    @pytest.mark.unit
+    def test_the_isolated_measures_come_from_the_isolated_backtest(self):
+        """El Sharpe aislado y las operaciones aisladas tienen que salir del
+        lado operando SOLO, no de la ejecución conjunta. Si vinieran de la
+        conjunta, medirían una estrategia distinta de la que el gating juzga."""
+        df = _df()
+        spec = _rsi_both()
+        sides = side_performance(df, spec, _segment_backtest(df, spec)["trades"])
+        for side, stats in sides.items():
+            alone = _segment_backtest(df, _isolate_side(spec, side))
+            assert stats["standalone_trades"] == alone["total_trades"]
+
+    @pytest.mark.unit
+    def test_the_binding_capacity_is_the_narrowest_side_not_the_sum(self):
+        """Los dos lados comparten una sola posición. Sumar sus capacidades
+        sobredimensionaría la estrategia justo donde el impacto duele."""
+        sides = self._breakdown()
+        caps = [s["capacity"].get("capacity_usd") for s in sides.values()
+                if s["n_trades"] > 0 and s["capacity"].get("capacity_usd") is not None]
+        binding = sides["long"]["binding_capacity_usd"]
+        if caps:
+            assert binding == min(caps)
+        else:
+            assert binding is None
+
+    @pytest.mark.unit
+    def test_both_sides_report_the_same_bottleneck(self):
+        """El cuello de botella es de la estrategia, no de un lado: las dos
+        columnas de la ficha tienen que decir lo mismo."""
+        sides = self._breakdown()
+        assert sides["long"]["binding_capacity_usd"] == sides["short"]["binding_capacity_usd"]
+
+
+class TestNearMisses:
+    """
+    Informar de la distancia sin mover el listón.
+
+    «Rechazada por Monte Carlo» tapa la diferencia entre quedarse a dos
+    centésimas del umbral y quedarse a diez puntos, y son situaciones distintas.
+    Pero usar esa distancia para relajar el umbral sería elegir el listón
+    después de ver el salto — el sesgo que el gating existe para frenar.
+    """
+
+    ALL_OK = {"min_trades": True, "no_lookahead": True, "wf_efficiency": True,
+              "pbo": True, "mc_p5_positive": True, "sides_stand_alone": True}
+
+    def _gate(self, metrics: dict, **failed) -> dict:
+        return {"checks": {**self.ALL_OK, **failed}, "metrics": metrics}
+
+    @staticmethod
+    def _mc(p5: float, p50: float = 40.0) -> dict:
+        return {"monte_carlo": {"return_p5_pct": p5, "return_p50_pct": p50}}
+
+    @pytest.mark.unit
+    def test_a_candidate_that_passed_everything_is_not_a_near_miss(self):
+        assert near_miss(self._gate({})) is None
+
+    @pytest.mark.unit
+    def test_two_failed_checks_have_no_single_cause_to_point_at(self):
+        assert near_miss(self._gate({"pbo": 0.9}, pbo=False, mc_p5_positive=False)) is None
+
+    @pytest.mark.unit
+    def test_a_lookahead_leak_is_never_a_near_miss(self):
+        """Una fuga de futuro no es una cuestión de grado, es una
+        descalificación: no hay margen que medir."""
+        assert near_miss(self._gate({}, no_lookahead=False)) is None
+
+    @pytest.mark.unit
+    def test_the_margin_is_measured_against_the_threshold(self):
+        out = near_miss(self._gate({"pbo": 0.55}, pbo=False))
+        assert out["observed"] == 0.55 and out["required"] == 0.5
+        assert out["gap"] == pytest.approx(0.05)
+        assert out["gap_ratio"] == pytest.approx(0.1)
+
+    @pytest.mark.unit
+    def test_a_shortfall_below_a_minimum_counts_the_same_way(self):
+        out = near_miss(self._gate({"n_trades": 7}, min_trades=False))
+        assert out["gap"] == 5 and out["gap_ratio"] == pytest.approx(5 / 12, abs=1e-3)
+
+    @pytest.mark.unit
+    def test_a_zero_threshold_falls_back_to_the_scale_of_the_metric(self):
+        """El umbral del Monte Carlo es CERO, así que no sirve de referencia.
+        Quedarse a −0,02 % del cero en una estrategia cuyo escenario mediano da
+        +40 % es rozar la línea; −18 % no lo es, y sin escala las dos se leerían
+        igual."""
+        grazing = near_miss(self._gate(self._mc(-0.02), mc_p5_positive=False))
+        far = near_miss(self._gate(self._mc(-18.0), mc_p5_positive=False))
+        assert grazing["gap_ratio"] < 0.01
+        assert far["gap_ratio"] > 0.4
+        assert grazing["gap_ratio"] < far["gap_ratio"]
+
+    @pytest.mark.unit
+    def test_the_same_gap_is_bigger_on_a_smaller_strategy(self):
+        """0,02 puntos sobre un escenario mediano de +0,3 % pesan mucho más que
+        sobre uno de +40 %. Es lo que hace comparables dos candidatas."""
+        big = near_miss(self._gate(self._mc(-0.02, 40.0), mc_p5_positive=False))
+        small = near_miss(self._gate(self._mc(-0.02, 0.3), mc_p5_positive=False))
+        assert small["gap_ratio"] > big["gap_ratio"]
+
+    @pytest.mark.unit
+    def test_the_side_control_reports_reasons_instead_of_an_invented_scale(self):
+        """Este control no se mide contra un número. Fabricarle un margen sería
+        una precisión falsa."""
+        out = near_miss(self._gate(
+            {"side_failures": ["el lado corto pierde en aislamiento"]},
+            sides_stand_alone=False))
+        assert out["gap_ratio"] is None
+        assert out["reasons"] == ["el lado corto pierde en aislamiento"]
+
+    @pytest.mark.unit
+    def test_a_custom_threshold_moves_the_margin_with_it(self):
+        """El margen se mide contra el umbral VIGENTE en esa ejecución, no
+        contra el de por defecto."""
+        gate = self._gate({"wf_efficiency": 0.5}, wf_efficiency=False)
+        assert near_miss(gate, GatingThresholds(min_wf_efficiency=0.6))["gap"] == pytest.approx(0.1)
+        assert near_miss(gate, GatingThresholds(min_wf_efficiency=0.9))["gap"] == pytest.approx(0.4)
+
+    @pytest.mark.unit
+    def test_the_note_says_the_threshold_does_not_move(self):
+        """El aviso no es decorativo: sin él, la lista de «casi aprobadas» es una
+        invitación a bajar el listón."""
+        out = near_miss(self._gate({"pbo": 0.55}, pbo=False))
+        assert "NO se mueve" in out["note"]
