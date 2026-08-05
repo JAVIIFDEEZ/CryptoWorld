@@ -108,6 +108,46 @@ def _df_with_signal(rsi_target: str, n=120):
     })
 
 
+class TestShortSignalsAreIgnored:
+    """
+    Ante una señal del lado corto hay dos opciones y solo una es admisible.
+
+    Traducirla al vocabulario largo (SHORT≈vender, COVER≈comprar) haría operar
+    la cartera EXACTAMENTE al revés que la estrategia. No hacer nada la deja
+    parada: visible, y no cuesta dinero.
+    """
+
+    @pytest.mark.integration
+    def test_a_short_signal_opens_nothing(self, strategy):
+        acc = _account(strategy)
+        assert _apply_signal(acc, "SHORT", 100.0) is None
+        assert acc.units == 0 and acc.cash == 10000.0
+
+    @pytest.mark.integration
+    def test_a_cover_signal_does_not_buy(self, strategy):
+        """`COVER` cierra un corto. Si se leyera como una compra, la cartera
+        abriría un largo justo donde la estrategia sale del mercado."""
+        acc = _account(strategy)
+        assert _apply_signal(acc, "COVER", 100.0) is None
+        assert acc.units == 0 and acc.cash == 10000.0
+
+    @pytest.mark.integration
+    def test_a_cover_signal_does_not_close_an_open_long(self, strategy):
+        acc = _account(strategy)
+        _apply_signal(acc, "BUY", 100.0)
+        units_before = acc.units
+        assert _apply_signal(acc, "COVER", 120.0) is None
+        assert acc.units == units_before
+
+    @pytest.mark.integration
+    def test_the_mark_to_market_still_happens(self, strategy):
+        """Ignorar la ORDEN no es ignorar el precio: la cartera se sigue
+        valorando a mercado aunque no opere."""
+        acc = _account(strategy)
+        _apply_signal(acc, "SHORT", 123.45)
+        assert acc.last_price == 123.45
+
+
 class TestEvaluateUseCase:
 
     @pytest.mark.integration
@@ -237,6 +277,25 @@ class TestApi:
         # Detener
         stop = authenticated_client.delete(f"/api/strategies/paper/{acc_id}/")
         assert stop.status_code == 200 and stop.data["is_active"] is False
+
+    @pytest.mark.integration
+    def test_a_short_strategy_cannot_start_a_paper_account(
+        self, authenticated_client, strategy,
+    ):
+        """La cartera es LARGA por construcción: `units` es una cantidad
+        comprada y la promoción a real manda órdenes a un mercado de contado,
+        donde vender en corto no existe.
+
+        Se rechaza en la puerta, con el motivo escrito. La alternativa —aceptar
+        la cartera y que `_apply_signal` ignore sus señales— la dejaría abierta
+        y parada, y el usuario creería que su estrategia no dispara nunca."""
+        strategy.spec = {**strategy.spec, "direction": "short"}
+        strategy.save(update_fields=["spec"])
+
+        resp = authenticated_client.post(
+            "/api/strategies/paper/", {"strategy_id": strategy.id}, format="json")
+        assert resp.status_code == 400
+        assert "corto" in resp.data["error"]
 
     @pytest.mark.integration
     def test_create_unknown_strategy_404(self, authenticated_client):

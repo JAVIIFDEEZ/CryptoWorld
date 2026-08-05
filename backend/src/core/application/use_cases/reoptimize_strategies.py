@@ -38,6 +38,33 @@ def _tracked_pairs() -> list[tuple[str, str]]:
     return sorted(pairs)
 
 
+def _direction_for_pair(symbol: str, interval: str) -> str:
+    """
+    Modo de dirección con el que reoptimizar este par.
+
+    La reoptimización existe para REFRESCAR lo que ya hay, así que tiene que
+    poder alcanzar el mismo terreno. Si en este par ya vive alguna estrategia
+    corta o bidireccional y la búsqueda se lanzara en largos —el valor por
+    defecto—, la sustituta no podría estar nunca en el lado de la que se
+    degradó: el ciclo programado iría reemplazando en silencio una familia
+    entera por otra.
+
+    Con solo estrategias largas devuelve "long" y nada cambia respecto a lo ya
+    validado. En cuanto hay una corta, devuelve "auto" y deja que la evolución
+    cubra los tres lados en vez de fijar uno.
+    """
+    from core.domain.services.strategy_spec import spec_direction
+    from core.infrastructure.persistence.models import StrategyDefinition
+
+    specs = (StrategyDefinition.objects
+             .filter(asset__symbol=symbol, interval=interval)
+             .values_list("spec", flat=True))
+    for spec in specs:
+        if isinstance(spec, dict) and spec_direction(spec) != "long":
+            return "auto"
+    return "long"
+
+
 class ReoptimizeStrategiesUseCase:
     """Regenera las estrategias de los activos seguidos y persiste solo las nuevas
     (dedup por spec_hash). Pensada para Celery beat (p. ej. semanal)."""
@@ -56,6 +83,7 @@ class ReoptimizeStrategiesUseCase:
             try:
                 report = GenerateStrategiesUseCase().execute(
                     asset_symbol=symbol, interval=interval, preset=preset, persist=False,
+                    direction=_direction_for_pair(symbol, interval),
                 )
             except Exception as exc:  # noqa: BLE001 — un activo no debe tumbar la pasada
                 logger.warning("reoptimize %s/%s falló: %s", symbol, interval, exc)

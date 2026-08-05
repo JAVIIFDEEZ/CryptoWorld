@@ -10,7 +10,7 @@ record en vivo.
 import pytest
 
 from core.application.use_cases.reoptimize_strategies import (
-    BestStrategiesUseCase, ReoptimizeStrategiesUseCase, _tracked_pairs,
+    BestStrategiesUseCase, ReoptimizeStrategiesUseCase, _direction_for_pair, _tracked_pairs,
 )
 
 
@@ -179,6 +179,72 @@ class TestReoptimize:
         )
         out = ReoptimizeStrategiesUseCase().execute()
         assert out["regenerated"] == 0 and out["new_strategies"] == 0
+
+
+class TestReoptimizeKeepsTheSide:
+    """
+    La reoptimización existe para REFRESCAR lo que ya hay, así que tiene que
+    poder alcanzar el mismo terreno.
+
+    Si en un par vive una estrategia corta y la búsqueda se lanzara en largos
+    —el valor por defecto—, la sustituta no podría estar nunca en el lado de la
+    que se degradó. El ciclo programado iría reemplazando en silencio una
+    familia entera por otra, y nadie vería el cambio: todo lo que se persiste
+    habría pasado el gating.
+    """
+
+    @pytest.mark.integration
+    def test_only_long_strategies_keep_searching_longs(self, assets):
+        _strategy(assets["BTC"], 1.0, "solo-largas")
+        assert _direction_for_pair("BTC", "1d") == "long"
+
+    @pytest.mark.integration
+    def test_one_short_strategy_opens_the_search_to_every_side(self, assets):
+        _strategy(assets["BTC"], 1.0, "larga")
+        short = _strategy(assets["BTC"], 0.9, "corta")
+        short.spec = {**short.spec, "direction": "short"}
+        short.save(update_fields=["spec"])
+        assert _direction_for_pair("BTC", "1d") == "auto"
+
+    @pytest.mark.integration
+    def test_the_side_is_decided_per_interval(self, assets):
+        """Una corta en 1 h no debe abrir la búsqueda de 1 d: son búsquedas
+        distintas sobre históricos distintos."""
+        short = _strategy(assets["BTC"], 0.9, "corta-1h", interval="1h")
+        short.spec = {**short.spec, "direction": "short"}
+        short.save(update_fields=["spec"])
+        _strategy(assets["BTC"], 1.0, "larga-1d", interval="1d")
+        assert _direction_for_pair("BTC", "1h") == "auto"
+        assert _direction_for_pair("BTC", "1d") == "long"
+
+    @pytest.mark.integration
+    def test_a_pair_with_nothing_stored_searches_longs(self, assets):
+        assert _direction_for_pair("BTC", "1d") == "long"
+
+    @pytest.mark.integration
+    def test_the_decision_reaches_the_generator(self, assets, monkeypatch):
+        from core.infrastructure.persistence.models import PaperTradingAccount
+
+        both = _strategy(assets["BTC"], 1.0, "bidireccional")
+        both.spec = {**both.spec, "direction": "both",
+                     "short_entry": both.spec["exit"], "short_exit": both.spec["entry"]}
+        both.save(update_fields=["spec"])
+        PaperTradingAccount.objects.create(
+            strategy=both, asset_symbol="BTC", interval="1d",
+            initial_capital=10000, cash=10000,
+        )
+
+        seen = {}
+
+        def spy(self, **kw):
+            seen["direction"] = kw.get("direction")
+            return {"summary": {"passed_gating": 0, "candidates_gated": 0}, "ranking": []}
+
+        monkeypatch.setattr(
+            "core.application.use_cases.generate_strategies.GenerateStrategiesUseCase.execute",
+            spy)
+        ReoptimizeStrategiesUseCase().execute()
+        assert seen["direction"] == "auto"
 
 
 class TestFillStrategyStable:

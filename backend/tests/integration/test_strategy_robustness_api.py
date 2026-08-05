@@ -161,6 +161,65 @@ class TestMonitoring:
         assert s.signal_events.count() == 1
 
 
+class TestShortStrategiesNotifyTheRightAction:
+    """
+    Una estrategia corta no puede decir «COMPRA».
+
+    `SELL` es cerrar un largo y `SHORT` es abrir un corto: se parecen y son
+    contrarios. Si la notificación tradujera todo al vocabulario largo, al
+    usuario le llegaría la orden invertida — y el correo es exactamente el
+    punto donde eso se convierte en una operación real.
+    """
+
+    def _short_strategy(self):
+        from core.infrastructure.persistence.models import CryptoAsset, StrategyDefinition
+        btc = CryptoAsset.objects.create(symbol="BTC", name="Bitcoin")
+        return StrategyDefinition.objects.create(
+            asset=btc, name="Corto", spec={**_ALWAYS_BUY, "direction": "short"},
+            spec_hash="s1", rank=1, passed_gating=True, status="validated",
+        )
+
+    @pytest.mark.integration
+    def test_the_signal_endpoint_says_short_not_buy(self, authenticated_client, db, monkeypatch):
+        s = self._short_strategy()
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=200, **kw: OhlcvFetchResult(df=_df(), source="binance"),
+        )
+        resp = authenticated_client.get(f"/api/strategies/{s.id}/signal/")
+        assert resp.status_code == 200
+        assert resp.data["signal"] == "SHORT"
+        assert resp.data["direction"] == "short"
+        assert resp.data["side"] == "short"
+
+    @pytest.mark.integration
+    def test_the_email_names_the_short_and_the_event_records_it(
+        self, db, test_user, monkeypatch, settings,
+    ):
+        from django.core import mail
+        from core.application.use_cases.monitor_strategies import EvaluateMonitoredStrategiesUseCase
+
+        settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+        s = self._short_strategy()
+        s.is_monitored, s.owner, s.last_signal = True, test_user, "HOLD"
+        s.save()
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=200, **kw: OhlcvFetchResult(df=_df(), source="binance"),
+        )
+
+        result = EvaluateMonitoredStrategiesUseCase().execute()
+
+        # Antes, SHORT no estaba en la lista de accionables y no se notificaba:
+        # la estrategia disparaba y el usuario no se enteraba.
+        assert result["notified"] == 1
+        assert "APERTURA EN CORTO" in mail.outbox[0].subject
+        assert "COMPRA" not in mail.outbox[0].body
+        s.refresh_from_db()
+        assert s.last_signal == "SHORT"
+        assert s.signal_events.first().signal == "SHORT"
+
+
 class TestSignalFeed:
 
     @pytest.mark.integration

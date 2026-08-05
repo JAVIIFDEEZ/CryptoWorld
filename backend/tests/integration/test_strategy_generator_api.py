@@ -135,6 +135,131 @@ class TestStrategyGeneratorApi:
         assert "error" in status.data["result"]
 
 
+class TestDirectionPerRun:
+    """
+    La dirección se elige POR EJECUCIÓN.
+
+    Lo que se comprueba aquí no es que el generador encuentre cortos —eso lo
+    cubren los tests de dominio— sino que la elección del usuario llegue viva
+    desde el cuerpo del POST hasta la configuración del GA, atravesando el
+    serializer, la vista, la tarea Celery y el caso de uso. Es una cadena de
+    cinco saltos, y si se pierde en cualquiera de ellos el usuario pide cortos y
+    recibe largos sin que nada falle.
+    """
+
+    @pytest.fixture
+    def spy_direction(self, monkeypatch):
+        """Captura la dirección con la que se configura el GA."""
+        seen: dict = {}
+
+        def spy(df, interval="1d", config=None, initial_capital=10000.0, progress_cb=None):
+            seen["direction"] = config.ga.direction
+            return {"summary": {"passed_gating": 0, "candidates_gated": 0},
+                    "ranking": [], "candidates": [], "rejected": []}
+
+        monkeypatch.setattr(gs, "generate_strategies", spy)
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe",
+            lambda symbol, interval="1d", limit=None, **kw: OhlcvFetchResult(
+                df=_synthetic_df(), source="binance"),
+        )
+        return seen
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("direction", ["long", "short", "both", "auto"])
+    def test_the_requested_direction_reaches_the_ga(
+        self, authenticated_client, celery_eager, spy_direction, direction,
+    ):
+        resp = authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "preset": "fast", "direction": direction},
+            format="json",
+        )
+        assert resp.status_code == 202
+        assert spy_direction["direction"] == direction
+
+    @pytest.mark.integration
+    def test_omitting_it_searches_longs(
+        self, authenticated_client, celery_eager, spy_direction,
+    ):
+        """Buscar en el otro lado es una decisión explícita, no algo que se
+        aplique solo a lo que ya estaba validado."""
+        authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "preset": "fast"}, format="json",
+        )
+        assert spy_direction["direction"] == "long"
+
+    @pytest.mark.integration
+    def test_an_unknown_direction_is_rejected(self, authenticated_client):
+        resp = authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "direction": "sideways"}, format="json",
+        )
+        assert resp.status_code == 400
+
+
+class TestCandleBudget:
+    """
+    El histórico se dimensiona por CALENDARIO, no con un número fijo.
+
+    El serializer imponía `limit=730` por defecto. Ese número se eligió cuando
+    solo había gráficos diarios (730 = dos años), y en 1 h significaba 30 días:
+    tramos de walk-forward de cinco días con dos o tres operaciones cada uno,
+    sobre los que ninguna medición estadística posterior significaba nada.
+    """
+
+    @pytest.fixture
+    def spy_limit(self, monkeypatch):
+        seen: dict = {}
+
+        def fetch(symbol, interval="1d", limit=None, **kw):
+            seen["limit"] = limit
+            return OhlcvFetchResult(df=_synthetic_df(), source="binance")
+
+        monkeypatch.setattr(
+            "core.application.use_cases.ohlcv_fetcher.fetch_ohlcv_dataframe", fetch)
+        monkeypatch.setattr(
+            gs, "generate_strategies",
+            lambda df, **kw: {"summary": {"passed_gating": 0, "candidates_gated": 0},
+                              "ranking": [], "candidates": [], "rejected": []})
+        return seen
+
+    @pytest.mark.integration
+    def test_an_hourly_run_asks_for_far_more_than_two_years_of_daily_candles(
+        self, authenticated_client, celery_eager, spy_limit,
+    ):
+        authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "interval": "1h", "preset": "fast"}, format="json",
+        )
+        assert spy_limit["limit"] > 730
+
+    @pytest.mark.integration
+    def test_a_daily_run_asks_for_fewer_candles_than_an_hourly_one(
+        self, authenticated_client, celery_eager, spy_limit,
+    ):
+        """Mismo objetivo de calendario, distinta densidad de velas: si los dos
+        marcos pidieran lo mismo, el dimensionado no sería por calendario."""
+        authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "interval": "1h"}, format="json")
+        hourly = spy_limit["limit"]
+        authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "interval": "1d"}, format="json")
+        assert spy_limit["limit"] < hourly
+
+    @pytest.mark.integration
+    def test_an_explicit_limit_still_wins(
+        self, authenticated_client, celery_eager, spy_limit,
+    ):
+        authenticated_client.post(
+            "/api/strategies/generate/",
+            {"asset_symbol": "BTC", "interval": "1h", "limit": 900}, format="json")
+        assert spy_limit["limit"] == 900
+
+
 class TestSavedStrategiesList:
 
     @pytest.mark.integration
