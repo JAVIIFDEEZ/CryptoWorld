@@ -28,7 +28,6 @@ import {
   type SavedStrategy,
   type SignalEvent,
   type EvolutionProgress,
-  type GenerationPower,
 } from '@/services/strategyGeneratorService'
 import EvolutionLiveBoard from '@/components/generator/EvolutionLiveBoard'
 import WalkForwardMatrixCard from '@/components/generator/WalkForwardMatrixCard'
@@ -39,6 +38,7 @@ import CapacityCard from '@/components/generator/CapacityCard'
 import MetaSizingCard from '@/components/generator/MetaSizingCard'
 import VariantsCard from '@/components/generator/VariantsCard'
 import SideBreakdownCard from '@/components/generator/SideBreakdownCard'
+import EmptyBookExplanation from '@/components/generator/EmptyBookExplanation'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -557,7 +557,7 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
           </div>
         </div>
       ) : (
-        <EmptyBookExplanation power={report.power} />
+        <EmptyBookExplanation power={report.power} report={report} />
       )}
 
       {report.rejected.length > 0 && <RejectedList report={report} />}
@@ -1071,69 +1071,3 @@ function HistoryCard({ s, onStartPaper, selected, onToggleSelect }: Readonly<{
  * Informar mal es peor que no informar: lleva a descartar un activo por una
  * conclusión que el motor no estaba en condiciones de sacar.
  */
-function EmptyBookExplanation({ power }: Readonly<{ power?: GenerationPower }>) {
-  const insufficient = power?.reliability === 'insufficient'
-  const tone = insufficient
-    ? 'bg-sky-500/5 border-sky-500/20'
-    : 'bg-amber-500/5 border-amber-500/20'
-
-  return (
-    <div className={`${tone} border rounded-xl p-6`}>
-      <p className={`text-sm font-medium ${insufficient ? 'text-sky-300' : 'text-amber-300'}`}>
-        {insufficient
-          ? 'Sin estrategias — pero no por el mercado: por falta de datos.'
-          : 'Ninguna estrategia superó el gating de robustez.'}
-      </p>
-
-      <p className="text-slate-400 text-xs mt-2 leading-relaxed">
-        {insufficient
-          ? 'El histórico disponible no da para que las propias pruebas estadísticas ' +
-            'emitan un veredicto. Esto NO dice nada sobre si el activo es operable: ' +
-            'dice que hacen falta más velas o un marco temporal más amplio.'
-          : 'El generador prefiere no devolver nada antes que entregar una estrategia ' +
-            'sobreajustada. Con este histórico sí había potencia para juzgar, así que ' +
-            'el resultado sí habla del mercado.'}
-      </p>
-
-      {power && (
-        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-left">
-          <PowerStat label="Histórico" value={`${power.span_days} días`} />
-          <PowerStat label="Velas por tramo" value={`${power.bars_per_fold}`}
-            sub={`${power.days_per_fold} días`} />
-          <PowerStat label="Operaciones" value={power.trades_observed != null ? `${power.trades_observed}` : '—'} />
-          <PowerStat label="Por tramo"
-            value={power.trades_per_fold != null ? `${power.trades_per_fold}` : '—'}
-            warn={(power.trades_per_fold ?? 99) < 10} />
-        </div>
-      )}
-
-      {power?.limits && power.limits.length > 0 && (
-        <ul className="mt-3 space-y-1 text-left">
-          {power.limits.map((l) => (
-            <li key={l} className="text-[10px] text-slate-500 leading-relaxed">· {l}</li>
-          ))}
-        </ul>
-      )}
-
-      {insufficient && (
-        <p className="text-[10px] text-sky-200/70 mt-3 leading-relaxed">
-          Prueba con un marco mayor (4h o 1d): con el mismo número de velas cubren
-          mucho más calendario y dan bastantes más operaciones por tramo, que es lo
-          que las pruebas necesitan para discriminar.
-        </p>
-      )}
-    </div>
-  )
-}
-
-function PowerStat({ label, value, sub, warn }: Readonly<{
-  label: string; value: string; sub?: string; warn?: boolean
-}>) {
-  return (
-    <div className="bg-slate-900/40 rounded-lg px-2 py-1.5">
-      <p className="text-slate-500">{label}</p>
-      <p className={`font-mono text-xs ${warn ? 'text-amber-300' : 'text-slate-200'}`}>{value}</p>
-      {sub && <p className="text-slate-600">{sub}</p>}
-    </div>
-  )
-}
