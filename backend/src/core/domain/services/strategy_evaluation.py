@@ -528,11 +528,13 @@ def _fitness_on_blocks(df, spec, blocks, n_splits, ppy, min_trades, target_trade
                 **({"bar_returns": []} if with_returns else {})}
 
     per_block: list[float] = []
+    turnover = 0.0
     for block in blocks:
         sub = df.iloc[block.warmup_start:block.end]
         if len(sub) < 30:
             continue
         bt = _segment_backtest(sub, spec, costs)
+        turnover += float(bt.get("turnover", 0.0))
         skip = block.score_start - block.warmup_start
         br = np.asarray(bt["bar_returns"], dtype=float)[skip:]
         if br.size >= 20:
@@ -544,8 +546,15 @@ def _fitness_on_blocks(df, spec, blocks, n_splits, ppy, min_trades, target_trade
 
     trade_penalty = 0.0 if n_trades >= scaled_target else (scaled_target - n_trades) / scaled_target
     complexity_penalty = parsimony * max(0, spec_complexity(spec) - 3)
+    # Rotación: la MISMA penalización que el fitness completo, con el umbral
+    # escalado a la muestra. Omitirla —como hacía la primera versión— hacía que
+    # este fitness premiara operar mucho mientras el completo lo castigaba, y de
+    # ahí salía una anticorrelación de rangos por pura construcción: dos
+    # objetivos distintos, no dos muestras del mismo.
+    turnover_penalty = max(0.0, turnover - 30.0 * fraction) * 0.02
 
-    fitness = mean_sharpe - 0.5 * dispersion - 1.0 * trade_penalty - complexity_penalty
+    fitness = (mean_sharpe - 0.5 * dispersion - 1.0 * trade_penalty
+               - turnover_penalty - complexity_penalty)
     if n_trades < scaled_min or not per_block:
         fitness -= 3.0
 
@@ -558,7 +567,7 @@ def _fitness_on_blocks(df, spec, blocks, n_splits, ppy, min_trades, target_trade
         "n_trades": n_trades,
         "total_return_pct": round(float((np.prod(1.0 + returns) - 1.0) * 100.0), 2),
         "max_drawdown_pct": 0.0,
-        "turnover": 0.0,
+        "turnover": round(turnover, 3),
         "cost_drag_pct": 0.0,
         "complexity": spec_complexity(spec),
         # De dónde sale este número. Un fitness de bloques y uno de histórico
