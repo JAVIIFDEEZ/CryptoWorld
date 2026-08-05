@@ -43,9 +43,11 @@ Condición de patrón (suceso de acción del precio, con ventana de vigencia):
 Capa de dominio: Python puro, sin BD ni framework.
 """
 
+import copy as copy_module
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -264,6 +266,42 @@ COMPARE_OPS = ("above", "below")   # estado persistente: A por encima/debajo de 
 SLOPE_OPS = ("rising", "falling")  # pendiente: la serie sube/baja vs hace n velas
 SLOPE_BARS_RANGE = (2, 10)
 COMBINES = ("AND", "OR", "K_OF_N")
+
+# ── Dirección de la estrategia ────────────────────────────────────
+# Qué lado del mercado abren los bloques del spec:
+#
+#   · "long"  — `entry`/`exit` abren y cierran LARGOS. Es el comportamiento
+#     histórico y el valor por defecto: un spec guardado sin este campo se lee
+#     como largo, así que nada de lo ya validado cambia de significado.
+#   · "short" — los MISMOS bloques abren y cierran CORTOS. No hay bloques
+#     muertos: la estrategia es una y opera al otro lado.
+#   · "both"  — `entry`/`exit` para largos y `short_entry`/`short_exit` para
+#     cortos, evolucionados POR SEPARADO.
+#
+# Lo de «por separado» no es un capricho de diseño. Una reversión a la media al
+# alza no es la misma estrategia que a la baja, y en cripto la asimetría es
+# fuerte: las subidas son lentas y las caídas violentas. Un lado corto obtenido
+# por espejo del largo heredaría umbrales calibrados para una dinámica que no es
+# la suya, y lo haría en silencio.
+DIRECTIONS = ("long", "short", "both")
+DEFAULT_DIRECTION = "long"
+
+# Lo que una EJECUCIÓN del generador permite explorar. Los tres primeros fijan
+# la dirección de toda la población; "auto" la deja evolucionar como un gen más.
+DIRECTION_MODES = DIRECTIONS + ("auto",)
+
+# Reparto de la población inicial en modo "auto".
+#
+# Largo y corto pesan lo mismo a propósito: el motor no tiene opinión sobre
+# hacia dónde va el mercado, y meter una preferencia direccional en la semilla
+# sería exactamente eso disfrazado de configuración.
+#
+# "both" pesa menos, y no por desconfianza en operar los dos lados: un spec
+# "both" lleva el DOBLE de bloques, o sea el doble de grados de libertad sobre
+# el mismo histórico. Es la familia más fácil de sobreajustar, así que entra en
+# la población con menos representación y tiene que ganarse el sitio en el
+# fitness, no en el sorteo inicial.
+AUTO_DIRECTION_WEIGHTS = {"long": 0.375, "short": 0.375, "both": 0.25}
 
 # Tipos de condición que admiten negación.
 #
@@ -565,9 +603,45 @@ def _random_regime(rng: np.random.Generator) -> dict | None:
     return {"adx_min": round(float(rng.uniform(lo, hi)), 1)}
 
 
-def random_spec(rng: np.random.Generator) -> dict:
-    """Genera un StrategySpec aleatorio legal (riesgo, sizing y régimen opcionales)."""
+def random_direction(rng: np.random.Generator, mode: str = DEFAULT_DIRECTION) -> str:
+    """
+    Dirección de un spec nuevo bajo el modo de la ejecución.
+
+    Con un modo fijo devuelve ese modo (toda la población opera al mismo lado).
+    Con "auto" sortea según `AUTO_DIRECTION_WEIGHTS`, y la dirección pasa a ser
+    un gen más: se hereda en el cruce y muta como cualquier otro.
+    """
+    if mode != "auto":
+        return mode if mode in DIRECTIONS else DEFAULT_DIRECTION
+    roll = float(rng.random())
+    acc = 0.0
+    for direction in DIRECTIONS:
+        acc += AUTO_DIRECTION_WEIGHTS[direction]
+        if roll < acc:
+            return direction
+    return DIRECTIONS[-1]
+
+
+def random_spec(rng: np.random.Generator, direction: str = DEFAULT_DIRECTION) -> dict:
+    """
+    Genera un StrategySpec aleatorio legal (riesgo, sizing y régimen opcionales).
+
+    `direction` es el MODO de la ejecución, no la dirección literal: admite
+    "auto", que sortea la dirección de cada genoma (ver `random_direction`).
+    """
+    chosen = random_direction(rng, direction)
     spec = {"entry": _random_block(rng), "exit": _random_block(rng)}
+    if chosen != DEFAULT_DIRECTION:
+        # El campo solo se escribe cuando dice algo. Un spec largo sigue
+        # serializándose exactamente igual que antes de existir la dirección, y
+        # su hash no cambia: los libros de estrategias ya guardados siguen
+        # siendo comparables con los nuevos.
+        spec["direction"] = chosen
+    if chosen == "both":
+        # Los dos lados nacen INDEPENDIENTES, no en espejo. Una reversión a la
+        # media al alza no es la misma estrategia que a la baja.
+        spec["short_entry"] = _random_block(rng)
+        spec["short_exit"] = _random_block(rng)
     risk = _random_risk(rng)
     if risk:
         spec["risk"] = risk
@@ -726,15 +800,54 @@ def _validate_regime(regime) -> bool:
     return isinstance(v, (int, float)) and lo - 1e-9 <= v <= hi + 1e-9
 
 
+def spec_direction(spec: dict) -> str:
+    """Dirección declarada por el spec (los guardados sin el campo son largos)."""
+    direction = spec.get("direction", DEFAULT_DIRECTION)
+    return direction if direction in DIRECTIONS else DEFAULT_DIRECTION
+
+
+# Todos los bloques de condiciones que puede tener un spec, en orden canónico.
+_ALL_BLOCKS = ("entry", "exit", "short_entry", "short_exit")
+
+
+def condition_blocks(spec: dict) -> tuple[str, ...]:
+    """
+    Nombres de los bloques de condiciones PRESENTES en el spec.
+
+    Todo lo que recorre la genética —jitter, mutación, complejidad, warm-up—
+    debe pasar por aquí. Escribir `("entry", "exit")` a mano funciona hasta que
+    el spec es "both", y entonces deja los bloques cortos fuera del operador sin
+    romper nada: el genoma sigue siendo válido, simplemente hay medio genoma que
+    no evoluciona nunca. Es el tipo de fallo que no da error, solo peores
+    resultados.
+    """
+    return tuple(b for b in _ALL_BLOCKS if isinstance(spec.get(b), dict))
+
+
 def validate_spec(spec: dict) -> bool:
     """True si el spec es estructuralmente legal y todos sus bloques válidos."""
     if not isinstance(spec, dict) or "entry" not in spec or "exit" not in spec:
+        return False
+    if spec.get("direction", DEFAULT_DIRECTION) not in DIRECTIONS:
         return False
     if not _validate_risk(spec.get("risk")) or not _validate_sizing(spec.get("sizing")):
         return False
     if not _validate_regime(spec.get("regime")):
         return False
-    return _validate_block(spec["entry"]) and _validate_block(spec["exit"])
+    if not (_validate_block(spec["entry"]) and _validate_block(spec["exit"])):
+        return False
+
+    # Los bloques cortos SOLO existen en "both". En "short" el lado corto lo
+    # abren los bloques principales, así que un `short_entry` ahí sería material
+    # inerte que el GA mutaría sin efecto — y dos specs distintos describirían la
+    # misma estrategia, rompiendo el hash del que depende el control de
+    # diversidad.
+    has_short_blocks = "short_entry" in spec or "short_exit" in spec
+    if spec_direction(spec) == "both":
+        if not ("short_entry" in spec and "short_exit" in spec):
+            return False
+        return _validate_block(spec["short_entry"]) and _validate_block(spec["short_exit"])
+    return not has_short_blocks
 
 
 def spec_risk(spec: dict):
@@ -880,6 +993,101 @@ def compile_signals(df: pd.DataFrame, spec: dict) -> np.ndarray:
     return signals
 
 
+def compile_short_signals(df: pd.DataFrame, spec: dict) -> np.ndarray | None:
+    """
+    Señales del lado CORTO (1 = abrir, −1 = cerrar, 0 = mantener), o `None`.
+
+    Devuelve `None` cuando la estrategia no opera cortos, y eso importa: es lo
+    que permite al motor comportarse exactamente como antes en todo lo ya
+    validado, en vez de recibir un array de ceros que tendría que recorrer igual.
+
+    Qué bloques usa según la dirección:
+      · "long"  → ninguno (None).
+      · "short" → los bloques PRINCIPALES. La estrategia es una sola y opera al
+        otro lado; no hay bloques duplicados que mantener sincronizados.
+      · "both"  → `short_entry` / `short_exit`, evolucionados aparte del lado
+        largo porque una reversión al alza no es la misma estrategia que a la
+        baja.
+
+    El filtro de régimen se aplica igual que en el lado largo: condiciona la
+    ENTRADA, nunca la salida. Se debe poder cerrar un corto en cualquier
+    régimen, y más aún que un largo — su pérdida no tiene tope.
+    """
+    direction = spec_direction(spec)
+    if direction == "long":
+        return None
+
+    entry_block = spec["entry"] if direction == "short" else spec.get("short_entry")
+    exit_block = spec["exit"] if direction == "short" else spec.get("short_exit")
+    if not entry_block or not exit_block:
+        return None
+
+    n = len(df)
+    cache: dict = {}
+    entry = _combine([_condition_bool(df, c, cache) for c in entry_block["conditions"]],
+                     entry_block["combine"], entry_block.get("k"))
+    exit_ = _combine([_condition_bool(df, c, cache) for c in exit_block["conditions"]],
+                     exit_block["combine"], exit_block.get("k"))
+
+    regime = spec.get("regime")
+    if regime:
+        adx = _series(df, "ADX", {"window": REGIME_ADX_WINDOW}, cache)
+        with np.errstate(invalid="ignore"):
+            trending = np.where(np.isnan(adx), False, adx >= regime["adx_min"])
+        entry = entry & trending
+
+    signals = np.zeros(n)
+    signals[exit_] = -1
+    signals[entry & ~exit_] = 1
+    return signals
+
+
+def compile_long_signals(df: pd.DataFrame, spec: dict) -> np.ndarray:
+    """
+    Señales del lado LARGO, o un array inerte si la estrategia es solo corta.
+
+    `compile_signals` sigue devolviendo las señales de los bloques principales
+    sin mirar la dirección — es lo que consumen el detector de lookahead, el
+    explicador de señales y todo lo construido encima. Esta función es la que
+    aplica la dirección, y por eso es la que usa el backtest.
+    """
+    if spec_direction(spec) == "short":
+        return np.zeros(len(df))
+    return compile_signals(df, spec)
+
+
+@dataclass(frozen=True)
+class SideSignals:
+    """
+    Las señales de los DOS lados de una estrategia, viajando juntas.
+
+    Existe por una razón concreta: el backtest necesita ambas a la vez, y el
+    walk-forward reutiliza el cálculo de los prefijos (ver `_prefix_signals`).
+    Con dos parámetros sueltos sería posible recortar uno y olvidar el otro
+    —dando un tramo con largos del prefijo y cortos del histórico entero—, y
+    ese fallo no rompería nada: devolvería números plausibles y equivocados.
+    Empaquetados, recortar uno recorta los dos o no compila.
+
+    `short` es `None` —no un array de ceros— cuando la estrategia no opera
+    cortos. Así el motor toma exactamente el mismo camino que antes de que
+    existieran los cortos en todo lo ya validado.
+    """
+    long: np.ndarray
+    short: np.ndarray | None = None
+
+    def __len__(self) -> int:
+        return len(self.long)
+
+    def head(self, k: int) -> "SideSignals":
+        """Prefijo de ambos lados. Ver `_prefix_signals` para por qué es legítimo."""
+        return SideSignals(self.long[:k], None if self.short is None else self.short[:k])
+
+
+def compile_sides(df: pd.DataFrame, spec: dict) -> SideSignals:
+    """Compila los dos lados del spec en una sola llamada."""
+    return SideSignals(compile_long_signals(df, spec), compile_short_signals(df, spec))
+
+
 def signal_state(df: pd.DataFrame, spec: dict) -> dict:
     """
     Estado de la estrategia en la ÚLTIMA vela: la señal actual (BUY/SELL/HOLD) y
@@ -999,8 +1207,18 @@ def describe_spec(spec: dict) -> str:
         return sep.join(parts)
     regime = spec.get("regime")
     regime_txt = f" (solo si ADX≥{regime['adx_min']})" if regime else ""
+    direction = spec_direction(spec)
+    tail = f"{_describe_risk(spec.get('risk'))}{_describe_sizing(spec.get('sizing'))}"
+
+    if direction == "short":
+        return (f"CORTO si {block(spec['entry'])}{regime_txt}; "
+                f"CERRAR si {block(spec['exit'])}{tail}")
+    if direction == "both":
+        return (f"LARGO si {block(spec['entry'])}{regime_txt}; salir si {block(spec['exit'])}. "
+                f"CORTO si {block(spec['short_entry'])}; cerrar si {block(spec['short_exit'])}"
+                f"{tail}")
     return (f"ENTRAR si {block(spec['entry'])}{regime_txt}; SALIR si {block(spec['exit'])}"
-            f"{_describe_risk(spec.get('risk'))}{_describe_sizing(spec.get('sizing'))}")
+            f"{tail}")
 
 
 def max_warmup(spec: dict) -> int:
@@ -1022,7 +1240,11 @@ def max_warmup(spec: dict) -> int:
                 longest = max(longest, int(v))
         if c["type"] == "slope":
             longest = max(longest, int(c["bars"]))
-    for side in ("entry", "exit"):
+    # Los bloques cortos cuentan igual: si el lado corto usa una EMA de 200 y el
+    # largo solo una de 20, la estrategia sigue necesitando 200 velas de
+    # calentamiento antes de poder operar de verdad. Mirar solo `entry`/`exit`
+    # subestimaría el warm-up de todo spec "both".
+    for side in condition_blocks(spec):
         for c in spec[side]["conditions"]:
             scan(c)
     return longest
@@ -1051,7 +1273,7 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
     """
     import copy
     out = copy.deepcopy(spec)
-    for side in ("entry", "exit"):
+    for side in condition_blocks(out):
         for c in out[side]["conditions"]:
             if c["type"] == "pattern":
                 # El patrón en sí no se cambia (sería otra estructura, no un
@@ -1106,6 +1328,98 @@ def jitter_params(spec: dict, rng: np.random.Generator) -> dict:
         lo, hi = REGIME_ADX_RANGE
         span = (hi - lo) * 0.1
         out["regime"]["adx_min"] = round(float(min(hi, max(lo, out["regime"]["adx_min"] + rng.uniform(-span, span)))), 1)
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Espejo direccional (solo para SEMBRAR, nunca para generar)
+# ═══════════════════════════════════════════════════════════════════
+
+# Patrones que tienen contrario. Los que no aparecen aquí son NEUTRALES —un
+# doji, una vela interior o una CRT no tienen lado— y se dejan intactos:
+# inventarles un opuesto sería fabricar una condición que no existe.
+_MIRROR_PATTERNS = {
+    "BULL_ENGULF": "BEAR_ENGULF",
+    "FVG_BULL": "FVG_BEAR",
+    "OB_BULL": "OB_BEAR",
+    "ORB_UP": "ORB_DOWN",
+    "PO3_BULL": "PO3_BEAR",
+    "SWEEP_LOW": "SWEEP_HIGH",
+    "HAMMER": "SHOOTING_STAR",
+    "FIB_DISCOUNT": "FIB_PREMIUM",
+}
+_MIRROR_PATTERNS.update({v: k for k, v in _MIRROR_PATTERNS.items()})
+
+# Osciladores que NO tienen dirección: miden intensidad o régimen, no sesgo.
+# «ADX > 25» significa «hay tendencia», y su espejo no es «ADX < 30» — es «ADX
+# > 25» otra vez. Reflejar su umbral no invertiría la estrategia, la rompería.
+_NON_DIRECTIONAL = ("ADX", "ATR_PCT", "VOLRATIO")
+
+
+def _mirror_condition(c: dict) -> dict:
+    """La condición contraria: mismo indicador y mismos parámetros, lado opuesto."""
+    out = copy_module.deepcopy(c)
+    kind = out["type"]
+
+    if kind == "pattern":
+        out["pattern"] = _MIRROR_PATTERNS.get(out["pattern"], out["pattern"])
+        return out
+
+    if kind == "threshold":
+        if out["indicator"] in _NON_DIRECTIONAL:
+            return out
+        lo, hi = OSCILLATORS[out["indicator"]]["threshold"]
+        # Reflexión dentro del rango del propio oscilador: en un RSI de rango
+        # (15, 85), «< 30» pasa a «> 70». No es una constante mágica, es el
+        # mismo punto medido desde el otro extremo.
+        out["threshold"] = round(float(lo + hi - out["threshold"]), 2)
+        out["op"] = "gt" if out["op"] == "lt" else "lt"
+        return out
+
+    if kind == "slope":
+        if out["indicator"] not in _NON_DIRECTIONAL:
+            out["op"] = "falling" if out["op"] == "rising" else "rising"
+        return out
+
+    if kind == "cross":
+        out["op"] = "cross_below" if out["op"] == "cross_above" else "cross_above"
+        return out
+
+    out["op"] = "below" if out["op"] == "above" else "above"   # compare
+    return out
+
+
+def _mirror_block(block: dict) -> dict:
+    out = copy_module.deepcopy(block)
+    out["conditions"] = [_mirror_condition(c) for c in block["conditions"]]
+    return out
+
+
+def mirror_spec(spec: dict) -> dict:
+    """
+    La versión CONTRARIA de la lógica del spec, con la misma estructura.
+
+    Existe para un solo uso: **sembrar** una búsqueda de cortos. Las 5 clásicas
+    del catálogo son estrategias largas, y meterlas sin tocar en una ejecución
+    de cortos arrancaría el GA desde estrategias que en ese lado pierden dinero
+    por construcción. Su espejo —«RSI > 70 → corto» en vez de «RSI < 30 →
+    largo»— sí es el punto de partida canónico, el mismo que usaría cualquiera
+    a mano.
+
+    Lo que NO es: una forma de generar el lado corto de una estrategia. Eso
+    sigue prohibido en `random_spec` y en `_mutate_direction`, y por la misma
+    razón de siempre — un lado corto obtenido por espejo hereda umbrales
+    calibrados contra una dinámica que no es la suya. Aquí es aceptable porque
+    una semilla no es un resultado: es un punto de partida que el fitness va a
+    juzgar igual que a cualquier otro.
+
+    Deja intacto lo que no tiene contrario: los patrones neutros (doji, vela
+    interior, CRT) y los osciladores de intensidad (ADX, ATR%, ratio de
+    volumen), que miden régimen y no sesgo.
+    """
+    out = copy_module.deepcopy(spec)
+    for side in condition_blocks(spec):
+        out[side] = _mirror_block(spec[side])
     return out
 
 

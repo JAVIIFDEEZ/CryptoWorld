@@ -30,7 +30,10 @@ from core.domain.services import market_impact as impact
 from core.domain.services import meta_sizing
 from core.domain.services import significance as sig
 from core.domain.services.backtest_execution import CostModel
-from core.domain.services.strategy_spec import compile_signals, jitter_params, spec_risk, spec_sizing
+from core.domain.services.strategy_spec import (
+    SideSignals, compile_short_signals, compile_sides, compile_signals,
+    condition_blocks, jitter_params, spec_direction, spec_risk, spec_sizing,
+)
 from core.domain.services.technical_analysis_service import backtest_signals
 
 # Costes por defecto del generador: comisión 10 bps + deslizamiento 5 bps por lado
@@ -67,6 +70,13 @@ class GatingThresholds:
     # Se deja el interruptor porque `gate_spec` también se invoca suelto (API de
     # robustez de un spec concreto), donde sí hay una sola estrategia que medir.
     meta_sizing: bool = False
+    # ── Exigencia por LADO (solo aplica a specs bidireccionales) ──
+    # Una estrategia que gana mucho en largo y pierde en corto puede aprobar
+    # todos los umbrales anteriores por promedio: el agregado es bueno y nadie
+    # mira de dónde sale. Con capital real eso es un lado que sangra, escondido
+    # detrás de otro que compensa. Cada lado activo tiene que sostenerse solo.
+    min_side_trades: int = 5         # menos que esto es un lado decorativo
+    min_side_oos_sharpe: float = 0.0  # un lado que pierde fuera de muestra no es cobertura
 
 
 def _segment_backtest(df, spec: dict, costs: CostModel | None = None,
@@ -74,17 +84,50 @@ def _segment_backtest(df, spec: dict, costs: CostModel | None = None,
     """
     Compila el spec y lo backtestea (con costes, gestión de riesgo y sizing).
 
-    `signals` permite REUTILIZAR un array ya compilado en vez de recalcular los
-    indicadores. Solo es legítimo cuando ese array corresponde exactamente a
-    `df` — ver `_prefix_signals`, que es donde se explica por qué los tramos de
+    `signals` permite REUTILIZAR un cálculo ya hecho en vez de recompilar los
+    indicadores. Solo es legítimo cuando corresponde exactamente a `df` — ver
+    `_prefix_signals`, que es donde se explica por qué los tramos de
     entrenamiento del walk-forward cumplen esa condición y los de test no.
+
+    Admite dos formas, y la diferencia importa:
+      · `SideSignals` — los dos lados ya compilados; se usan tal cual.
+      · un array suelto — es el lado LARGO, y el corto se recompila. Es la
+        forma histórica, de antes de que existieran los cortos; recompilar es
+        más lento pero nunca da un número equivocado, que es el modo correcto
+        de fallar cuando quien llama no ha pensado en los dos lados.
     """
+    if isinstance(signals, SideSignals):
+        sides = signals
+    elif signals is None:
+        sides = compile_sides(df, spec)
+    else:
+        sides = SideSignals(signals, compile_short_signals(df, spec))
     return backtest_signals(
-        df, compile_signals(df, spec) if signals is None else signals,
+        df, sides.long,
         costs=costs if costs is not None else DEFAULT_COSTS,
         risk=spec_risk(spec),
         sizing=spec_sizing(spec),
+        short_signals=sides.short,
     )
+
+
+def _leak_probe(df, spec: dict) -> np.ndarray:
+    """
+    Señales de AMBOS lados fundidas en un array, para el detector de lookahead.
+
+    El detector compara una serie recalculada con datos truncados contra la
+    completa. Pasarle solo el lado largo dejaría los bloques `short_entry` /
+    `short_exit` de un spec "both" **sin auditar**: podrían mirar al futuro y el
+    control diría que la estrategia está limpia.
+
+    Los códigos no colisionan (largo y corto valen −1/0/1, y el corto va
+    multiplicado por 4), así que cualquier discrepancia en cualquiera de los dos
+    lados cambia el valor del array y el detector la ve.
+    """
+    sides = compile_sides(df, spec)
+    if sides.short is None:
+        return sides.long
+    return sides.long + 4.0 * sides.short
 
 
 def _prefix_signals(signals_full, k: int):
@@ -108,8 +151,17 @@ def _prefix_signals(signals_full, k: int):
     siguen recompilando. No es un descuido: recompilar les deja los indicadores
     a medio calentar al principio del tramo, que es la convención conservadora
     que este motor ya usaba, y cambiarla alteraría lo que mide el walk-forward.
+
+    Recorta los DOS lados a la vez (ver `SideSignals`): recortar uno y olvidar
+    el otro daría un tramo con largos del prefijo y cortos del histórico
+    entero, y ese error no se manifestaría como un fallo sino como un número
+    plausible y equivocado.
     """
-    return None if signals_full is None else signals_full[:k]
+    if signals_full is None:
+        return None
+    if isinstance(signals_full, SideSignals):
+        return signals_full.head(k)
+    return signals_full[:k]
 
 
 def walk_forward_oos(df, spec: dict, n_splits: int = 4, ppy: float = 365.0, min_train: int = 60,
@@ -491,9 +543,16 @@ def walk_forward_matrix(df, spec: dict, splits_list=(3, 4, 5, 6),
 
 
 def spec_complexity(spec: dict) -> int:
-    """Nº total de condiciones del spec (entrada + salida): su 'tamaño genético'."""
-    return len(spec.get("entry", {}).get("conditions", [])) + \
-        len(spec.get("exit", {}).get("conditions", []))
+    """
+    Nº total de condiciones del spec: su 'tamaño genético'.
+
+    Cuenta también los bloques cortos. Un spec "both" tiene el doble de grados
+    de libertad ajustados sobre el mismo histórico, y la penalización por
+    parsimonia del fitness existe precisamente para cobrarlos: si solo se
+    contaran los bloques largos, la familia más fácil de sobreajustar sería
+    además la más barata de complejidad.
+    """
+    return sum(len(spec[side]["conditions"]) for side in condition_blocks(spec))
 
 
 def equity_curve(df, spec: dict, costs: CostModel | None = None, points: int = 120) -> dict:
@@ -660,7 +719,7 @@ def evaluate_fitness(
 
     # Un solo cálculo de indicadores para el backtest completo Y para todos los
     # tramos de entrenamiento del walk-forward, que son prefijos suyos.
-    signals_full = compile_signals(df, spec)
+    signals_full = compile_sides(df, spec)
     full = _segment_backtest(df, spec, costs, signals=signals_full)
     n_trades = full["total_trades"]
     wf = walk_forward_oos(df, spec, n_splits, ppy, costs=costs,
@@ -860,7 +919,11 @@ def spec_permutation_test(
         pdf["high"] = prices * 1.001
         pdf["low"] = prices * 0.999
         pdf["close"] = prices
-        bt = backtest_signals(pdf, compile_signals(pdf, spec))
+        # Los dos lados: en una estrategia solo corta, compilar únicamente el
+        # lado largo daría cero operaciones en TODAS las permutaciones y un
+        # p-valor de 1/(n+1) que no mide nada.
+        sides = compile_sides(pdf, spec)
+        bt = backtest_signals(pdf, sides.long, short_signals=sides.short)
         s = metrics.sharpe_ratio(bt["bar_returns"], ppy)
         if s >= observed_sharpe:
             count_ge += 1
@@ -872,6 +935,104 @@ def spec_permutation_test(
         "n_perms": n_perms,
         "significant": bool(p_value < 0.05),
     }
+
+
+def _isolate_side(spec: dict, side: str) -> dict:
+    """
+    El mismo spec operando UN SOLO lado, para medirlo en aislamiento.
+
+    De un spec "both" salen dos estrategias unidireccionales: la larga son sus
+    bloques `entry`/`exit`, la corta sus `short_entry`/`short_exit` promovidos a
+    principales. No es un recorte cosmético — es literalmente la estrategia que
+    quedaría si se desactivara el otro lado.
+    """
+    out = {k: v for k, v in spec.items()
+           if k not in ("direction", "short_entry", "short_exit")}
+    if side == "short":
+        out["entry"] = spec["short_entry"]
+        out["exit"] = spec["short_exit"]
+        out["direction"] = "short"
+    return out
+
+
+def side_performance(df, spec: dict, full_trades: list, ppy: float = 365.0,
+                     costs: CostModel | None = None, wf_splits: int = 4) -> dict:
+    """
+    Desglose por LADO de una estrategia bidireccional.
+
+    Devuelve dos cosas distintas por cada lado, y la diferencia importa:
+
+      · **Atribución** — nº de operaciones y P&L que ese lado aportó en la
+        ejecución conjunta. Sale gratis de los trades ya calculados y responde a
+        «¿de dónde salió el resultado?».
+      · **Aislamiento** — el walk-forward del lado operando SOLO. Cuesta un
+        backtest más por lado y responde a otra pregunta: «¿se sostendría este
+        lado si desactivara el otro?».
+
+    Hacen falta las dos. La atribución no basta como criterio porque los dos
+    lados compiten por la misma posición —el motor mantiene una sola a la vez—,
+    así que un lado puede parecer flojo simplemente porque el otro le quitó los
+    turnos buenos. Y el aislamiento no basta como descripción porque la
+    estrategia que se va a desplegar es la conjunta, no ninguna de las dos.
+
+    En specs de un solo lado no hay nada que desglosar: devuelve `{}`.
+    """
+    if spec_direction(spec) != "both":
+        return {}
+
+    out: dict = {}
+    for side in ("long", "short"):
+        trades = [t for t in full_trades if t.get("side") == side]
+        pnls = [float(t["pnl_pct"]) for t in trades]
+        wins = [p for p in pnls if p > 0]
+        losses = [-p for p in pnls if p < 0]
+        gross_loss = sum(losses)
+        alone = walk_forward_oos(df, _isolate_side(spec, side), wf_splits, ppy, costs=costs)
+        out[side] = {
+            "n_trades": len(trades),
+            "share_of_trades_pct": round(100.0 * len(trades) / len(full_trades), 1)
+            if full_trades else 0.0,
+            "sum_pnl_pct": round(sum(pnls), 2),
+            "mean_pnl_pct": round(sum(pnls) / len(pnls), 3) if pnls else 0.0,
+            "win_rate_pct": round(100.0 * len(wins) / len(pnls), 1) if pnls else 0.0,
+            # Factor de beneficio del lado: ganancias brutas / pérdidas brutas.
+            # `None` (no infinito) cuando no perdió nunca — con 3 operaciones eso
+            # no significa que no pierda, significa que aún no ha perdido.
+            "profit_factor": round(sum(wins) / gross_loss, 2) if gross_loss > 1e-9 else None,
+            "standalone_oos_sharpe": alone["mean_oos_sharpe"],
+            "standalone_folds": alone["n_folds"],
+        }
+    return out
+
+
+def _sides_stand_alone(breakdown: dict, th: GatingThresholds) -> tuple[bool, list[str]]:
+    """
+    ¿Se sostiene cada lado por sí mismo? Devuelve el veredicto y los motivos.
+
+    Un lado falla por dos vías distintas:
+      · **Apenas opera** — con menos de `min_side_trades` no es un lado, es
+        adorno: añade grados de libertad al ajuste sin aportar muestra. Nada de
+        lo que se mida sobre él significa algo.
+      · **Pierde en aislamiento** — su walk-forward fuera de muestra queda por
+        debajo del mínimo. Un lado así no es cobertura, es una fuga que el otro
+        lado está tapando en el agregado.
+
+    Sin bloques cortos no hay nada que exigir: `(True, [])`.
+    """
+    if not breakdown:
+        return True, []
+    reasons: list[str] = []
+    for side, stats in breakdown.items():
+        label = "largo" if side == "long" else "corto"
+        if stats["n_trades"] < th.min_side_trades:
+            reasons.append(
+                f"el lado {label} apenas opera ({stats['n_trades']} operaciones, "
+                f"mínimo {th.min_side_trades})")
+        elif stats["standalone_oos_sharpe"] < th.min_side_oos_sharpe:
+            reasons.append(
+                f"el lado {label} pierde en aislamiento (Sharpe OOS "
+                f"{stats['standalone_oos_sharpe']}, mínimo {th.min_side_oos_sharpe})")
+    return not reasons, reasons
 
 
 def gate_spec(
@@ -909,7 +1070,7 @@ def gate_spec(
     n_trades = full["total_trades"]
     wf = walk_forward_oos(df, spec, th.wf_splits, ppy, costs=costs)
 
-    lookahead = bias.detect_lookahead_bias(df, lambda d: compile_signals(d, spec), seed=seed)
+    lookahead = bias.detect_lookahead_bias(df, lambda d: _leak_probe(d, spec), seed=seed)
 
     overfitting = _overfitting_control(
         df, spec, full["bar_returns"], th, rng, ppy, costs, trial_returns, n_evaluations
@@ -943,12 +1104,20 @@ def gate_spec(
     )
     mc_p5 = mc.get("return_pct", {}).get("p5")
 
+    # Desglose por lado: de dónde sale el resultado y si cada lado aguanta solo.
+    # En specs de un solo lado sale vacío y el check pasa sin coste.
+    sides = side_performance(df, spec, full["trades"], ppy, costs, th.wf_splits)
+    sides_ok, side_reasons = _sides_stand_alone(sides, th)
+
     checks = {
         "min_trades": n_trades >= th.min_trades,
         "no_lookahead": not lookahead["is_leaky"],
         "wf_efficiency": wf["efficiency"] >= th.min_wf_efficiency,
         "pbo": pbo.get("pbo") is not None and pbo["pbo"] <= th.max_pbo,
         "mc_p5_positive": mc_p5 is not None and mc_p5 > th.min_mc_p5_pct,
+        # Cada lado activo se sostiene solo: no se aprueba por promedio un lado
+        # que sangra escondido detrás de otro que compensa.
+        "sides_stand_alone": sides_ok,
     }
 
     return {
@@ -956,6 +1125,11 @@ def gate_spec(
         "checks": checks,
         "metrics": {
             "n_trades": n_trades,
+            "direction": spec_direction(spec),
+            # Atribución + aislamiento por lado (vacío en estrategias de un solo
+            # lado) y, si falla el check, en qué lado y por qué.
+            "sides": sides,
+            "side_failures": side_reasons,
             "total_return_pct": full["total_return_pct"],
             "max_drawdown_pct": full["max_drawdown_pct"],
             "exposure_pct": full["exposure_pct"],

@@ -13,6 +13,16 @@ import apiClient from './api'
 
 export type GenPreset = 'fast' | 'balanced' | 'thorough'
 
+/**
+ * Lado del mercado que una ejecución puede explorar.
+ *
+ * `both` es UNA estrategia que opera los dos lados con bloques distintos para
+ * cada uno; `auto` deja que la dirección evolucione como un gen más y la
+ * decide por estrategia. No son lo mismo: con `both` todo el libro es
+ * bidireccional, con `auto` el libro sale mezclado.
+ */
+export type GenDirection = 'long' | 'short' | 'both' | 'auto'
+
 export interface GenerateRequest {
   asset_symbol: string
   interval?: string
@@ -20,8 +30,47 @@ export interface GenerateRequest {
   initial_capital?: number
   preset?: GenPreset
   optimizer?: 'single' | 'nsga'
+  /** Lado del mercado que la búsqueda puede explorar (por defecto, solo largos). */
+  direction?: GenDirection
   /** Semilla reproducible del GA (misma semilla + mismos datos → misma evolución). */
   seed?: number
+}
+
+/**
+ * Qué aportó cada lado de una estrategia bidireccional.
+ *
+ * Dos medidas que responden a preguntas distintas: la ATRIBUCIÓN (operaciones y
+ * P&L en la ejecución conjunta) dice de dónde salió el resultado; el
+ * AISLAMIENTO (`standalone_oos_sharpe`) dice si ese lado se sostendría solo.
+ * Hacen falta las dos porque los dos lados compiten por la misma posición —el
+ * motor mantiene una a la vez—, así que un lado puede parecer flojo solo
+ * porque el otro le quitó los turnos buenos.
+ */
+export interface SidePerformance {
+  n_trades: number
+  share_of_trades_pct: number
+  sum_pnl_pct: number
+  mean_pnl_pct: number
+  win_rate_pct: number
+  /** `null` cuando el lado no perdió nunca: con pocas operaciones eso no es un infinito, es falta de muestra. */
+  profit_factor: number | null
+  standalone_oos_sharpe: number
+  standalone_folds: number
+}
+
+export type SideBreakdown = { long: SidePerformance; short: SidePerformance }
+
+/**
+ * ¿Hay desglose por lado?
+ *
+ * El backend manda `{}` en las estrategias de un solo lado —no hay nada que
+ * desglosar—, así que la comprobación no es «existe el campo» sino «tiene los
+ * dos lados dentro».
+ */
+export function hasSideBreakdown(
+  sides?: SideBreakdown | Record<string, never> | null,
+): sides is SideBreakdown {
+  return !!sides && 'long' in sides && 'short' in sides
 }
 
 export interface ParetoPoint {
@@ -138,6 +187,11 @@ export interface SpecBlock {
 export interface StrategySpec {
   entry: SpecBlock
   exit: SpecBlock
+  /** Ausente = largo. Los specs guardados antes de existir los cortos lo omiten. */
+  direction?: 'long' | 'short' | 'both'
+  /** Solo en `both`: el lado corto, con bloques propios evolucionados aparte. */
+  short_entry?: SpecBlock
+  short_exit?: SpecBlock
 }
 
 export interface GenerationPower {
@@ -163,6 +217,13 @@ export interface GatingChecks {
   wf_efficiency: boolean
   pbo: boolean
   mc_p5_positive: boolean
+  /**
+   * Cada lado activo se sostiene solo. Sin este control, una estrategia que
+   * gana mucho en largo y pierde en corto aprueba por promedio: el agregado
+   * sale bien y nadie mira de dónde. En estrategias de un solo lado no hay
+   * nada que exigir y pasa siempre.
+   */
+  sides_stand_alone?: boolean
 }
 
 /**
@@ -346,6 +407,11 @@ export interface MetaSizing {
 
 export interface GatingMetrics {
   n_trades: number
+  direction?: GenDirection
+  /** Desglose por lado; vacío/ausente en estrategias de un solo lado. */
+  sides?: SideBreakdown | Record<string, never>
+  /** Si falló `sides_stand_alone`: qué lado y por qué, en texto. */
+  side_failures?: string[]
   total_return_pct: number
   max_drawdown_pct: number
   exposure_pct: number
@@ -497,6 +563,8 @@ export interface Candidate {
   description: string
   fitness: number
   passed_gating: boolean
+  direction?: GenDirection
+  sides?: SideBreakdown | null
   pbo: number | null
   wf_efficiency: number | null
   oos_sharpe: number | null
@@ -521,6 +589,8 @@ export interface GenerationReport {
   interval: string
   data_source: string
   preset: string
+  /** Lado que se buscó en ESTA ejecución (no el de cada estrategia). */
+  direction?: GenDirection
   initial_capital: number
   candles_total: number
   data_partition: {

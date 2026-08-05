@@ -2269,10 +2269,12 @@ class StrategyGenerateLaunchView(APIView):
         async_result = task.delay(
             asset_symbol=v["asset_symbol"],
             interval=v.get("interval", "1d"),
-            limit=v.get("limit", 730),
+            # `None` = dimensionar el histórico por calendario según el marco.
+            limit=v.get("limit"),
             initial_capital=v.get("initial_capital", 10000.0),
             preset=v.get("preset", "balanced"),
             optimizer=v.get("optimizer", "single"),
+            direction=v.get("direction", "long"),
             seed=v.get("seed"),
         )
         return Response(

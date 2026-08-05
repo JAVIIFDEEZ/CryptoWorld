@@ -36,20 +36,21 @@ def run_strategy_on_recent(strat, symbol: str, interval: str,
     from core.domain.services.backtest_execution import simulate
     from core.domain.services.portfolio_analysis import daily_returns_from_equity
     from core.domain.services.strategy_evaluation import DEFAULT_COSTS
-    from core.domain.services.strategy_spec import compile_signals, spec_risk, spec_sizing
+    from core.domain.services.strategy_spec import compile_sides, spec_risk, spec_sizing
 
     try:
         res = fetch_ohlcv_dataframe(symbol=symbol, interval=interval, limit=limit)
         if res is None or res.df.empty or len(res.df) < 60:
             return None
         df = res.df
-        signals = compile_signals(df, strat.spec)
+        sides = compile_sides(df, strat.spec)
         sim = simulate(
             close=df["close"].to_numpy(dtype=float),
             high=df["high"].to_numpy(dtype=float),
             low=df["low"].to_numpy(dtype=float),
             open_=df["open"].to_numpy(dtype=float),
-            signals=signals,
+            signals=sides.long,
+            short_signals=sides.short,
             costs=DEFAULT_COSTS,
             risk=spec_risk(strat.spec),
             sizing=spec_sizing(strat.spec),

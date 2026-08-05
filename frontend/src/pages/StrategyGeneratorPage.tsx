@@ -14,8 +14,10 @@ import { type CryptoAsset } from '@/services/analysisService'
 import {
   strategyGeneratorService,
   isGenerationReport,
+  hasSideBreakdown,
   type GenerationReport,
   type GenPreset,
+  type GenDirection,
   type Finalist,
   type GatingChecks,
   type LaunchResponse,
@@ -32,6 +34,7 @@ import RetestCascadeCard from '@/components/generator/RetestCascadeCard'
 import CapacityCard from '@/components/generator/CapacityCard'
 import MetaSizingCard from '@/components/generator/MetaSizingCard'
 import VariantsCard from '@/components/generator/VariantsCard'
+import SideBreakdownCard from '@/components/generator/SideBreakdownCard'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -48,6 +51,21 @@ const PRESETS: { value: GenPreset; labelKey: string; hint: string }[] = [
   { value: 'fast', labelKey: 'generator.presetFast', hint: 'Población 24 · 8 generaciones' },
   { value: 'balanced', labelKey: 'generator.presetBalanced', hint: 'Población 40 · 15 generaciones' },
   { value: 'thorough', labelKey: 'generator.presetThorough', hint: 'Población 60 · 25 generaciones' },
+]
+
+/**
+ * Lado del mercado que la ejecución explora.
+ *
+ * «Ambos» y «Auto» no son la misma opción con distinto nombre: con «Ambos»
+ * cada estrategia del libro opera los dos lados —con reglas propias para cada
+ * uno, y con la exigencia de que cada lado se sostenga por separado—, mientras
+ * que «Auto» deja la dirección a la evolución y devuelve un libro mezclado.
+ */
+const DIRECTIONS: { value: GenDirection; label: string; hint: string }[] = [
+  { value: 'long', label: 'Largos', hint: 'Solo compras. Es lo que el motor ha buscado siempre.' },
+  { value: 'short', label: 'Cortos', hint: 'Solo ventas en corto, con las clásicas sembradas en espejo.' },
+  { value: 'both', label: 'Ambos', hint: 'Una estrategia que opera los dos lados; cada lado debe aprobar por su cuenta.' },
+  { value: 'auto', label: 'Auto', hint: 'La dirección evoluciona como un gen más: el libro sale mezclado.' },
 ]
 
 const POLL_MS = 2000   // más rápido: la telemetría en vivo se refresca cada poll
@@ -90,6 +108,9 @@ export default function StrategyGeneratorPage() {
   const [interval, setIntervalTf] = useState('1d')
   const [preset, setPreset] = useState<GenPreset>('balanced')
   const [optimizer, setOptimizer] = useState<'single' | 'nsga'>('single')
+  // Largos por defecto: es lo que este motor ha validado siempre. Buscar en el
+  // otro lado es una decisión explícita de quien lanza la ejecución.
+  const [direction, setDirection] = useState<GenDirection>('long')
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [report, setReport] = useState<GenerationReport | null>(null)
@@ -140,7 +161,7 @@ export default function StrategyGeneratorPage() {
 
     try {
       const { job_id }: LaunchResponse = await strategyGeneratorService.launch({
-        asset_symbol: symbol, interval, preset, optimizer,
+        asset_symbol: symbol, interval, preset, optimizer, direction,
       })
       let attempts = 0
       pollRef.current = window.setInterval(async () => {
@@ -285,6 +306,30 @@ export default function StrategyGeneratorPage() {
                   }`}
                 >
                   {t(p.labelKey)}
+                </button>
+              ))}
+            </div>
+          </label>
+
+          <label
+            className="text-[11px] text-slate-400"
+            title={'Lado del mercado que se busca. «Ambos» genera estrategias que operan los dos '
+                 + 'lados con reglas propias para cada uno, y cada lado tiene que sostenerse solo '
+                 + 'para aprobar. «Auto» deja que la evolución elija por estrategia.'}
+          >
+            <span className="block mb-1 uppercase">Dirección</span>
+            <div className="flex gap-0.5 bg-slate-900 rounded-md p-0.5">
+              {DIRECTIONS.map(({ value, label, hint }) => (
+                <button
+                  key={value}
+                  onClick={() => setDirection(value)}
+                  disabled={phase === 'running'}
+                  title={hint}
+                  className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                    direction === value ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {label}
                 </button>
               ))}
             </div>
@@ -605,6 +650,35 @@ const CHECK_LABELS: Record<keyof GatingChecks, string> = {
   wf_efficiency: 'Eficiencia WF',
   pbo: 'PBO',
   mc_p5_positive: 'Monte Carlo p5',
+  sides_stand_alone: 'Cada lado aguanta solo',
+}
+
+/** Etiqueta del lado que opera la estrategia (los largos no llevan distintivo). */
+const DIRECTION_BADGES: Record<'short' | 'both', { label: string; className: string; title: string }> = {
+  short: {
+    label: 'corto',
+    className: 'bg-rose-500/15 border-rose-500/30 text-rose-300',
+    title: 'Opera vendiendo en corto: gana cuando el precio baja.',
+  },
+  both: {
+    label: 'largo + corto',
+    className: 'bg-amber-500/15 border-amber-500/30 text-amber-300',
+    title: 'Opera los dos lados con reglas propias para cada uno. Cada lado ha tenido '
+         + 'que sostenerse por separado para llegar hasta aquí.',
+  },
+}
+
+function DirectionBadge({ direction }: Readonly<{ direction?: string }>) {
+  const badge = direction === 'short' || direction === 'both' ? DIRECTION_BADGES[direction] : null
+  if (!badge) return null
+  return (
+    <span
+      title={badge.title}
+      className={`ml-2 text-[9px] align-middle px-1.5 py-0.5 rounded-full border font-sans ${badge.className}`}
+    >
+      {badge.label}
+    </span>
+  )
 }
 
 function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; assetSymbol: string; interval: string }>) {
@@ -620,6 +694,7 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
         <div className="min-w-0 flex-1">
           <p className="text-sm text-slate-200 font-mono truncate">
             {f.description}
+            <DirectionBadge direction={m.direction ?? f.spec.direction} />
             {f.refined && (
               <span
                 className="ml-2 text-[9px] align-middle px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-sans"
@@ -711,6 +786,11 @@ function FinalistCard({ f, assetSymbol, interval }: Readonly<{ f: Finalist; asse
               ['Velas', `${h.candles}`],
             ]} />
           </div>
+
+          {/* De qué lado salió el resultado (solo en estrategias bidireccionales) */}
+          {hasSideBreakdown(m.sides) && (
+            <SideBreakdownCard sides={m.sides} failures={m.side_failures} />
+          )}
 
           {/* Análisis profundo de robustez (suite completa + multi-activo) */}
           <SpecRobustnessPanel spec={f.spec} assetSymbol={assetSymbol} interval={interval} />

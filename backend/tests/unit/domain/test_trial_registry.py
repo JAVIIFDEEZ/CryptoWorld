@@ -160,8 +160,14 @@ class TestGateSpecSource:
         )
 
         assert "deflated_sharpe" not in out["checks"]
+        # El conjunto exacto se fija a propósito: añadir un check es cambiar el
+        # contrato del gating, y eso debe verse aquí. `sides_stand_alone` entró
+        # con los cortos —exige que cada lado activo se sostenga solo— y en una
+        # estrategia de un solo lado no tiene nada que exigir, así que pasa sin
+        # coste. Ver `_sides_stand_alone`.
         assert set(out["checks"]) == {
             "min_trades", "no_lookahead", "wf_efficiency", "pbo", "mc_p5_positive",
+            "sides_stand_alone",
         }
 
 

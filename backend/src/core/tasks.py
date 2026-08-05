@@ -349,10 +349,11 @@ def generate_strategies(
     self,
     asset_symbol: str,
     interval: str = "1d",
-    limit: int = 730,
+    limit: int | None = None,
     initial_capital: float = 10000.0,
     preset: str = "balanced",
     optimizer: str = "single",
+    direction: str = "long",
     seed: int | None = None,
 ) -> dict:
     """
@@ -390,6 +391,7 @@ def generate_strategies(
             initial_capital=initial_capital,
             preset=preset,
             optimizer=optimizer,
+            direction=direction,
             seed=seed,
             progress_cb=publish if job_id else None,
         )

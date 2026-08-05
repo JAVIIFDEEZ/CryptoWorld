@@ -407,7 +407,14 @@ class StrategyGenerateRequestSerializer(serializers.Serializer):
         choices=["1h", "2h", "4h", "6h", "12h", "1d", "1w"],
         default="1d", required=False,
     )
-    limit = serializers.IntegerField(min_value=300, max_value=2000, default=730, required=False)
+    # Sin default: omitirlo deja que el generador dimensione el histórico POR
+    # CALENDARIO según el marco temporal. El default fijo de 730 que había aquí
+    # era la causa raíz de que en 1 h la búsqueda trabajara con 30 días de datos
+    # —tramos de walk-forward de cinco días, dos o tres operaciones cada uno— y
+    # ninguna medición estadística de después significara nada.
+    limit = serializers.IntegerField(
+        min_value=300, max_value=5000, required=False, allow_null=True,
+    )
     initial_capital = serializers.FloatField(
         min_value=100, max_value=1_000_000, default=10000.0, required=False
     )
@@ -416,6 +423,11 @@ class StrategyGenerateRequestSerializer(serializers.Serializer):
     )
     optimizer = serializers.ChoiceField(
         choices=["single", "nsga"], default="single", required=False,
+    )
+    # Lado del mercado que la ejecución puede explorar. "auto" lo convierte en un
+    # gen más y deja que la evolución decida por estrategia.
+    direction = serializers.ChoiceField(
+        choices=["long", "short", "both", "auto"], default="long", required=False,
     )
     # Semilla reproducible del GA (mismos datos + misma semilla → misma evolución)
     seed = serializers.IntegerField(

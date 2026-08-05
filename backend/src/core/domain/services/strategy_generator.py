@@ -26,6 +26,8 @@ from core.domain.services.strategy_spec import (
     COMBINES,
     COMPARE_OPS,
     CROSS_OPS,
+    DEFAULT_DIRECTION,
+    DIRECTIONS,
     MIN_NEGATABLE_LOOKBACK,
     NEGATABLE,
     OSCILLATORS,
@@ -33,15 +35,19 @@ from core.domain.services.strategy_spec import (
     SLOPE_OPS,
     THRESHOLD_OPS,
     _MAX_CONDITIONS,
+    _random_block,
     _random_pattern_condition,
     _random_regime,
     _random_risk,
     _random_sizing,
     _sample_params,
+    condition_blocks,
     jitter_params,
+    mirror_spec,
     random_condition,
     random_spec,
     seed_specs,
+    spec_direction,
     spec_hash,
     validate_spec,
 )
@@ -68,6 +74,11 @@ class GAConfig:
     stagnation_patience: int = 0  # gens sin mejora antes de hipermutar (0 = off)
     hypermutation_factor: float = 2.0  # multiplicador de mutación bajo estancamiento
     hof_size: int = 16            # hall of fame: mejores-de-siempre únicos
+    # Lado del mercado que la ejecución puede explorar: "long" | "short" |
+    # "both" | "auto". Por defecto "long", que es lo que este motor ha hecho
+    # siempre — activar los cortos es una decisión explícita de quien lanza la
+    # búsqueda, no un cambio que se aplica solo a lo ya validado.
+    direction: str = DEFAULT_DIRECTION
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -82,17 +93,56 @@ def crossover(parent_a: dict, parent_b: dict, rng: np.random.Generator) -> dict:
     se perdían siempre en el cruce y el GA no podía conservar una buena gestión
     de riesgo entre generaciones. Como cada bloque es independientemente legal,
     el hijo siempre es un spec válido.
+
+    Direcciones distintas no se cruzan
+    ──────────────────────────────────
+    Los progenitores de distinta dirección no producen recombinación, producen
+    ruido: un bloque de entrada calibrado para comprar caídas no significa lo
+    mismo gobernando la apertura de un corto, y el hijo hereda unos umbrales
+    que nunca se midieron contra esa dinámica. El cruce se limita a
+    progenitores del mismo lado —una especiación, en términos de GA— y el paso
+    de una dirección a otra queda reservado a `_mutate_direction`, que lo hace
+    deliberadamente y de un genoma a la vez. Si difieren, gana `parent_a` y su
+    material se clona: el hijo sale de un solo progenitor.
     """
+    if spec_direction(parent_a) != spec_direction(parent_b):
+        return copy.deepcopy(parent_a)
+
     if rng.random() < 0.5:
         entry, exit_ = parent_a["entry"], parent_b["exit"]
     else:
         entry, exit_ = parent_b["entry"], parent_a["exit"]
     child = {"entry": copy.deepcopy(entry), "exit": copy.deepcopy(exit_)}
+    direction = spec_direction(parent_a)
+    if direction != DEFAULT_DIRECTION:
+        child["direction"] = direction
+    if direction == "both":
+        # El lado corto se cruza igual que el largo y con la misma moneda
+        # independiente: así los dos lados se recombinan de verdad en vez de
+        # viajar pegados como un bloque único.
+        if rng.random() < 0.5:
+            s_entry, s_exit = parent_a["short_entry"], parent_b["short_exit"]
+        else:
+            s_entry, s_exit = parent_b["short_entry"], parent_a["short_exit"]
+        child["short_entry"] = copy.deepcopy(s_entry)
+        child["short_exit"] = copy.deepcopy(s_exit)
     for block in ("risk", "sizing", "regime"):
         donor = parent_a if rng.random() < 0.5 else parent_b
         if donor.get(block):
             child[block] = copy.deepcopy(donor[block])
     return child
+
+
+def _pick_block(spec: dict, rng: np.random.Generator) -> str:
+    """
+    Un bloque de condiciones al azar entre los que el spec tiene.
+
+    En un spec "both" son cuatro, no dos: si los operadores siguieran eligiendo
+    solo entre `entry` y `exit`, el lado corto entraría en la población en el
+    sorteo inicial y ya no cambiaría nunca. Sería medio genoma congelado.
+    """
+    blocks = condition_blocks(spec)
+    return blocks[int(rng.integers(0, len(blocks)))]
 
 
 def _mutate_condition_params(spec: dict, rng: np.random.Generator) -> dict:
@@ -103,7 +153,7 @@ def _mutate_condition_params(spec: dict, rng: np.random.Generator) -> dict:
 def _mutate_threshold(spec: dict, rng: np.random.Generator) -> dict:
     """Mueve el umbral de una condición de tipo threshold dentro de su rango."""
     out = copy.deepcopy(spec)
-    thr_conds = [c for side in ("entry", "exit") for c in out[side]["conditions"]
+    thr_conds = [c for side in condition_blocks(out) for c in out[side]["conditions"]
                  if c["type"] == "threshold"]
     if not thr_conds:
         return out
@@ -130,7 +180,7 @@ def _mutate_flip_op(spec: dict, rng: np.random.Generator) -> dict:
     o no ocurre. Se excluyen de la selección en lugar de tratarlas aparte,
     porque su mutación propia es `_mutate_pattern`."""
     out = copy.deepcopy(spec)
-    conds = [c for side in ("entry", "exit") for c in out[side]["conditions"]
+    conds = [c for side in condition_blocks(out) for c in out[side]["conditions"]
              if c["type"] in _OPS_BY_TYPE]
     if not conds:
         return out
@@ -155,7 +205,7 @@ def _mutate_pattern(spec: dict, rng: np.random.Generator) -> dict:
     adquirirlos nunca por esta vía.
     """
     out = copy.deepcopy(spec)
-    targets = [(side, i) for side in ("entry", "exit")
+    targets = [(side, i) for side in condition_blocks(out)
                for i, c in enumerate(out[side]["conditions"]) if c["type"] == "pattern"]
     if targets:
         side, i = targets[int(rng.integers(0, len(targets)))]
@@ -170,7 +220,7 @@ def _mutate_pattern(spec: dict, rng: np.random.Generator) -> dict:
         }
         return out
 
-    side = "entry" if rng.random() < 0.5 else "exit"
+    side = _pick_block(out, rng)
     conds = out[side]["conditions"]
     conds[int(rng.integers(0, len(conds)))] = _random_pattern_condition(rng)
     return out
@@ -186,7 +236,7 @@ def _mutate_flip_combine(spec: dict, rng: np.random.Generator) -> dict:
     control de diversidad del GA.
     """
     out = copy.deepcopy(spec)
-    side = "entry" if rng.random() < 0.5 else "exit"
+    side = _pick_block(out, rng)
     block = out[side]
     n = len(block["conditions"])
 
@@ -207,7 +257,7 @@ def _mutate_flip_combine(spec: dict, rng: np.random.Generator) -> dict:
 def _mutate_k(spec: dict, rng: np.random.Generator) -> dict:
     """Mueve el umbral de confirmación `k` de un bloque «k de n»."""
     out = copy.deepcopy(spec)
-    blocks = [out[side] for side in ("entry", "exit")
+    blocks = [out[side] for side in condition_blocks(out)
               if out[side]["combine"] == "K_OF_N" and len(out[side]["conditions"]) >= 3]
     if not blocks:
         return out
@@ -225,7 +275,7 @@ def _mutate_negate(spec: dict, rng: np.random.Generator) -> dict:
     negada del espacio quedaba accesible solo por azar.
     """
     out = copy.deepcopy(spec)
-    targets = [c for side in ("entry", "exit") for c in out[side]["conditions"]
+    targets = [c for side in condition_blocks(out) for c in out[side]["conditions"]
                if _negatable(c)]
     if not targets:
         return out
@@ -248,7 +298,7 @@ def _negatable(c: dict) -> bool:
 def _mutate_replace_condition(spec: dict, rng: np.random.Generator) -> dict:
     """Sustituye una condición por una nueva condición aleatoria legal."""
     out = copy.deepcopy(spec)
-    side = "entry" if rng.random() < 0.5 else "exit"
+    side = _pick_block(out, rng)
     conds = out[side]["conditions"]
     conds[int(rng.integers(0, len(conds)))] = random_condition(rng)
     return out
@@ -257,7 +307,7 @@ def _mutate_replace_condition(spec: dict, rng: np.random.Generator) -> dict:
 def _mutate_add_condition(spec: dict, rng: np.random.Generator) -> dict:
     """Añade una condición a un bloque (si no ha llegado al máximo)."""
     out = copy.deepcopy(spec)
-    side = "entry" if rng.random() < 0.5 else "exit"
+    side = _pick_block(out, rng)
     if len(out[side]["conditions"]) < _MAX_CONDITIONS:
         out[side]["conditions"].append(random_condition(rng))
     return out
@@ -266,7 +316,7 @@ def _mutate_add_condition(spec: dict, rng: np.random.Generator) -> dict:
 def _mutate_remove_condition(spec: dict, rng: np.random.Generator) -> dict:
     """Elimina una condición de un bloque (si le queda más de una)."""
     out = copy.deepcopy(spec)
-    side = "entry" if rng.random() < 0.5 else "exit"
+    side = _pick_block(out, rng)
     if len(out[side]["conditions"]) > 1:
         out[side]["conditions"].pop(int(rng.integers(0, len(out[side]["conditions"]))))
     return out
@@ -308,6 +358,60 @@ def _mutate_regime(spec: dict, rng: np.random.Generator) -> dict:
     return out
 
 
+def _mutate_direction(spec: dict, rng: np.random.Generator) -> dict:
+    """
+    Cambia el LADO del mercado que opera la estrategia.
+
+    Solo se registra en modo "auto" (ver `mutate`): con la dirección fija por
+    configuración, cambiarla sería desobedecer al usuario, no explorar.
+
+    Las tres transiciones conservan todo el material genético que pueden:
+
+      · largo ↔ corto — los mismos bloques pasan a gobernar el otro lado. La
+        estrategia cambia de significado por completo y eso es justo lo que se
+        busca: es la única forma de llegar a la mitad corta del espacio sin
+        volver a sortear el genoma entero.
+      · → both — los bloques actuales se quedan donde están y el lado que falta
+        nace aleatorio. No se copia el lado existente en espejo: una reversión a
+        la media al alza no es la misma estrategia que a la baja, y arrancar el
+        lado nuevo con umbrales calibrados para el contrario daría una ventaja
+        aparente que el histórico no ha medido.
+      · both → un solo lado — se conserva el lado que sobrevive y se descartan
+        los bloques del otro. Es la vía de simplificación: sin ella, un genoma
+        que llegara a "both" no podría volver a ser simple nunca.
+    """
+    out = copy.deepcopy(spec)
+    current = spec_direction(spec)
+    options = [d for d in DIRECTIONS if d != current]
+    target = str(rng.choice(options))
+
+    if target == "both":
+        # El lado que ya existe se queda en su sitio; el otro nace de cero.
+        if current == "short":
+            # Los bloques principales pasan a ser el lado LARGO en "both", así
+            # que el material corto tiene que mudarse a los bloques cortos —
+            # de lo contrario cambiaría de lado en silencio.
+            out["short_entry"], out["short_exit"] = out["entry"], out["exit"]
+            out["entry"], out["exit"] = _random_block(rng), _random_block(rng)
+        else:
+            out["short_entry"], out["short_exit"] = _random_block(rng), _random_block(rng)
+        out["direction"] = "both"
+        return out
+
+    if current == "both":
+        # Se conserva el lado que sobrevive y se tiran los bloques del otro.
+        if target == "short":
+            out["entry"], out["exit"] = out["short_entry"], out["short_exit"]
+        out.pop("short_entry", None)
+        out.pop("short_exit", None)
+
+    if target == DEFAULT_DIRECTION:
+        out.pop("direction", None)
+    else:
+        out["direction"] = target
+    return out
+
+
 _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_condition_params,
     _mutate_threshold,
@@ -324,17 +428,35 @@ _MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = [
     _mutate_regime,
 ]
 
+# La dirección solo muta cuando la ejecución la ha dejado libre.
+_AUTO_MUTATORS: list[Callable[[dict, np.random.Generator], dict]] = (
+    _MUTATORS + [_mutate_direction]
+)
 
-def mutate(spec: dict, rng: np.random.Generator) -> dict:
+
+def mutate(spec: dict, rng: np.random.Generator,
+           direction: str = DEFAULT_DIRECTION) -> dict:
     """
-    Aplica un operador de mutación al azar. Si el resultado no es legal (caso
-    raro, p. ej. un cruce que colisiona consigo mismo), reintenta con otro
-    operador; si nada funciona, devuelve el spec original intacto.
+    Aplica un operador de mutación al azar.
+
+    Un candidato se descarta por dos motivos, y el segundo es nuevo: si no es
+    legal (caso raro, p. ej. un cruce que colisiona consigo mismo), y si **no ha
+    cambiado nada**. Muchos operadores no tienen dónde morder en según qué
+    genoma —quitar una condición de un bloque que solo tiene una, mover el `k`
+    de un spec sin bloques «k de n»—, y hasta ahora esos casos consumían la
+    mutación de la generación y devolvían el padre idéntico. Comparar el hash
+    cuesta microsegundos y convierte esos turnos perdidos en mutaciones reales.
+
+    `direction` es el modo de la ejecución: con "auto" entra además el operador
+    que cambia el lado del mercado. Con la dirección fija no se registra —
+    cambiarla sería desobedecer la configuración, no explorar.
     """
-    order = rng.permutation(len(_MUTATORS))
+    pool = _AUTO_MUTATORS if direction == "auto" else _MUTATORS
+    original = spec_hash(spec)
+    order = rng.permutation(len(pool))
     for idx in order:
-        candidate = _MUTATORS[idx](spec, rng)
-        if validate_spec(candidate):
+        candidate = pool[idx](spec, rng)
+        if validate_spec(candidate) and spec_hash(candidate) != original:
             return candidate
     return spec
 
@@ -350,6 +472,38 @@ def _tournament(pop: list[dict], fitnesses: list[float], k: int, rng: np.random.
     return pop[best]
 
 
+def _directional_seeds(direction: str) -> list[dict]:
+    """
+    Las semillas clásicas, orientadas al lado que la ejecución va a buscar.
+
+    Las 5 del catálogo son estrategias LARGAS. Meterlas sin tocar en una
+    búsqueda de cortos arrancaría el GA desde lógicas que en ese lado pierden
+    por construcción, y el warm start —que existe para acelerar la
+    convergencia— la frenaría. Su espejo sí es el punto de partida canónico.
+
+    En "both" cada semilla lleva su lado largo original y su lado corto
+    reflejado: la estrategia bidireccional de manual. Los operadores genéticos
+    despegan los dos lados desde la primera generación, así que la simetría es
+    solo el punto de salida.
+
+    En "auto" se siembra con las largas tal cual y se deja que
+    `_mutate_direction` lleve material a los otros lados. Sembrar las tres
+    variantes decidiría por el sorteo lo que debe decidir el fitness.
+    """
+    seeds = seed_specs()
+    if direction == "short":
+        return [{**mirror_spec(s), "direction": "short"} for s in seeds]
+    if direction == "both":
+        out = []
+        for s in seeds:
+            mirrored = mirror_spec(s)
+            out.append({**copy.deepcopy(s), "direction": "both",
+                        "short_entry": mirrored["entry"],
+                        "short_exit": mirrored["exit"]})
+        return out
+    return seeds
+
+
 def _initial_population(config: GAConfig, rng: np.random.Generator) -> list[dict]:
     """
     Población inicial: una fracción sembrada con las 5 estrategias clásicas y sus
@@ -357,18 +511,19 @@ def _initial_population(config: GAConfig, rng: np.random.Generator) -> list[dict
     con diversidad real.
     """
     pop: list[dict] = []
-    seeds = seed_specs()
+    seeds = _directional_seeds(config.direction)
     n_seeded = min(len(seeds), int(round(config.population_size * config.seed_fraction)))
     pop.extend(seeds[:n_seeded])
     # Vecinos jitter de las semillas para explorar su entorno
     while len(pop) < n_seeded * 2 and len(pop) < config.population_size:
         pop.append(jitter_params(seeds[int(rng.integers(0, len(seeds)))], rng))
     while len(pop) < config.population_size:
-        pop.append(random_spec(rng))
-    return _dedup(pop, config.population_size, rng)
+        pop.append(random_spec(rng, config.direction))
+    return _dedup(pop, config.population_size, rng, config.direction)
 
 
-def _dedup(pop: list[dict], target: int, rng: np.random.Generator) -> list[dict]:
+def _dedup(pop: list[dict], target: int, rng: np.random.Generator,
+           direction: str = DEFAULT_DIRECTION) -> list[dict]:
     """Elimina specs duplicados (mismo hash) y rellena con aleatorios hasta target."""
     seen: set[str] = set()
     unique: list[dict] = []
@@ -378,7 +533,7 @@ def _dedup(pop: list[dict], target: int, rng: np.random.Generator) -> list[dict]
             seen.add(h)
             unique.append(spec)
     while len(unique) < target:
-        spec = random_spec(rng)
+        spec = random_spec(rng, direction)
         h = spec_hash(spec)
         if h not in seen:
             seen.add(h)
@@ -404,7 +559,7 @@ def _reproduce_island(
     de diversidad + torneo → cruce → mutación (con la tasa vigente, que puede
     estar hipermutada por estancamiento)."""
     next_pop: list[dict] = [copy.deepcopy(s) for s in ordered[:elitism]]
-    next_pop.extend(random_spec(rng) for _ in range(injection))
+    next_pop.extend(random_spec(rng, cfg.direction) for _ in range(injection))
     while len(next_pop) < target:
         parent = _tournament(ordered, fitnesses, cfg.tournament_size, rng)
         if rng.random() < cfg.crossover_rate:
@@ -413,9 +568,9 @@ def _reproduce_island(
         else:
             child = copy.deepcopy(parent)
         if rng.random() < mutation_rate:
-            child = mutate(child, rng)
+            child = mutate(child, rng, cfg.direction)
         next_pop.append(child)
-    return _dedup(next_pop, target, rng)
+    return _dedup(next_pop, target, rng, cfg.direction)
 
 
 def evolve(

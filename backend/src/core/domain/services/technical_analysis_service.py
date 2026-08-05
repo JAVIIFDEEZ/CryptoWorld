@@ -1068,12 +1068,17 @@ def backtest_signals(
     costs: "CostModel | None" = None,
     risk: "RiskModel | None" = None,
     sizing: "SizingModel | None" = None,
+    short_signals: "np.ndarray | None" = None,
 ) -> dict:
     """
-    Backtest long-only (todo dentro / todo fuera) de un array de señales
-    arbitrario (1=compra, -1=venta, 0=hold). Reutilizable por el generador
-    de estrategias (señales compiladas de un StrategySpec componible), no
-    solo por las 5 estrategias del catálogo.
+    Backtest (todo dentro / todo fuera) de un array de señales arbitrario
+    (1=compra, -1=venta, 0=hold). Reutilizable por el generador de estrategias
+    (señales compiladas de un StrategySpec componible), no solo por las 5
+    estrategias del catálogo.
+
+    `short_signals` añade el lado CORTO con su propio par abrir/cerrar. Es
+    opcional y `None` por defecto: sin él la simulación es exactamente la
+    long-only de siempre, misma ruta de código y mismos números.
 
     `costs` aplica comisión + deslizamiento (None = sin costes, comportamiento
     histórico); `risk` aplica stop-loss/take-profit/trailing intrabar. Devuelve
@@ -1104,7 +1109,8 @@ def backtest_signals(
     funding_arr = funding_service.funding_from_dataframe(df)
 
     sim = simulate(close, high, low, signals, initial_capital, costs=costs, risk=risk,
-                   sizing=sizing, atr=atr_arr, open_=open_, funding=funding_arr)
+                   sizing=sizing, atr=atr_arr, open_=open_, funding=funding_arr,
+                   short_signals=short_signals)
     trades = sim["trades"]
     equity_curve = sim["equity_curve"]
     final_capital = sim["final_capital"]

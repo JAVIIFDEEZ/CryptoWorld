@@ -45,7 +45,9 @@ from core.domain.services.strategy_evaluation import (
 )
 from core.domain.services.strategy_generator import GAConfig, evolve
 from core.domain.services.strategy_nsga import NSGAConfig, evolve_nsga
-from core.domain.services.strategy_spec import describe_spec, spec_hash
+from core.domain.services.strategy_spec import (
+    DEFAULT_DIRECTION, DIRECTION_MODES, describe_spec, spec_direction, spec_hash,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -742,6 +744,11 @@ def generate_strategies(
             "description": f["description"],
             "fitness": f["fitness"],
             "passed_gating": f["passed_gating"],
+            # Qué lado del mercado opera, y —si son los dos— el desglose de qué
+            # aportó cada uno. Sin esto, un libro mixto se lee como si todas las
+            # estrategias fueran largas.
+            "direction": spec_direction(f["spec"]),
+            "sides": m.get("sides") or None,
             "pbo": m.get("pbo"),
             "wf_efficiency": m.get("wf_efficiency"),
             "oos_sharpe": m.get("mean_oos_sharpe"),
@@ -858,6 +865,7 @@ class GenerateStrategiesUseCase:
         initial_capital: float = 10000.0,
         preset: str = DEFAULT_PRESET,
         optimizer: str = "single",
+        direction: str = DEFAULT_DIRECTION,
         config: GenerationConfig | None = None,
         persist: bool = True,
         seed: int | None = None,
@@ -899,6 +907,12 @@ class GenerateStrategiesUseCase:
         cfg = config or config_for_preset(preset)
         if optimizer in ("single", "nsga"):
             cfg = replace(cfg, optimizer=optimizer)
+        # Lado del mercado que ESTA ejecución puede explorar. Va en la config
+        # del GA porque es donde lo consumen los operadores genéticos, pero se
+        # decide por ejecución: un mismo preset sirve para buscar largos hoy y
+        # cortos mañana sin tocar los presets.
+        if direction in DIRECTION_MODES:
+            cfg = replace(cfg, ga=replace(cfg.ga, direction=direction))
         if seed is not None:
             # Semilla reproducible elegida por el usuario (mismos datos + misma
             # semilla → misma evolución), como en StrategyQuant.
@@ -910,6 +924,7 @@ class GenerateStrategiesUseCase:
         report["asset_symbol"] = symbol
         report["data_source"] = result.source
         report["preset"] = preset
+        report["direction"] = cfg.ga.direction
 
         # ── Validación cruzada multi-activo de las finalistas ──────────
         # Un edge robusto generaliza a otros símbolos; uno sobreajustado solo
