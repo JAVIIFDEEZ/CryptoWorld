@@ -143,6 +143,7 @@ def simulate(
     open_: np.ndarray | None = None,
     fill_next_bar: bool = True,
     funding: np.ndarray | None = None,
+    short_signals: np.ndarray | None = None,
 ) -> dict:
     """
     Simula la estrategia long-only sobre arrays de precio y señales. Con sizing
@@ -181,6 +182,34 @@ def simulate(
     que es cuando ya se sabe cuánto valía. Es el coste que convierte un backtest
     de perpetuos en algo operable: se paga con la posición abierta tenga o no
     razón, y su peso crece con la duración del trade.
+
+    Posiciones cortas (`short_signals`)
+    ───────────────────────────────────
+    Array con la misma convención que `signals` pero referido al lado corto:
+    1 = abrir corto, −1 = cerrarlo, 0 = mantener. Va SEPARADO y no reutiliza el
+    −1 de `signals` a propósito: en el motor histórico ese −1 significa «cierra
+    el largo», y darle un segundo significado cambiaría el comportamiento de
+    todas las estrategias ya guardadas. Sin este argumento, el motor se comporta
+    exactamente como antes.
+
+    Contabilidad de un corto, y por qué no es un largo con el signo cambiado:
+
+      · **Se vende lo prestado.** Al abrir se venden `notional/precio` unidades
+        que no se tienen: la caja SUBE en el importe y queda un pasivo de esas
+        unidades. `position` pasa a ser negativa y el patrimonio es
+        `caja + position·precio`, que resta porque `position < 0`.
+      · **El riesgo es asimétrico.** Un largo pierde como mucho el 100 %; un
+        corto no tiene tope. Por eso el stop de un corto va POR ENCIMA de la
+        entrada y el objetivo por debajo — no es una elección de estilo, es
+        que la pérdida ilimitada solo se acota con un stop.
+      · **La financiación cambia de signo.** Un rate positivo significa que los
+        largos pagan a los cortos: el mismo número que es coste en un largo es
+        INGRESO en un corto. Aplicarlo con el mismo signo a los dos lados
+        premiaría o castigaría a uno de ellos sin motivo económico.
+      · **Solo una posición a la vez.** El motor no abre corto con un largo
+        abierto ni al revés. Permitir ambos simultáneamente sería una cartera,
+        no una estrategia, y exigiría un modelo de margen que este motor no
+        tiene.
     """
     costs = costs or NO_COSTS
     sizing = sizing or DEFAULT_SIZING
@@ -193,12 +222,13 @@ def simulate(
     fill_price_series = open_ if open_ is not None else close
 
     capital = float(initial_capital)
-    position = 0.0
+    position = 0.0              # unidades: >0 largo, <0 corto
     in_trade = False
+    side = 0                    # +1 largo, −1 corto, 0 plano
     entry_price = 0.0
     entry_idx = 0
     entry_capital = 0.0
-    high_water = 0.0
+    high_water = 0.0            # extremo favorable desde la entrada (trailing)
     entry_atr = None            # ATR en la barra de entrada (para atr_stop_mult)
 
     trades: list[dict] = []
@@ -210,7 +240,7 @@ def simulate(
     gross_traded = 0.0
 
     def do_buy(i: int, price: float) -> None:
-        nonlocal capital, position, in_trade, entry_price, entry_idx, entry_capital, high_water
+        nonlocal capital, position, in_trade, side, entry_price, entry_idx, entry_capital, high_water
         nonlocal total_commission, gross_traded, entry_atr, trade_funding
         notional = _position_notional(capital, sizing, risk, i)  # equity == capital (flat)
         if notional <= 0:
@@ -229,11 +259,46 @@ def simulate(
         trade_funding = 0.0               # financiación acumulada por ESTE trade
         capital -= notional               # el resto queda en liquidez (sizing parcial)
         in_trade = True
+        side = 1
+        total_commission += fee
+        gross_traded += notional
+
+    def do_short(i: int, price: float) -> None:
+        """
+        Abre un corto: vende unidades prestadas y guarda el importe en caja.
+
+        El deslizamiento va en CONTRA igual que en un largo, pero por el otro
+        lado: quien vende recibe algo menos que el precio de referencia, no algo
+        más. Aplicarlo con el mismo signo regalaría al corto un precio de venta
+        mejor que el de mercado.
+        """
+        nonlocal capital, position, in_trade, side, entry_price, entry_idx, entry_capital, high_water
+        nonlocal total_commission, gross_traded, entry_atr, trade_funding
+        notional = _position_notional(capital, sizing, risk, i)
+        if notional <= 0:
+            return
+        fee = notional * cr
+        fill = price * (1.0 - sr)         # se vende por debajo del precio de referencia
+        position = -(notional / fill) if fill > 0 else 0.0   # unidades prestadas
+        entry_price = float(price)
+        entry_idx = i
+        entry_capital = notional
+        high_water = float(price)         # para el trailing: el MÍNIMO favorable
+        entry_atr = float(atr[i]) if atr is not None and np.isfinite(atr[i]) and atr[i] > 0 else None
+        trade_funding = 0.0
+        # La venta ingresa el nocional menos la comisión. El pasivo (recomprar
+        # las unidades) queda representado por `position` negativa.
+        capital += notional - fee
+        in_trade = True
+        side = -1
         total_commission += fee
         gross_traded += notional
 
     def do_sell(i: int, exit_price: float, reason: str) -> None:
-        nonlocal capital, position, in_trade, total_commission, gross_traded
+        """Cierra la posición abierta, sea larga o corta."""
+        nonlocal capital, position, in_trade, side, total_commission, gross_traded
+        if side < 0:
+            return _close_short(i, exit_price, reason)
         fill = exit_price * (1.0 - sr)
         gross = position * fill
         fee = gross * cr
@@ -247,6 +312,7 @@ def simulate(
         trades.append({
             "entry_index": int(entry_idx),
             "exit_index": int(i),
+            "side": "long",
             "entry_price": round(float(entry_price), 4),
             "exit_price": round(float(fill), 4),
             "pnl_pct": round(float(pnl_pct), 2),
@@ -257,6 +323,42 @@ def simulate(
         capital += proceeds               # devuelve los ingresos a la liquidez
         position = 0.0
         in_trade = False
+        side = 0
+        total_commission += fee
+        gross_traded += gross
+
+    def _close_short(i: int, exit_price: float, reason: str) -> None:
+        """
+        Recompra las unidades prestadas y liquida el pasivo.
+
+        El resultado de un corto NO es el de un largo con el signo cambiado: se
+        ingresó al vender y se paga al recomprar, así que el beneficio es
+        `entrada − salida` sobre el nocional, y la comisión se paga en los dos
+        extremos igual que en un largo.
+        """
+        nonlocal capital, position, in_trade, side, total_commission, gross_traded
+        units = -position                 # positivas: las que hay que recomprar
+        fill = exit_price * (1.0 + sr)    # recomprar cuesta algo más que el precio
+        gross = units * fill
+        fee = gross * cr
+        cost = gross + fee                # salida de caja al cerrar
+        pnl_pct = ((entry_capital - cost - trade_funding) / entry_capital * 100.0
+                   if entry_capital else 0.0)
+        trades.append({
+            "entry_index": int(entry_idx),
+            "exit_index": int(i),
+            "side": "short",
+            "entry_price": round(float(entry_price), 4),
+            "exit_price": round(float(fill), 4),
+            "pnl_pct": round(float(pnl_pct), 2),
+            "funding_paid": round(float(trade_funding), 6),
+            "result": "WIN" if pnl_pct > 0 else "LOSS",
+            "exit_reason": reason,
+        })
+        capital -= cost
+        position = 0.0
+        in_trade = False
+        side = 0
         total_commission += fee
         gross_traded += gross
 
@@ -274,13 +376,15 @@ def simulate(
             fill_px = float(fill_price_series[i])
             if pending == 1 and not in_trade:
                 do_buy(i, fill_px)
+            elif pending == 2 and not in_trade:
+                do_short(i, fill_px)
             elif pending == -1 and in_trade:
                 do_sell(i, fill_px, "signal")
                 exited = True
             pending = 0
 
         # ── 1) Gestión de riesgo intrabar (solo después de la barra de entrada) ──
-        if in_trade and use_risk and i > entry_idx:
+        if in_trade and use_risk and i > entry_idx and side > 0:
             hi, lo = float(high[i]), float(low[i])
             if risk.trailing_stop_pct is not None:
                 high_water = max(high_water, hi)
@@ -316,6 +420,48 @@ def simulate(
                 do_sell(i, tp_price, "take_profit")
                 exited = True
 
+        # ── 1-corto) Gestión de riesgo del corto: TODO en espejo ──
+        # No es el bloque del largo con los signos cambiados por comodidad: un
+        # corto pierde cuando el precio SUBE, así que su stop va por encima de la
+        # entrada y su objetivo por debajo. La convención conservadora se
+        # mantiene —si en la misma vela se tocan stop y objetivo, salta el stop—,
+        # que aquí importa más todavía porque la pérdida de un corto no tiene
+        # tope.
+        if not exited and in_trade and use_risk and i > entry_idx and side < 0:
+            hi, lo = float(high[i]), float(low[i])
+            if risk.trailing_stop_pct is not None:
+                # El «agua» favorable de un corto es el MÍNIMO alcanzado.
+                high_water = min(high_water, lo)
+
+            sl_price = entry_price * (1.0 + risk.stop_loss_pct) if risk.stop_loss_pct is not None else None
+            trail_price = (high_water * (1.0 + risk.trailing_stop_pct)
+                           if risk.trailing_stop_pct is not None else None)
+            atr_price = (entry_price + risk.atr_stop_mult * entry_atr
+                         if risk.atr_stop_mult is not None and entry_atr else None)
+            # Stop vinculante = el más BAJO de los tres (el que se toca antes).
+            stop_price, stop_reason = None, "stop_loss"
+            for price_, reason_ in ((sl_price, "stop_loss"), (trail_price, "trailing_stop"),
+                                    (atr_price, "atr_stop")):
+                if price_ is not None and (stop_price is None or price_ < stop_price):
+                    stop_price, stop_reason = price_, reason_
+
+            pct_target = (entry_price * (1.0 - risk.take_profit_pct)
+                          if risk.take_profit_pct is not None else None)
+            atr_target = (entry_price - risk.atr_target_mult * entry_atr
+                          if risk.atr_target_mult is not None and entry_atr else None)
+            # Objetivo vinculante = el más ALTO (el más cercano por abajo).
+            tp_price = None
+            for price_ in (pct_target, atr_target):
+                if price_ is not None and (tp_price is None or price_ > tp_price):
+                    tp_price = price_
+
+            if stop_price is not None and hi >= stop_price:
+                do_sell(i, stop_price, stop_reason)
+                exited = True
+            elif tp_price is not None and lo <= tp_price:
+                do_sell(i, tp_price, "take_profit")
+                exited = True
+
         # ── 1b) Salida por tiempo: la posición ha agotado su vida máxima ──
         # Se rellena a la APERTURA: al abrir la vela ya se sabe que la posición
         # ha cumplido su plazo, sin necesidad de ver cómo cierra.
@@ -329,16 +475,31 @@ def simulate(
         # apertura de la vela siguiente, que es lo más pronto que se puede
         # actuar sobre un cierre recién observado.
         if not exited:
-            if signals[i] == 1 and not in_trade:
-                if fill_next_bar:
-                    pending = 1
-                else:
-                    do_buy(i, float(close[i]))
-            elif signals[i] == -1 and in_trade:
+            short_now = 0 if short_signals is None else int(short_signals[i])
+            # El cierre manda sobre la apertura: una vela que dice a la vez
+            # «cierra» y «abre el otro lado» se resuelve cerrando. Dar la vuelta
+            # a la posición en una sola vela exigiría dos rellenos al mismo
+            # precio, que es justo el optimismo que el relleno desplazado evita.
+            if in_trade and side > 0 and signals[i] == -1:
                 if fill_next_bar:
                     pending = -1
                 else:
                     do_sell(i, float(close[i]), "signal")
+            elif in_trade and side < 0 and short_now == -1:
+                if fill_next_bar:
+                    pending = -1
+                else:
+                    do_sell(i, float(close[i]), "signal")
+            elif not in_trade and signals[i] == 1:
+                if fill_next_bar:
+                    pending = 1
+                else:
+                    do_buy(i, float(close[i]))
+            elif not in_trade and short_now == 1:
+                if fill_next_bar:
+                    pending = 2
+                else:
+                    do_short(i, float(close[i]))
 
         # ── 2b) Financiación del perpetuo, si la posición sigue abierta ──
         # Se cobra sobre el valor de mercado al cierre, no sobre el nocional de
@@ -347,6 +508,11 @@ def simulate(
         if in_trade and funding is not None and i < len(funding):
             rate = float(funding[i])
             if rate and np.isfinite(rate):
+                # `position` ya lleva el signo del lado: negativa en un corto.
+                # Por eso el mismo rate positivo —que significa «los largos
+                # pagan»— sale coste en un largo e INGRESO en un corto, sin
+                # ninguna condición extra. Aplicarlo con el mismo signo a los
+                # dos lados premiaría o castigaría a uno sin motivo económico.
                 paid = position * float(close[i]) * rate
                 capital -= paid
                 total_funding += paid
