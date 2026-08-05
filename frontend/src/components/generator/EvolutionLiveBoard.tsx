@@ -15,29 +15,82 @@ import type { EvolutionProgress, GenerationHistoryPoint } from '@/services/strat
 // ── Gráfica de convergencia (mejor sólido / media discontinua) ──────
 
 const W = 640
-const H = 180
-const PAD = { top: 12, right: 74, bottom: 22, left: 44 }
+const H = 200
+const PAD = { top: 16, right: 78, bottom: 24, left: 46 }
+
+/** Separación mínima entre dos etiquetas directas para que no se pisen (px SVG). */
+const LABEL_GAP = 11
+
+/**
+ * Dominio vertical ROBUSTO para la convergencia.
+ *
+ * El problema se ve en cuanto arranca una ejecución: en la generación 0 la
+ * población está llena de genomas degenerados que el fitness penaliza a −65,
+ * mientras que todo lo interesante vive entre 0 y 2. Con un dominio ingenuo
+ * [min, max], ese único punto se lleva el 97 % del alto y las dos series quedan
+ * pegadas al borde superior como líneas planas — que es justo lo que no se
+ * puede leer.
+ *
+ * La regla tiene que distinguir dos cosas que se parecen: una media BAJA (la
+ * población todavía no ha alcanzado al mejor — información útil) y una media
+ * CATASTRÓFICA (genomas degenerados con la penalización máxima — ruido de
+ * arranque). Recortar la primera perdería la mitad del gráfico.
+ *
+ * Se usa la **valla de Tukey** (Q1 − 1,5·IQR), que es el criterio estándar de
+ * atípicos y decide con la dispersión de los propios datos. La alternativa
+ * evidente —un múltiplo del recorrido de la serie del mejor— falla justo cuando
+ * la búsqueda converge pronto: ahí el mejor apenas se mueve, el recorrido tiende
+ * a cero y el suelo acaba pegado a la línea, recortando medias perfectamente
+ * normales.
+ *
+ * Lo que cae fuera de la valla se marca, no se esconde.
+ */
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 1) return sorted[0]
+  const pos = (sorted.length - 1) * q
+  const lo = Math.floor(pos)
+  const hi = Math.ceil(pos)
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo)
+}
+
+export function domainOf(history: GenerationHistoryPoint[]) {
+  const all = history.flatMap((h) => [h.best, h.mean])
+  const sorted = [...all].sort((a, b) => a - b)
+  const hi = sorted[sorted.length - 1]
+  const trueLo = sorted[0]
+
+  const iqr = quantile(sorted, 0.75) - quantile(sorted, 0.25)
+  const fence = quantile(sorted, 0.25) - 1.5 * iqr
+
+  const clipped = iqr > 1e-9 && trueLo < fence
+  const lo = clipped ? fence : trueLo - 0.05 * Math.abs(hi - trueLo)
+  return { lo, hi: hi > lo ? hi : lo + 1, clipped, trueLo }
+}
 
 function ConvergenceChart({ history }: Readonly<{ history: GenerationHistoryPoint[] }>) {
   const [hover, setHover] = useState<number | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
 
-  const { pts, yMin, yMax } = useMemo(() => {
-    const values = history.flatMap((h) => [h.best, h.mean])
-    const lo = Math.min(...values)
-    const hi = Math.max(...values)
+  const { pts, yMin, yMax, clipped, trueLo, yOf } = useMemo(() => {
+    const { lo, hi, clipped: wasClipped, trueLo: worst } = domainOf(history)
     const span = hi - lo || 1
     const x = (g: number) => PAD.left + (history.length < 2 ? 0 : (g / (history.length - 1)) * (W - PAD.left - PAD.right))
-    const y = (v: number) => H - PAD.bottom - ((v - lo) / span) * (H - PAD.top - PAD.bottom)
+    const y = (v: number) => {
+      const c = Math.min(hi, Math.max(lo, v))
+      return H - PAD.bottom - ((c - lo) / span) * (H - PAD.top - PAD.bottom)
+    }
     return {
-      pts: history.map((h, i) => ({ x: x(i), yBest: y(h.best), yMean: y(h.mean), h })),
-      yMin: lo, yMax: hi,
+      pts: history.map((h, i) => ({
+        x: x(i), yBest: y(h.best), yMean: y(h.mean), h,
+        meanClipped: h.mean < lo - 1e-9,
+      })),
+      yMin: lo, yMax: hi, clipped: wasClipped, trueLo: worst, yOf: y,
     }
   }, [history])
 
   if (history.length < 2) {
     return (
-      <div className="h-[180px] flex items-center justify-center text-xs text-slate-500">
+      <div className="h-[200px] flex items-center justify-center text-xs text-slate-500">
         Esperando las primeras generaciones…
       </div>
     )
@@ -45,6 +98,19 @@ function ConvergenceChart({ history }: Readonly<{ history: GenerationHistoryPoin
 
   const line = (key: 'yBest' | 'yMean') => pts.map((p) => `${p.x.toFixed(1)},${p[key].toFixed(1)}`).join(' ')
   const hovered = hover != null ? pts[hover] : null
+  const last = pts[pts.length - 1]
+  const tail = history[history.length - 1]
+
+  // Etiquetas directas que NO se pisan. Cuando la media alcanza al mejor —que es
+  // el final feliz de una convergencia— las dos caían en la misma altura y se
+  // superponían hasta quedar ilegibles. Aquí se separan lo justo, con la del
+  // mejor arriba porque es la serie principal.
+  const labelBest = Math.max(PAD.top + 4, Math.min(last.yBest, H - PAD.bottom - LABEL_GAP))
+  const labelMean = Math.max(labelBest + LABEL_GAP, Math.min(last.yMean, H - PAD.bottom))
+
+  // Línea del cero: en un fitness construido sobre el Sharpe fuera de muestra,
+  // cruzarla es la diferencia entre buscar algo y buscar nada.
+  const showZero = yMin < 0 && yMax > 0
 
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
     const rect = svgRef.current?.getBoundingClientRect()
@@ -65,21 +131,29 @@ function ConvergenceChart({ history }: Readonly<{ history: GenerationHistoryPoin
         onPointerMove={onMove}
         onPointerLeave={() => setHover(null)}
       >
-        {/* Rejilla recesiva: mín / máx */}
-        {[yMin, yMax].map((v, i) => {
-          const y = i === 0 ? H - PAD.bottom : PAD.top
-          return (
-            <g key={i}>
-              <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y} stroke="#334155" strokeWidth={0.6} strokeDasharray="2 4" />
-              <text x={PAD.left - 6} y={y + 3} textAnchor="end" fontSize={9} className="fill-slate-500 font-mono">
-                {v.toFixed(2)}
-              </text>
-            </g>
-          )
-        })}
+        {/* Rejilla: mín / medio / máx */}
+        {[yMax, (yMax + yMin) / 2, yMin].map((v) => (
+          <g key={v}>
+            <line
+              x1={PAD.left} x2={W - PAD.right} y1={yOf(v)} y2={yOf(v)}
+              stroke="#334155" strokeWidth={0.6} strokeDasharray="2 4"
+            />
+            <text x={PAD.left - 6} y={yOf(v) + 3} textAnchor="end" fontSize={9} className="fill-slate-500 font-mono">
+              {v.toFixed(2)}
+            </text>
+          </g>
+        ))}
+
+        {showZero && (
+          <line
+            x1={PAD.left} x2={W - PAD.right} y1={yOf(0)} y2={yOf(0)}
+            stroke="#f59e0b" strokeWidth={0.8} strokeOpacity={0.45}
+          />
+        )}
+
         {/* Eje X: generaciones */}
-        <text x={PAD.left} y={H - 6} fontSize={9} className="fill-slate-500 font-mono">gen 0</text>
-        <text x={W - PAD.right} y={H - 6} textAnchor="end" fontSize={9} className="fill-slate-500 font-mono">
+        <text x={PAD.left} y={H - 7} fontSize={9} className="fill-slate-500 font-mono">gen 0</text>
+        <text x={W - PAD.right} y={H - 7} textAnchor="end" fontSize={9} className="fill-slate-500 font-mono">
           gen {history.length - 1}
         </text>
 
@@ -88,12 +162,21 @@ function ConvergenceChart({ history }: Readonly<{ history: GenerationHistoryPoin
         {/* Mejor de la generación: serie principal */}
         <polyline points={line('yBest')} fill="none" stroke="#60a5fa" strokeWidth={2} strokeLinejoin="round" />
 
+        {/* Marcas de lo que quedó fuera de escala: se señala, no se esconde. */}
+        {pts.filter((p) => p.meanClipped).map((p) => (
+          <path
+            key={p.x}
+            d={`M ${p.x - 3} ${H - PAD.bottom - 3} L ${p.x + 3} ${H - PAD.bottom - 3} L ${p.x} ${H - PAD.bottom + 1} Z`}
+            fill="#94a3b8" fillOpacity={0.7}
+          />
+        ))}
+
         {/* Etiquetas directas al final de cada serie */}
-        <text x={pts[pts.length - 1].x + 6} y={pts[pts.length - 1].yBest + 3} fontSize={9} className="fill-slate-200 font-medium">
-          mejor {history[history.length - 1].best.toFixed(2)}
+        <text x={last.x + 6} y={labelBest + 3} fontSize={9} className="fill-slate-200 font-medium">
+          mejor {tail.best.toFixed(2)}
         </text>
-        <text x={pts[pts.length - 1].x + 6} y={pts[pts.length - 1].yMean + 3} fontSize={9} className="fill-slate-400">
-          media {history[history.length - 1].mean.toFixed(2)}
+        <text x={last.x + 6} y={labelMean + 3} fontSize={9} className="fill-slate-400">
+          media {tail.mean.toFixed(2)}
         </text>
 
         {/* Capa de hover: crosshair + puntos */}
@@ -120,7 +203,7 @@ function ConvergenceChart({ history }: Readonly<{ history: GenerationHistoryPoin
       )}
 
       {/* Leyenda */}
-      <div className="flex items-center gap-4 mt-1 text-[10px] text-slate-400">
+      <div className="flex flex-wrap items-center gap-4 mt-1 text-[10px] text-slate-400">
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-4 h-0.5 bg-blue-400 rounded" /> mejor de la generación
         </span>
@@ -128,6 +211,16 @@ function ConvergenceChart({ history }: Readonly<{ history: GenerationHistoryPoin
           <svg width="16" height="2"><line x1="0" x2="16" y1="1" y2="1" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4 3" /></svg>
           media de la población
         </span>
+        {clipped && (
+          <span
+            className="text-slate-500"
+            title={'La escala la fija la serie del mejor de cada generación. Los genomas '
+                 + 'degenerados de las primeras generaciones caen mucho más abajo y, si '
+                 + 'marcaran el suelo, aplastarían todo lo demás contra el borde superior.'}
+          >
+            ▾ fuera de escala (mín. real {trueLo.toFixed(1)})
+          </span>
+        )}
       </div>
     </div>
   )
@@ -141,6 +234,7 @@ function CandidateGrid({ top }: Readonly<{ top: EvolutionProgress['top'] }>) {
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
       {top.map((c, i) => {
         const up = (c.total_return_pct ?? 0) >= 0
+        const badge = c.direction === 'short' || c.direction === 'both' ? c.direction : null
         return (
           <div
             key={c.hash}
@@ -149,12 +243,34 @@ function CandidateGrid({ top }: Readonly<{ top: EvolutionProgress['top'] }>) {
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[9px] uppercase tracking-wide text-slate-500">#{i + 1} · fitness</span>
-              <span className="text-[11px] font-mono font-bold text-blue-300">{c.fitness.toFixed(3)}</span>
+              <div className="flex items-center gap-1.5">
+                {badge && (
+                  <span
+                    className={`text-[8px] uppercase px-1 py-px rounded border ${
+                      badge === 'short'
+                        ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                        : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                    }`}
+                    title={badge === 'short' ? 'Opera en corto' : 'Opera los dos lados'}
+                  >
+                    {badge === 'short' ? 'corto' : 'L+C'}
+                  </span>
+                )}
+                <span
+                  className="text-[11px] font-mono font-bold text-blue-300"
+                  title="Fitness: Sharpe fuera de muestra del walk-forward, penalizado por sobreajuste, rotación y bajo nº de operaciones. Es lo único que ordena la búsqueda."
+                >
+                  {c.fitness.toFixed(3)}
+                </span>
+              </div>
             </div>
             <Sparkline data={c.equity} width={180} height={36} className="w-full mt-1" color={up ? '#34d399' : '#f87171'} />
             <div className="flex items-center justify-between mt-1 text-[9px] font-mono">
-              <span className={up ? 'text-emerald-400' : 'text-red-400'}>
-                {up ? '+' : ''}{c.total_return_pct?.toFixed(1)}%
+              <span
+                className={up ? 'text-emerald-400/80' : 'text-red-400/80'}
+                title="Retorno DENTRO DE MUESTRA sobre la zona de evolución: los mismos datos con los que se seleccionó esta estrategia. No es una expectativa — es el número que el gating existe para no creerse."
+              >
+                {up ? '+' : ''}{c.total_return_pct?.toFixed(1)}% <span className="text-slate-600">is</span>
               </span>
               <span className="text-slate-500">{c.n_trades} ops</span>
               <span className="text-slate-600">DD {c.max_drawdown_pct?.toFixed(0)}%</span>
@@ -287,8 +403,19 @@ export default function EvolutionLiveBoard({ progress }: Readonly<{ progress: Ev
       {/* Curvas de equity de las mejores candidatas de la generación */}
       {!isGating && !isRefining && !isCross && progress.top && progress.top.length > 0 && (
         <div>
-          <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1.5">
-            Mejores candidatas de la generación · equity sobre la zona de evolución (el holdout queda intacto)
+          <div className="flex flex-wrap items-baseline gap-x-2 mb-1.5">
+            <p className="text-[10px] uppercase tracking-wide text-slate-500">
+              Mejores de la búsqueda hasta ahora
+            </p>
+            <p className="text-[10px] text-slate-600">
+              equity dentro de muestra sobre la zona de evolución · el holdout queda intacto
+            </p>
+          </div>
+          <p className="text-[10px] text-amber-400/70 mb-1.5 leading-relaxed">
+            Estos retornos son <strong className="font-medium">dentro de muestra</strong>: salen de los
+            mismos datos con los que se eligieron estas estrategias, así que están inflados por
+            construcción. Ninguna entra en el libro hasta pasar el gating, y al terminar se te dice
+            qué fue de cada una.
           </p>
           <CandidateGrid top={progress.top} />
         </div>

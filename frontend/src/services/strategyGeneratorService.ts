@@ -695,6 +695,8 @@ export interface GenerationReport {
   rejected: (Candidate & { failed_checks: string[]; near_miss?: NearMiss | null })[]
   /** Rechazadas a las que les faltó un solo control, de más cerca a más lejos. */
   near_misses?: NearMiss[]
+  /** Qué fue de cada estrategia que se mostró durante la evolución. */
+  showcase?: Showcase
   persisted?: { id: number; spec_hash: string; rank: number; status?: StrategyStatus }[]
   /** Registro append-only de esta ejecución + contexto acumulado del activo. */
   experiment_run?: {
@@ -717,11 +719,49 @@ export type JobResult = GenerationReport | { error: string }
 export interface EvolutionCandidate {
   hash: string
   description: string
+  /** Lado del mercado que opera (ausente = largo, como los specs antiguos). */
+  direction?: GenDirection
   fitness: number
   equity: number[]
+  /**
+   * Retorno DENTRO DE MUESTRA sobre la zona de evolución: los mismos datos con
+   * los que se seleccionó la estrategia. No es una expectativa, y quien lo
+   * muestre tiene que decirlo — es el número que el gating existe para no
+   * creerse.
+   */
   total_return_pct: number
   max_drawdown_pct: number
   n_trades: number
+}
+
+/** Qué fue de una estrategia que se mostró durante la evolución. */
+export type Disposition = 'in_book' | 'variant' | 'rejected' | 'not_gated'
+
+export interface ShowcaseRow {
+  hash: string
+  description: string
+  direction?: GenDirection
+  fitness: number
+  total_return_pct: number
+  max_drawdown_pct: number
+  n_trades: number
+  disposition: Disposition
+  detail?: { failed_checks: string[]; near_miss: NearMiss | null } | null
+}
+
+/**
+ * Rastro de auditoría de la ejecución.
+ *
+ * Cierra el salto entre lo que se ve durante la evolución —curvas de equity con
+ * retornos llamativos— y lo que sale en el informe. Sin él, una candidata que se
+ * vio hacer un +33 % puede no volver a aparecer, y desde fuera es imposible
+ * distinguir «la descartaron por sobreajuste» de «se perdió por el camino».
+ */
+export interface Showcase {
+  shown: number
+  counts: Partial<Record<Disposition, number>>
+  rows: ShowcaseRow[]
+  note: string
 }
 
 export interface EvolutionProgress {

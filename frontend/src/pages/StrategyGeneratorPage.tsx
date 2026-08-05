@@ -40,6 +40,7 @@ import VariantsCard from '@/components/generator/VariantsCard'
 import SideBreakdownCard from '@/components/generator/SideBreakdownCard'
 import EmptyBookExplanation from '@/components/generator/EmptyBookExplanation'
 import NearMissesCard from '@/components/generator/NearMissesCard'
+import ShowcaseTrail from '@/components/generator/ShowcaseTrail'
 import StrategyComparePanel from '@/components/generator/StrategyComparePanel'
 import Generator3DPanel from '@/components/generator/Generator3DPanel'
 import SpecRobustnessPanel from '@/components/generator/SpecRobustnessPanel'
@@ -560,6 +561,11 @@ function ResultsView({ report }: Readonly<{ report: GenerationReport }>) {
       ) : (
         <EmptyBookExplanation power={report.power} report={report} />
       )}
+
+      {/* El rastro va ANTES de las descartadas: responde a la pregunta que el
+          usuario trae de la pantalla anterior —«¿dónde está la que hizo +33 %?»—
+          y las otras dos tarjetas son el detalle de sus respuestas. */}
+      <ShowcaseTrail showcase={report.showcase} />
 
       {(report.near_misses?.length ?? 0) > 0 && (
         <NearMissesCard misses={report.near_misses ?? []} />

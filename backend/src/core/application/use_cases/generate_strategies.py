@@ -141,6 +141,84 @@ def config_for_preset(preset: str) -> GenerationConfig:
     return _PRESETS.get(preset, _PRESETS[DEFAULT_PRESET])
 
 
+# Cuántas de las estrategias mostradas se detallan en el rastro. Se ordenan por
+# fitness, así que son las que el usuario recordará haber visto arriba.
+SHOWCASE_ROWS = 12
+
+
+def _showcase_trail(showcased: dict[str, dict], passed: list[dict],
+                    rejected: list[dict], gated: set[str],
+                    thresholds) -> dict:
+    """
+    Qué fue de cada estrategia que el usuario vio durante la evolución.
+
+    El agujero que cierra
+    ─────────────────────
+    El tablero en vivo enseña curvas de equity con retornos llamativos. El
+    informe final solo habla de las que llegaron al gating. Entre medias hay un
+    salto que nadie explica: una candidata que se vio hacer un +33 % puede no
+    volver a aparecer, y desde fuera es imposible distinguir «la descartaron por
+    sobreajuste» de «se perdió por el camino». Lo primero es el motor
+    funcionando; lo segundo sería un fallo. Presentar los dos como silencio es
+    lo que hace desconfiar de la herramienta.
+
+    Cada estrategia mostrada acaba en uno de cuatro sitios, y ninguno es
+    silencio:
+
+      · `in_book`   — está en el libro decorrelacionado.
+      · `variant`   — pasó los MISMOS controles, pero correlaciona con una
+        cabeza de libro; viaja como variante suya.
+      · `rejected`  — se examinó y no pasó. Se dice qué controles falló.
+      · `not_gated` — nunca llegó a examinarse. No es un veredicto sobre la
+        estrategia: el gating tiene presupuesto limitado (`max_gating_attempts`)
+        y se gasta por orden de fitness. Decirlo así evita que un «no aparece»
+        se lea como «la rechazaron».
+
+    Sobre el retorno que se muestra: es el de la ZONA DE EVOLUCIÓN, o sea dentro
+    de muestra sobre los datos con los que se seleccionó la estrategia. Ese es
+    exactamente el número que el resto del motor existe para no creerse, y por
+    eso viaja etiquetado como tal — no como una expectativa.
+    """
+    in_book = {f["spec_hash"] for f in passed}
+    variants = {v["spec_hash"] for f in passed for v in f.get("variants", [])}
+    by_hash = {f["spec_hash"]: f for f in rejected}
+
+    rows: list[dict] = []
+    for h, card in showcased.items():
+        if h in in_book:
+            disposition, detail = "in_book", None
+        elif h in variants:
+            disposition, detail = "variant", None
+        elif h in by_hash:
+            disposition = "rejected"
+            f = by_hash[h]
+            detail = {
+                "failed_checks": [k for k, v in f["gating"]["checks"].items() if not v],
+                "near_miss": near_miss(f["gating"], thresholds),
+            }
+        elif h in gated:
+            # Examinada y aprobada, pero fuera del libro por el filtro de
+            # correlación sin quedar registrada como variante de nadie.
+            disposition, detail = "variant", None
+        else:
+            disposition, detail = "not_gated", None
+        rows.append({**card, "disposition": disposition, "detail": detail})
+
+    rows.sort(key=lambda r: r["fitness"], reverse=True)
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["disposition"]] = counts.get(r["disposition"], 0) + 1
+    return {
+        "shown": len(rows),
+        "counts": counts,
+        "rows": rows[:SHOWCASE_ROWS],
+        "note": ("Cada estrategia que se mostró durante la evolución acaba aquí con "
+                 "su destino. El retorno es el de la zona de evolución —dentro de "
+                 "muestra, sobre los datos con los que se seleccionó— y no es una "
+                 "expectativa: es el número que el gating existe para no creerse."),
+    }
+
+
 def _near_miss_list(rejected: list[dict], thresholds) -> list[dict]:
     """
     Las rechazadas que fallaron UN SOLO control, de más cerca a más lejos.
@@ -501,16 +579,52 @@ def generate_strategies(
     equity_cache: dict[str, dict] = {}
     live_history: list[dict] = []
 
+    # Todo genoma que se le ha ENSEÑADO al usuario, con su ficha.
+    #
+    # Existe para cerrar un agujero de trazabilidad: durante la evolución el
+    # tablero muestra curvas de equity con retornos llamativos, y al terminar el
+    # informe solo habla de las que llegaron al gating. Una estrategia que se vio
+    # hacer un +33 % y no vuelve a mencionarse desaparece sin explicación, y el
+    # usuario no puede distinguir «la tiraron por sobreajuste» de «se perdió por
+    # el camino». Aquí se guarda cada ficha mostrada para poder decir al final
+    # qué fue de ella.
+    showcased: dict[str, dict] = {}
+
+    # Mejores de TODA la ejecución, no de la generación actual.
+    #
+    # El tablero mostraba `snap["top"]` —los mejores de esta generación—, así que
+    # las tarjetas cambiaban enteras cada pocos segundos: una candidata aparecía
+    # con un +107 % y a la siguiente generación ya no estaba, aunque siguiera
+    # siendo de lo mejor encontrado. Con un ranking acumulado, lo que se ve
+    # PERSISTE mientras nada la supere, que es lo que un tablero de investigación
+    # tiene que hacer — y coincide con el hall of fame que decide el gating.
+    running_best: dict[str, dict] = {}
+    LIVE_CARDS = 6
+
     def _candidate_card(entry: dict) -> dict:
         h = entry["hash"]
         if h not in equity_cache:
             equity_cache[h] = equity_curve(df_evo, entry["spec"], costs=costs)
-        return {
+        card = {
             "hash": h,
             "description": describe_spec(entry["spec"]),
+            "direction": spec_direction(entry["spec"]),
             "fitness": entry["fitness"],
             **equity_cache[h],
         }
+        # La ficha que se guarda para el rastro no lleva la curva: son ~120
+        # puntos por genoma y el informe viaja por Redis y por la API.
+        showcased[h] = {k: v for k, v in card.items() if k != "equity"}
+        return card
+
+    def _live_cards(snap_top: list[dict]) -> list[dict]:
+        """Mejores de la ejecución hasta ahora, no solo de esta generación."""
+        for entry in snap_top:
+            prev = running_best.get(entry["hash"])
+            if prev is None or entry["fitness"] > prev["fitness"]:
+                running_best[entry["hash"]] = entry
+        top = sorted(running_best.values(), key=lambda e: e["fitness"], reverse=True)
+        return [_candidate_card(e) for e in top[:LIVE_CARDS]]
 
     # Estado de la ronda actual (búsqueda hasta objetivo): las generaciones de
     # rondas sucesivas se encadenan en la historia con un offset para que la
@@ -524,7 +638,7 @@ def generate_strategies(
         })
         if progress_cb is None:
             return
-        top_cards = [_candidate_card(e) for e in snap.get("top", [])[:6]]
+        top_cards = _live_cards(snap.get("top", []))
         progress_cb(_json_safe({
             "phase": "evolving",
             "generation": snap["generation"],
@@ -906,6 +1020,11 @@ def generate_strategies(
         # quedarse a dos centésimas y quedarse a diez puntos. Elegir el listón
         # después de ver el salto es justo el sesgo que el gating frena.
         "near_misses": _near_miss_list(rejected, cfg.gating),
+        # Rastro de auditoría: qué fue de cada estrategia que se mostró durante
+        # la evolución. Sin esto, una candidata que se vio con un +33 % puede no
+        # volver a aparecer, y desde fuera no hay forma de distinguir «la
+        # descartaron» de «se perdió por el camino».
+        "showcase": _showcase_trail(showcased, passed, rejected, gated_hashes, cfg.gating),
     }
     if progress_cb is not None:
         progress_cb(_json_safe({"phase": "done", "history": list(live_history),
