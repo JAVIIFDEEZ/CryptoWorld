@@ -15,6 +15,10 @@ import {
   strategyGeneratorService,
   isGenerationReport,
   hasSideBreakdown,
+  SIGNAL_BADGES,
+  SIGNAL_LABELS,
+  SIGNAL_STYLES,
+  type LiveSignal,
   type GenerationReport,
   type GenPreset,
   type GenDirection,
@@ -908,12 +912,6 @@ function HistoryStrip({ items, onStartPaper }: Readonly<{ items: SavedStrategy[]
   )
 }
 
-const SIGNAL_STYLE: Record<string, string> = {
-  BUY: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  SELL: 'bg-red-500/15 text-red-400 border-red-500/30',
-  HOLD: 'bg-slate-700/40 text-slate-400 border-slate-600/40',
-}
-
 function SignalFeed({ events }: Readonly<{ events: SignalEvent[] }>) {
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
@@ -928,7 +926,12 @@ function SignalFeed({ events }: Readonly<{ events: SignalEvent[] }>) {
       <div className="space-y-1.5">
         {events.map((e) => (
           <div key={e.id} className="flex items-center gap-3 text-xs py-1.5 border-b border-slate-700/40 last:border-0">
-            <span className={`font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[e.signal]}`}>{e.signal}</span>
+            <span
+              title={SIGNAL_LABELS[e.signal]}
+              className={`font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLES[e.signal]}`}
+            >
+              {SIGNAL_BADGES[e.signal]}
+            </span>
             <span className="text-slate-200 font-medium">{e.asset_symbol}</span>
             <span className="text-slate-400 font-mono truncate flex-1">{e.name}</span>
             {e.price != null && <span className="text-slate-300 font-mono shrink-0">${e.price.toLocaleString()}</span>}
@@ -947,7 +950,7 @@ function HistoryCard({ s, onStartPaper, selected, onToggleSelect }: Readonly<{
   onToggleSelect?: () => void
 }>) {
   const [monitored, setMonitored] = useState(s.is_monitored)
-  const [signal, setSignal] = useState<string>(s.last_signal || 'HOLD')
+  const [signal, setSignal] = useState<LiveSignal>(s.last_signal || 'HOLD')
   const [busy, setBusy] = useState(false)
   const [paperStarted, setPaperStarted] = useState(false)
 
@@ -997,9 +1000,12 @@ function HistoryCard({ s, onStartPaper, selected, onToggleSelect }: Readonly<{
           )}
           <span className="text-[10px] text-emerald-300 font-semibold">#{s.rank} · {s.asset_symbol}</span>
         </label>
-        <button onClick={refreshSignal} disabled={busy} title="Recalcular señal actual"
-          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[signal] ?? SIGNAL_STYLE.HOLD}`}>
-          {signal}
+        <button
+          onClick={refreshSignal} disabled={busy}
+          title={`${SIGNAL_LABELS[signal] ?? SIGNAL_LABELS.HOLD} · pulsa para recalcular`}
+          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLES[signal] ?? SIGNAL_STYLES.HOLD}`}
+        >
+          {SIGNAL_BADGES[signal] ?? SIGNAL_BADGES.HOLD}
         </button>
       </div>
       <p className="text-[11px] text-slate-300 font-mono line-clamp-2 leading-snug h-8">{s.name}</p>

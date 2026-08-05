@@ -647,7 +647,7 @@ class StrategyDefinition(models.Model):
         null=True, blank=True,
     )
     is_monitored = models.BooleanField(default=False, db_index=True)
-    last_signal = models.CharField(max_length=8, default="HOLD")   # BUY | SELL | HOLD
+    last_signal = models.CharField(max_length=8, default="HOLD")   # BUY|SELL|SHORT|COVER|HOLD
     last_signal_at = models.DateTimeField(null=True, blank=True)
     generated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -676,7 +676,15 @@ class StrategySignalEvent(models.Model):
     han "disparado" las estrategias del usuario (no solo la última señal).
     """
 
-    SIGNAL_CHOICES = [("BUY", "Compra"), ("SELL", "Venta")]
+    # Cuatro acciones, no dos. Una estrategia corta emite SHORT/COVER, y
+    # forzarlas a BUY/SELL invertiría su significado: SELL es cerrar un largo,
+    # no abrir un corto. Ver `strategy_spec.SIGNALS`.
+    SIGNAL_CHOICES = [
+        ("BUY", "Compra"),
+        ("SELL", "Venta"),
+        ("SHORT", "Apertura en corto"),
+        ("COVER", "Cierre de corto"),
+    ]
 
     strategy = models.ForeignKey(
         StrategyDefinition, on_delete=models.CASCADE, related_name="signal_events",
@@ -804,7 +812,7 @@ class PaperTradingAccount(models.Model):
     is_active = models.BooleanField(default=True, db_index=True)
     trades_count = models.PositiveIntegerField(default=0)   # operaciones cerradas (round-trips)
     wins = models.PositiveIntegerField(default=0)
-    last_signal = models.CharField(max_length=8, default="HOLD")  # BUY | SELL | HOLD
+    last_signal = models.CharField(max_length=8, default="HOLD")  # BUY|SELL|SHORT|COVER|HOLD
     last_eval_at = models.DateTimeField(null=True, blank=True)
     # Seguimiento de decadencia (decay): pico de patrimonio para medir drawdown y
     # bandera que se activa cuando la estrategia se degrada en vivo (dispara

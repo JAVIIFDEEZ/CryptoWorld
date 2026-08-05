@@ -17,6 +17,8 @@ Diseño deliberadamente simple y honesto:
 
 import logging
 
+from core.domain.services.strategy_spec import SHORT_SIGNALS
+
 logger = logging.getLogger(__name__)
 
 # Velas suficientes para calentar los indicadores más lentos del spec.
@@ -51,10 +53,26 @@ def _apply_signal(account, signal: str, price: float) -> "object | None":
     creado (apertura o cierre) o None si no hubo operación.
 
     No persiste: el llamador guarda la cuenta y el trade en una transacción.
+
+    Las señales del lado corto se IGNORAN a propósito
+    ────────────────────────────────────────────────
+    Esta cartera es larga por construcción: `units` es una cantidad comprada,
+    la apertura invierte todo el efectivo y la promoción a real manda órdenes a
+    un exchange de contado, donde vender en corto sencillamente no existe —
+    requiere margen o derivados, con garantías y liquidación propias.
+
+    Ante un SHORT o un COVER hay dos opciones y solo una es admisible:
+    interpretarlos con el vocabulario largo (SHORT≈vender, COVER≈comprar)
+    haría operar a la cartera EXACTAMENTE al revés que la estrategia; no
+    hacer nada la deja parada, que es visible y no cuesta dinero. El generador
+    puede producir estrategias cortas; ejecutarlas es otro trabajo, y hasta que
+    exista este módulo se abstiene.
     """
     from core.infrastructure.persistence.models import PaperTrade
 
     account.last_price = float(price)
+    if signal in SHORT_SIGNALS:
+        return None
     cost_rate = (account.commission_bps + account.slippage_bps) / 10000.0
     trade = None
 

@@ -1088,37 +1088,105 @@ def compile_sides(df: pd.DataFrame, spec: dict) -> SideSignals:
     return SideSignals(compile_long_signals(df, spec), compile_short_signals(df, spec))
 
 
+# Acciones que puede emitir una estrategia en vivo.
+#
+# Cuatro, no dos. Con solo BUY/SELL, la orden «abrir un corto» tendría que
+# viajar como una de las dos, y la que se le parece —SELL— significa justo lo
+# contrario: cerrar una posición larga. Un consumidor que las confundiera
+# operaría al revés sin que nada fallara.
+SIGNALS = ("BUY", "SELL", "SHORT", "COVER", "HOLD")
+
+# Qué acción significa cada señal, para las superficies que la muestran.
+SIGNAL_LABELS = {
+    "BUY": "COMPRA",
+    "SELL": "VENTA",
+    "SHORT": "APERTURA EN CORTO",
+    "COVER": "CIERRE DE CORTO",
+    "HOLD": "SIN CAMBIOS",
+}
+
+# Señales que abren o cierran el lado corto. Un consumidor que no sepa operar
+# cortos tiene que poder detectarlas y ABSTENERSE, no interpretarlas a su manera.
+SHORT_SIGNALS = ("SHORT", "COVER")
+
+
 def signal_state(df: pd.DataFrame, spec: dict) -> dict:
     """
-    Estado de la estrategia en la ÚLTIMA vela: la señal actual (BUY/SELL/HOLD) y
-    qué condiciones de entrada/salida están activas ahora mismo. Sirve para
-    "activar" una estrategia generada y mostrar/notificar su señal en vivo.
-    Causal: solo usa información disponible al cierre de la última vela.
+    Estado de la estrategia en la ÚLTIMA vela: la acción actual y qué
+    condiciones están activas ahora mismo. Sirve para "activar" una estrategia
+    generada y mostrar/notificar su señal en vivo. Causal: solo usa información
+    disponible al cierre de la última vela.
+
+    `signal` es una de `SIGNALS`. Cuál sale depende de la dirección del spec:
+
+      · "long"  → BUY / SELL, como siempre.
+      · "short" → SHORT (abrir) / COVER (cerrar). Emitir BUY aquí sería decirle
+        al usuario que compre cuando la estrategia dice justo lo contrario.
+      · "both"  → las cuatro, con los cierres por delante de las aperturas,
+        igual que en el motor de backtest: si las dos cosas coinciden en la
+        misma vela, primero se sale.
+
+    `direction` y `side` acompañan a la señal para que un consumidor que no
+    sepa operar cortos pueda ABSTENERSE en vez de interpretarla a su manera.
     """
+    direction = spec_direction(spec)
     if df is None or len(df) == 0:
-        return {"signal": "HOLD", "entry_active": False, "exit_active": False, "conditions": []}
+        return {"signal": "HOLD", "direction": direction, "side": None,
+                "entry_active": False, "exit_active": False, "conditions": []}
 
     cache: dict = {}
     def last(arr) -> bool:
         return bool(np.asarray(arr)[-1])
 
-    conditions = []
-    entry_bools = []
-    for c in spec["entry"]["conditions"]:
-        b = _condition_bool(df, c, cache)
-        entry_bools.append(b)
-        conditions.append({"side": "entry", "desc": _describe_condition(c), "active": last(b)})
-    exit_bools = []
-    for c in spec["exit"]["conditions"]:
-        b = _condition_bool(df, c, cache)
-        exit_bools.append(b)
-        conditions.append({"side": "exit", "desc": _describe_condition(c), "active": last(b)})
+    conditions: list[dict] = []
 
-    entry_active = last(_combine(entry_bools, spec["entry"]["combine"]))
-    exit_active = last(_combine(exit_bools, spec["exit"]["combine"]))
+    def block_active(block: dict, label: str) -> bool:
+        bools = []
+        for c in block["conditions"]:
+            b = _condition_bool(df, c, cache)
+            bools.append(b)
+            conditions.append({"side": label, "desc": _describe_condition(c), "active": last(b)})
+        # `k` viaja con el bloque: sin él, un bloque «al menos 2 de 3» se
+        # evaluaría como un O y dispararía la señal en vivo mucho más a menudo
+        # que la estrategia que se validó.
+        return last(_combine(bools, block["combine"], block.get("k")))
+
+    entry_active = block_active(spec["entry"], "entry")
+    exit_active = block_active(spec["exit"], "exit")
+
+    if direction == "short":
+        signal = "COVER" if exit_active else ("SHORT" if entry_active else "HOLD")
+        side = "short" if signal != "HOLD" else None
+        return {"signal": signal, "direction": direction, "side": side,
+                "entry_active": entry_active, "exit_active": exit_active,
+                "conditions": conditions}
+
+    if direction == "both":
+        short_entry = block_active(spec["short_entry"], "short_entry")
+        short_exit = block_active(spec["short_exit"], "short_exit")
+        # Los cierres ganan a las aperturas, y el cierre del largo al del corto:
+        # el mismo orden de precedencia que aplica el motor de backtest, para
+        # que lo que se notifica coincida con lo que se midió.
+        if exit_active:
+            signal, side = "SELL", "long"
+        elif short_exit:
+            signal, side = "COVER", "short"
+        elif entry_active:
+            signal, side = "BUY", "long"
+        elif short_entry:
+            signal, side = "SHORT", "short"
+        else:
+            signal, side = "HOLD", None
+        return {"signal": signal, "direction": direction, "side": side,
+                "entry_active": entry_active, "exit_active": exit_active,
+                "short_entry_active": short_entry, "short_exit_active": short_exit,
+                "conditions": conditions}
+
     signal = "SELL" if exit_active else ("BUY" if entry_active else "HOLD")
     return {
         "signal": signal,
+        "direction": direction,
+        "side": "long" if signal != "HOLD" else None,
         "entry_active": entry_active,
         "exit_active": exit_active,
         "conditions": conditions,

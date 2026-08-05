@@ -2583,6 +2583,21 @@ class PaperTradingView(APIView):
         if not strat.asset:
             return Response({"error": "La estrategia no tiene activo asociado."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # La cartera de paper es LARGA por construcción: `units` es una cantidad
+        # comprada y la promoción a real manda órdenes a un exchange de contado,
+        # donde vender en corto no existe. Se rechaza en la puerta en vez de
+        # aceptar la cartera y dejarla sin operar en silencio — que es lo que
+        # pasaría, porque `_apply_signal` ignora las señales del lado corto.
+        from core.domain.services.strategy_spec import spec_direction
+        if spec_direction(strat.spec) != "long":
+            return Response(
+                {"error": ("Esta estrategia opera en corto y la cartera virtual solo "
+                           "puede seguir estrategias largas: sus órdenes van a un "
+                           "mercado de contado, donde vender en corto requiere margen "
+                           "o derivados. Puedes analizarla y guardarla igualmente.")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             capital = float(request.data.get("initial_capital", 10000.0))
         except (TypeError, ValueError):

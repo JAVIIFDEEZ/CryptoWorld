@@ -11,17 +11,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
 import {
   strategyGeneratorService,
+  SIGNAL_BADGES,
+  SIGNAL_LABELS,
+  SIGNAL_STYLES,
   type LiveOrderAudit,
   type PaperAccount,
   type PaperAccountDetail,
 } from '@/services/strategyGeneratorService'
 import { tradingService, type ExchangeConnection } from '@/services/tradingService'
-
-const SIGNAL_STYLE: Record<string, string> = {
-  BUY: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  SELL: 'bg-red-500/15 text-red-400 border-red-500/30',
-  HOLD: 'bg-slate-700/40 text-slate-400 border-slate-600/40',
-}
 
 function pnlTone(v: number): string {
   return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-slate-300'
@@ -141,8 +138,11 @@ function PaperCard({ account, connections, onChange }: Readonly<{
               {account.live_is_testnet ? '⚡ LIVE testnet' : '⚡ LIVE REAL'}
             </span>
           )}
-          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLE[account.last_signal] ?? SIGNAL_STYLE.HOLD}`}>
-            {account.last_signal}
+          <span
+            title={SIGNAL_LABELS[account.last_signal] ?? SIGNAL_LABELS.HOLD}
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${SIGNAL_STYLES[account.last_signal] ?? SIGNAL_STYLES.HOLD}`}
+          >
+            {SIGNAL_BADGES[account.last_signal] ?? SIGNAL_BADGES.HOLD}
           </span>
         </div>
       </div>
@@ -252,7 +252,12 @@ function PaperCard({ account, connections, onChange }: Readonly<{
             {detail.trades.length === 0 && <p className="text-[10px] text-slate-500">Aún sin operaciones.</p>}
             {detail.trades.map((t) => (
               <div key={t.id} className="flex items-center gap-2 text-[10px]">
-                <span className={`font-bold px-1 rounded border ${SIGNAL_STYLE[t.side]}`}>{t.side}</span>
+                <span
+                  title={SIGNAL_LABELS[t.side]}
+                  className={`font-bold px-1 rounded border ${SIGNAL_STYLES[t.side]}`}
+                >
+                  {SIGNAL_BADGES[t.side]}
+                </span>
                 <span className="text-slate-400 font-mono">${t.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                 {t.pnl_pct != null && (
                   <span className={`font-mono ml-auto ${pnlTone(t.pnl_pct)}`}>{t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%</span>

@@ -33,9 +33,9 @@ from core.domain.services.strategy_evaluation import (
     _sides_stand_alone, side_performance, spec_complexity,
 )
 from core.domain.services.strategy_spec import (
-    DIRECTIONS, compile_long_signals, compile_short_signals, compile_sides,
-    condition_blocks, describe_spec, max_warmup, mirror_spec, random_spec,
-    seed_specs, spec_direction, spec_hash, validate_spec,
+    DIRECTIONS, SHORT_SIGNALS, SIGNALS, compile_long_signals, compile_short_signals,
+    compile_sides, condition_blocks, describe_spec, max_warmup, mirror_spec,
+    random_spec, seed_specs, signal_state, spec_direction, spec_hash, validate_spec,
 )
 
 
@@ -450,3 +450,81 @@ class TestPerSideGating:
             GatingThresholds(),
         )
         assert ok and reasons == []
+
+
+class TestLiveSignals:
+    """
+    Lo que se le dice al usuario cuando la estrategia dispara.
+
+    Es el punto donde un error se convierte directamente en una operación
+    equivocada: `SELL` significa cerrar un largo y `SHORT` abrir un corto —se
+    parecen y son contrarios—, así que meter los cortos en el molde BUY/SELL no
+    sería una simplificación, sería invertir la orden.
+    """
+
+    @staticmethod
+    def _always(active: bool) -> dict:
+        """Bloque que se cumple siempre (RSI > 15) o nunca (RSI > 85)."""
+        return {"combine": "AND", "conditions": [
+            {"type": "threshold", "indicator": "RSI", "params": {"window": 14},
+             "op": "gt" if active else "lt", "threshold": 15.0}]}
+
+    @pytest.mark.unit
+    def test_a_long_spec_still_says_buy_and_sell(self):
+        assert signal_state(_df(300), _rsi_long())["signal"] in SIGNALS
+
+    @pytest.mark.unit
+    def test_a_short_spec_never_says_buy(self):
+        """Emitir BUY aquí sería decirle al usuario que compre justo cuando la
+        estrategia dice lo contrario."""
+        spec = {**_rsi_short(), "entry": self._always(True), "exit": self._always(False)}
+        assert signal_state(_df(300), spec)["signal"] == "SHORT"
+
+        spec = {**_rsi_short(), "entry": self._always(False), "exit": self._always(True)}
+        assert signal_state(_df(300), spec)["signal"] == "COVER"
+
+    @pytest.mark.unit
+    def test_closing_wins_over_opening_like_the_backtest_engine(self):
+        """Misma precedencia que el motor: si coinciden en la vela, primero se
+        sale. Si la señal en vivo no siguiera la misma regla, notificaría algo
+        distinto de lo que se midió."""
+        spec = {**_rsi_short(), "entry": self._always(True), "exit": self._always(True)}
+        assert signal_state(_df(300), spec)["signal"] == "COVER"
+
+    @pytest.mark.unit
+    def test_a_both_spec_reports_which_side_the_signal_belongs_to(self):
+        spec = {**_rsi_both(),
+                "entry": self._always(False), "exit": self._always(False),
+                "short_entry": self._always(True), "short_exit": self._always(False)}
+        state = signal_state(_df(300), spec)
+        assert state["signal"] == "SHORT" and state["side"] == "short"
+        assert state["direction"] == "both"
+
+    @pytest.mark.unit
+    def test_short_signals_are_flagged_so_consumers_can_abstain(self):
+        """La cartera de paper es larga por construcción. Interpretar un SHORT
+        con vocabulario largo la haría operar al revés; lo correcto es que pueda
+        reconocerlo y no hacer nada."""
+        assert set(SHORT_SIGNALS) == {"SHORT", "COVER"}
+        assert set(SHORT_SIGNALS).issubset(SIGNALS)
+
+    @pytest.mark.unit
+    def test_a_k_of_n_block_is_not_evaluated_as_an_or(self):
+        """`k` viaja con el bloque. Sin él, «al menos 2 de 3» se evaluaba como
+        un O y la señal en vivo disparaba mucho más a menudo que la estrategia
+        que se validó."""
+        df = _df(300)
+        rsi = {"type": "threshold", "indicator": "RSI", "params": {"window": 14},
+               "op": "gt", "threshold": 15.0}          # se cumple casi siempre
+        never = {"type": "threshold", "indicator": "RSI", "params": {"window": 14},
+                 "op": "lt", "threshold": 15.0}        # casi nunca
+        spec = {
+            "entry": {"combine": "K_OF_N", "k": 3, "conditions": [rsi, never, never]},
+            "exit": self._always(False),
+        }
+        assert signal_state(df, spec)["signal"] == "HOLD"
+
+    @pytest.mark.unit
+    def test_an_empty_history_holds_and_still_says_the_direction(self):
+        state = signal_state(pd.DataFrame(), _rsi_short())
+        assert state["signal"] == "HOLD" and state["direction"] == "short"

@@ -10,7 +10,7 @@ notifica por email a su dueño. Conecta el generador con el flujo operativo
 
 import logging
 
-from core.domain.services.strategy_spec import describe_spec, signal_state
+from core.domain.services.strategy_spec import SIGNAL_LABELS, describe_spec, signal_state
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,11 @@ class EvaluateMonitoredStrategiesUseCase:
     """
     Reevalúa todas las estrategias monitorizadas y notifica los cambios de señal.
     Pensada para ejecutarse periódicamente (Celery beat). Solo notifica cuando la
-    señal cambia respecto a la anterior y es accionable (BUY o SELL).
+    señal cambia respecto a la anterior y es accionable.
+
+    Accionable son cuatro cosas, no dos: una estrategia corta emite SHORT y
+    COVER, y meterlas en el molde BUY/SELL invertiría lo que se le dice al
+    usuario — SELL es cerrar un largo, no abrir un corto.
     """
 
     def execute(self) -> dict:
@@ -77,7 +81,7 @@ class EvaluateMonitoredStrategiesUseCase:
             obj.last_signal_at = timezone.now()
             obj.save(update_fields=["last_signal", "last_signal_at", "updated_at"])
 
-            if new_signal != previous and new_signal in ("BUY", "SELL"):
+            if new_signal != previous and new_signal != "HOLD":
                 price = float(res.df["close"].iloc[-1])
                 sent = self._notify(obj, new_signal)
                 StrategySignalEvent.objects.create(
@@ -100,7 +104,7 @@ class EvaluateMonitoredStrategiesUseCase:
         owner = obj.owner
         if owner is None or not owner.email:
             return False
-        verb = "COMPRA" if signal == "BUY" else "VENTA"
+        verb = SIGNAL_LABELS.get(signal, signal)
         symbol = obj.asset.symbol if obj.asset else "—"
         body = (
             f"Hola {owner.username},\n\n"

@@ -733,7 +733,7 @@ export interface SavedStrategy {
   holdout_metrics: HoldoutMetrics | null
   status: string
   is_monitored: boolean
-  last_signal: string
+  last_signal: LiveSignal
   last_signal_at: string | null
   generated_at: string | null
   created_at: string
@@ -903,15 +903,63 @@ export function isSpecRobustnessReport(r: RobustnessJobResult | undefined): r is
   return !!r && !('error' in r) && 'robustness_score' in r
 }
 
+/**
+ * Acción que emite una estrategia en vivo.
+ *
+ * Cuatro, no dos. `SELL` es cerrar un largo y `SHORT` es abrir un corto: se
+ * parecen en la superficie y significan lo contrario, así que no pueden
+ * compartir etiqueta.
+ */
+export type LiveSignal = 'BUY' | 'SELL' | 'SHORT' | 'COVER' | 'HOLD'
+
+/** Acción que llega a registrarse como evento (todo menos «sin cambios»). */
+export type ActionableSignal = Exclude<LiveSignal, 'HOLD'>
+
+export const SIGNAL_LABELS: Record<LiveSignal, string> = {
+  BUY: 'Compra',
+  SELL: 'Venta',
+  SHORT: 'Apertura en corto',
+  COVER: 'Cierre de corto',
+  HOLD: 'Sin cambios',
+}
+
+/** Texto del distintivo (cabe en una insignia; la etiqueta larga va en el title). */
+export const SIGNAL_BADGES: Record<LiveSignal, string> = {
+  BUY: 'COMPRA',
+  SELL: 'VENTA',
+  SHORT: 'CORTO',
+  COVER: 'CIERRE',
+  HOLD: 'ESPERA',
+}
+
+/**
+ * Color del distintivo. El código es la ACCIÓN, no la dirección del mercado:
+ * abrir va en color pleno (verde el largo, rosa el corto) y cerrar en un tono
+ * apagado, para que de un vistazo se distinga «entrar» de «salir» — que es la
+ * confusión que se paga cara cuando además hay dos lados.
+ */
+export const SIGNAL_STYLES: Record<LiveSignal, string> = {
+  BUY: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  SELL: 'bg-red-500/15 text-red-400 border-red-500/30',
+  SHORT: 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+  COVER: 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+  HOLD: 'bg-slate-700/40 text-slate-400 border-slate-600/40',
+}
+
 export interface SignalState {
   strategy_id: number
   asset_symbol: string
   interval: string
   description: string
-  signal: 'BUY' | 'SELL' | 'HOLD'
+  signal: LiveSignal
+  /** Lado que opera la estrategia; `side` dice a cuál se refiere ESTA señal. */
+  direction?: 'long' | 'short' | 'both'
+  side?: 'long' | 'short' | null
   entry_active: boolean
   exit_active: boolean
-  conditions: { side: 'entry' | 'exit'; desc: string; active: boolean }[]
+  short_entry_active?: boolean
+  short_exit_active?: boolean
+  conditions: { side: 'entry' | 'exit' | 'short_entry' | 'short_exit'; desc: string; active: boolean }[]
   as_of_ts: number | null
   error?: string
 }
@@ -921,7 +969,7 @@ export interface SignalEvent {
   strategy_id: number
   asset_symbol: string | null
   name: string
-  signal: 'BUY' | 'SELL'
+  signal: ActionableSignal
   price: number | null
   notified: boolean
   created_at: string
@@ -959,7 +1007,7 @@ export interface PaperAccount {
   trades_count: number
   wins: number
   win_rate: number | null
-  last_signal: 'BUY' | 'SELL' | 'HOLD'
+  last_signal: LiveSignal
   last_eval_at: string | null
   started_at: string
 }

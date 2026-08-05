@@ -546,6 +546,10 @@ def generate_strategies(
             "description": describe_spec(spec),
             "fitness": cand["fitness"],
             "passed_gating": gate["passed"],
+            # Al nivel del finalista, no solo dentro de `gating.metrics`: quien
+            # lee el libro necesita saber a qué lado opera cada estrategia antes
+            # de abrir sus métricas.
+            "direction": spec_direction(spec),
             "gating": {"checks": gate["checks"], "metrics": gate["metrics"]},
             "evolution_metrics": {
                 "fitness": cand["fitness"],
