@@ -237,3 +237,71 @@ class TestMultipleTestingCorrection:
     @pytest.mark.unit
     def test_an_empty_family_is_not_an_error(self):
         assert sig.benjamini_hochberg([])["n_significant"] == 0
+
+
+class TestPairedComparison:
+    """
+    Comparar dos modelos por sus intervalos individuales desperdicia casi toda
+    la información: se evalúan sobre las MISMAS filas, y la inmensa mayoría de
+    ellas —las que ambos aciertan o ambos fallan— no distinguen nada y solo
+    aportan varianza.
+
+    La consecuencia práctica se midió: al comparar dos conjuntos de features por
+    intervalos separados, el veredicto acababa dependiendo más del número de
+    tramos de validación que de la señal. Con ocho tramos, un conjunto de ruido
+    daba una mejora MAYOR que uno con señal plantada.
+    """
+
+    @pytest.mark.unit
+    def test_it_detects_a_real_improvement(self):
+        rng = np.random.default_rng(0)
+        a = rng.random(1000) < 0.5
+        b = a.copy()
+        flip = rng.choice(1000, 120, replace=False)
+        b[flip[:80]] = True          # B rescata 80
+        b[flip[80:]] = False         # y estropea 40
+        assert sig.mcnemar_paired(a, b)["better"]
+
+    @pytest.mark.unit
+    def test_a_wash_is_not_an_improvement(self):
+        rng = np.random.default_rng(1)
+        a = rng.random(1000) < 0.5
+        b = a.copy()
+        flip = rng.choice(1000, 120, replace=False)
+        b[flip[:60]] = True
+        b[flip[60:]] = False
+        assert not sig.mcnemar_paired(a, b)["better"]
+
+    @pytest.mark.unit
+    def test_only_the_discordant_rows_count(self):
+        """Es de donde sale la potencia: las coincidencias no informan."""
+        a = np.array([True, True, False, False, True, False])
+        b = np.array([True, False, True, False, True, True])
+        out = sig.mcnemar_paired(a, b)
+        assert out["discordant"] == 3
+        assert out["b_only"] == 2 and out["a_only"] == 1
+
+    @pytest.mark.unit
+    def test_identical_predictions_distinguish_nothing(self):
+        a = np.array([True, False, True, True])
+        out = sig.mcnemar_paired(a, a.copy())
+        assert out["p_value"] == 1.0 and not out["better"]
+
+    @pytest.mark.unit
+    def test_it_is_one_sided(self):
+        """La hipótesis es que B MEJORA a A, no que difieran: un B claramente
+        peor no puede salir «significativo»."""
+        a = np.array([True] * 80 + [False] * 20)
+        b = np.array([False] * 80 + [False] * 20)
+        assert not sig.mcnemar_paired(a, b)["better"]
+
+    @pytest.mark.unit
+    def test_mismatched_lengths_are_rejected(self):
+        """Si los dos vectores no cubren las mismas observaciones, el
+        emparejamiento es falso y el contraste no significa nada."""
+        with pytest.raises(ValueError):
+            sig.mcnemar_paired([True, False], [True, False, True])
+
+    @pytest.mark.unit
+    def test_empty_input_is_not_an_error(self):
+        assert sig.mcnemar_paired([], [])["p_value"] is None

@@ -356,3 +356,61 @@ def benjamini_hochberg(p_values: list[float], fdr: float = 0.10) -> dict:
             f"{int(fdr * 100)} %."
         ),
     }
+
+
+def mcnemar_paired(correct_a, correct_b) -> dict:
+    """
+    ¿Acierta B más que A sobre LAS MISMAS observaciones?
+
+    Por qué emparejado y no dos intervalos
+    ──────────────────────────────────────
+    La comparación ingenua calcula el intervalo de cada precisión por separado y
+    mira si se solapan. Eso desperdicia casi toda la información: los dos
+    modelos se evalúan sobre las mismas filas, así que la inmensa mayoría de
+    ellas —las que ambos aciertan o ambos fallan— no distinguen nada y solo
+    aportan varianza. El contraste emparejado las descarta y se queda con las
+    **discordantes**, que son las únicas que informan.
+
+    La diferencia de potencia es grande, y es exactamente lo que hacía falta
+    aquí: comparar dos conjuntos de features por sus intervalos individuales
+    exigía efectos enormes para concluir nada, y la respuesta acababa
+    dependiendo del número de tramos en vez del de la señal.
+
+    Contraste de McNemar de UNA cola: la hipótesis es que B mejora a A, no que
+    difieran. Con pocas discordantes se usa la binomial exacta en vez de la
+    aproximación χ², que ahí no vale.
+    """
+    a = np.asarray(correct_a, dtype=bool)
+    b = np.asarray(correct_b, dtype=bool)
+    if a.shape != b.shape:
+        raise ValueError("Los dos vectores deben cubrir las mismas observaciones.")
+    if a.size == 0:
+        return {"n": 0, "b_only": 0, "a_only": 0, "p_value": None,
+                "better": False, "note": "Sin observaciones que comparar."}
+
+    b_only = int((b & ~a).sum())      # B acierta, A falla
+    a_only = int((a & ~b).sum())      # A acierta, B falla
+    discordant = b_only + a_only
+    if discordant == 0:
+        return {"n": int(a.size), "b_only": 0, "a_only": 0, "p_value": 1.0,
+                "better": False,
+                "note": ("Los dos conjuntos aciertan y fallan exactamente en las "
+                         "mismas filas: no hay nada que distinguir.")}
+
+    # Bajo la hipótesis nula, cada discordante cae de un lado con probabilidad
+    # 1/2. La cola superior de una binomial(discordant, 0.5) da el p-valor.
+    from scipy.stats import binom
+    p = float(binom.sf(b_only - 1, discordant, 0.5))
+    return {
+        "n": int(a.size),
+        "b_only": b_only,
+        "a_only": a_only,
+        "discordant": discordant,
+        "accuracy_delta": round(float(b.mean() - a.mean()), 5),
+        "p_value": round(p, 6),
+        "better": bool(p < 0.05),
+        "note": (
+            f"De {discordant} filas en las que los dos conjuntos discrepan, el "
+            f"segundo acierta en {b_only}. p = {p:.4f}."
+        ),
+    }
