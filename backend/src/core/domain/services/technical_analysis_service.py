@@ -627,8 +627,10 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     import time as _time
 
     from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import TimeSeriesSplit
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, brier_score_loss
+
+    from core.domain.services import significance as sig
+    from core.domain.services.purged_cv import PurgedTimeSeriesSplit, leakage_report
 
     t_start = _time.perf_counter()
 
@@ -680,9 +682,16 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
             [("rf", _rf()), ("gb", gb), ("lr", lr)], voting="soft",
         )
 
-    # ── Evaluación walk-forward (out-of-sample, respeta el tiempo) ──
+    # ── Evaluación walk-forward PURGADA (out-of-sample, sin solapamiento) ──
+    #
+    # Respetar el orden temporal no basta. Con horizonte `h`, la etiqueta de la
+    # fila `k` se resuelve mirando `close[k+h]`: si el test empieza en `k+1`, las
+    # últimas `h` filas del train ya contienen información del periodo de test.
+    # `TimeSeriesSplit` no lo corrige, y la fuga —pequeña pero sistemática—
+    # siempre empuja en la misma dirección: infla la precisión que se reporta.
     n_splits = max(3, min(6, len(X) // 40))
-    tscv = TimeSeriesSplit(n_splits=n_splits)
+    tscv = PurgedTimeSeriesSplit(n_splits=n_splits, horizon=horizon)
+    purge = leakage_report(len(X), n_splits, horizon)
     oos_true, oos_pred, oos_proba, fold_acc = [], [], [], []
     for tr, te in tscv.split(X):
         if len(set(y[tr])) < 2:
@@ -725,14 +734,41 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         except Exception:  # noqa: BLE001 — sin calibración se usa el voto crudo
             platt = None
 
-    # Brier score: calidad de las probabilidades que realmente se muestran
-    # (calibradas si hay calibrador, crudas si no), medida en OOS (0 = perfecto).
+    # ── Brier ANIDADO: el calibrador no puede examinarse a sí mismo ──
+    #
+    # Medir el Brier sobre los mismos puntos con los que se ajustó Platt es
+    # preguntarle al calibrador qué tal calibra en los datos que usó para
+    # calibrarse. Sale bien por construcción y no dice nada.
+    #
+    # Aquí se parte el tramo OOS en dos mitades temporales: Platt se ajusta en
+    # la primera y el Brier se mide en la segunda. El calibrador que se USA para
+    # mostrar la probabilidad sigue siendo el de todos los puntos —más datos,
+    # mejor calibración— pero la CIFRA que se publica sale de un calibrador que
+    # no vio esos datos.
+    brier = None
+    brier_nested = False
     if len(set(oos_true)) == 2:
-        shown_proba = (platt.predict_proba(oos_proba.reshape(-1, 1))[:, 1]
-                       if platt is not None else oos_proba)
-        brier = float(brier_score_loss(oos_true, shown_proba))
-    else:
-        brier = None
+        half = len(oos_true) // 2
+        first, second = slice(0, half), slice(half, None)
+        if (half >= 20 and len(set(oos_true[first])) == 2
+                and len(set(oos_true[second])) == 2):
+            try:
+                from sklearn.linear_model import LogisticRegression as _NestedLR
+                cal = _NestedLR(max_iter=1000).fit(
+                    oos_proba[first].reshape(-1, 1), oos_true[first])
+                brier = float(brier_score_loss(
+                    oos_true[second],
+                    cal.predict_proba(oos_proba[second].reshape(-1, 1))[:, 1]))
+                brier_nested = True
+            except Exception:  # noqa: BLE001 — sin Brier anidado se cae al plano
+                brier = None
+        if brier is None:
+            # Muestra insuficiente para partir en dos: se mide sobre el
+            # calibrador completo y se marca como NO anidado, para que nadie lo
+            # lea como una medición fuera de muestra del calibrador.
+            shown_proba = (platt.predict_proba(oos_proba.reshape(-1, 1))[:, 1]
+                           if platt is not None else oos_proba)
+            brier = float(brier_score_loss(oos_true, shown_proba))
 
     # ── Modelo final con TODO el histórico → predicción de la vela actual ──
     # Importancias desde un RF plano (ni el ensemble ni el calibrador las exponen).
@@ -783,16 +819,30 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     except Exception:  # noqa: BLE001 — la explicabilidad nunca debe romper la predicción
         drivers = []
 
-    # Veredicto honesto: ¿hay edge fuera de muestra?
-    if edge >= 0.04 and oos_accuracy > 0.5:
+    # ── Veredicto: magnitud CON incertidumbre, no magnitud contra un umbral ──
+    #
+    # El criterio anterior era `edge >= 0.04`. Con unos cientos de muestras el
+    # error estándar de una proporción cerca de 0,5 ronda el 2 %, así que cuatro
+    # puntos son menos de dos desviaciones típicas: ese umbral no medía señal,
+    # medía ruido con un nombre bonito. Ahora el edge tiene que separarse del
+    # cero por intervalo de confianza, que es lo que significa «hay señal».
+    edge_stats = sig.edge_significance(
+        int((oos_true == oos_pred).sum()), len(oos_true), baseline)
+    if edge_stats["significant"] and oos_accuracy > 0.5:
         verdict = "EDGE"
-        verdict_text = f"El modelo acierta el {oos_accuracy:.0%} fuera de muestra, {edge:+.0%} sobre el azar."
-    elif edge >= 0.01:
+        verdict_text = (
+            f"Acierta el {oos_accuracy:.0%} fuera de muestra sobre {edge_stats['n']} "
+            f"muestras, {edge:+.0%} sobre el azar, y el intervalo del edge "
+            f"({edge_stats['edge_low']:+.0%} a {edge_stats['edge_high']:+.0%}) no toca el cero.")
+    elif edge > 0:
         verdict = "WEAK"
-        verdict_text = f"Edge marginal ({edge:+.0%} sobre el azar): señal débil, tómatela con cautela."
+        verdict_text = (
+            f"Ventaja observada de {edge:+.0%}, pero el intervalo va de "
+            f"{edge_stats['edge_low']:+.0%} a {edge_stats['edge_high']:+.0%}: con "
+            f"{edge_stats['n']} muestras es compatible con el azar.")
     else:
         verdict = "NO_EDGE"
-        verdict_text = "Sin ventaja fiable sobre el azar: la predicción es prácticamente una moneda al aire."
+        verdict_text = "Sin ventaja sobre el azar: la predicción es prácticamente una moneda al aire."
 
     return {
         "prediction": pred_label,
@@ -803,12 +853,25 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         "model": "Ensemble (RF+GB+LR) calibrado, walk-forward" if calibrated else "Ensemble (RF+GB+LR), walk-forward",
         "calibrated": calibrated,
         "brier_score": round(brier, 4) if brier is not None else None,
+        # `False` = el Brier se midió sobre los mismos puntos con los que se
+        # ajustó el calibrador, así que no es una medida fuera de muestra de la
+        # calibración. Se marca en vez de omitirse.
+        "brier_nested": brier_nested,
         # cv_accuracy se mantiene por compatibilidad, ahora es la precisión OOS honesta.
         "cv_accuracy": round(oos_accuracy, 4),
         "cv_std": round(float(np.std(fold_acc)) if fold_acc else 0.0, 4),
         "oos_accuracy": round(oos_accuracy, 4),
         "baseline_accuracy": round(baseline, 4),
         "edge": round(edge, 4),
+        # El edge CON su incertidumbre. Sin esto, «+4 % sobre el azar» es una
+        # magnitud sin escala: sobre 200 muestras es ruido y sobre 5000 es señal,
+        # y el número solo es el mismo.
+        "edge_ci_low": edge_stats["edge_low"],
+        "edge_ci_high": edge_stats["edge_high"],
+        "edge_significant": edge_stats["significant"],
+        # Qué se ha descartado para que la validación no tenga fuga: velas de
+        # purga (solapamiento de etiquetas) y de embargo (correlación serial).
+        "purged_cv": purge,
         "precision_up": round(float(precision_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
         "recall_up": round(float(recall_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),
         "f1_up": round(float(f1_score(oos_true, oos_pred, pos_label=1, zero_division=0)), 4),

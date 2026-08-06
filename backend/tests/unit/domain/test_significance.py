@@ -133,3 +133,107 @@ class TestAnnotate:
         out = sig.annotate(_returns(mean=0.002, n=30, seed=10))
         assert out["significant"] is False
         assert "podría ser ruido" in out["note"]
+
+
+class TestProportionSignificance:
+    """
+    «Edge del 4 % sobre el azar» es una magnitud sin escala.
+
+    Con 500 muestras el error estándar de una proporción cerca de 0,5 ronda el
+    2,2 %: cuatro puntos son 1,8 desviaciones típicas, que no alcanza la
+    significancia ni en un contraste de una cola. Con 5000 muestras el mismo
+    4 % sí es señal. El número es idéntico y significa cosas opuestas — por eso
+    el veredicto no puede compararlo contra un umbral fijo.
+    """
+
+    @pytest.mark.unit
+    def test_the_same_edge_means_opposite_things_at_different_sample_sizes(self):
+        small = sig.edge_significance(int(0.54 * 500), 500, 0.50)
+        large = sig.edge_significance(int(0.54 * 5000), 5000, 0.50)
+        assert small["edge"] == large["edge"] == pytest.approx(0.04, abs=1e-3)
+        assert not small["significant"]
+        assert large["significant"]
+
+    @pytest.mark.unit
+    def test_a_four_point_edge_on_five_hundred_samples_is_not_significant(self):
+        """El umbral que había. Sobre 500 muestras declaraba EDGE algo cuyo
+        intervalo cruza el cero."""
+        out = sig.edge_significance(int(0.54 * 500), 500, 0.50)
+        assert out["edge"] >= 0.04
+        assert out["edge_low"] < 0
+
+    @pytest.mark.unit
+    def test_the_interval_brackets_the_point_estimate(self):
+        out = sig.edge_significance(280, 500, 0.50)
+        assert out["edge_low"] < out["edge"] < out["edge_high"]
+
+    @pytest.mark.unit
+    def test_wilson_stays_inside_zero_one_at_the_extremes(self):
+        """Es la razón de usar Wilson y no el intervalo de Wald de los manuales:
+        con proporciones extremas, Wald produce extremos fuera de [0, 1]."""
+        for successes, n in ((0, 30), (30, 30), (1, 200)):
+            out = sig.wilson_interval(successes, n)
+            assert 0.0 <= out["low"] <= out["high"] <= 1.0
+
+    @pytest.mark.unit
+    def test_more_samples_narrow_the_interval(self):
+        narrow = sig.wilson_interval(1000, 2000)
+        wide = sig.wilson_interval(50, 100)
+        assert (narrow["high"] - narrow["low"]) < (wide["high"] - wide["low"])
+
+    @pytest.mark.unit
+    def test_no_samples_gives_no_interval_instead_of_a_fake_one(self):
+        """Devolver [0, 1] fingiría una medición. `None` dice que no la hay."""
+        out = sig.wilson_interval(0, 0)
+        assert out["point"] is None and out["low"] is None
+
+    @pytest.mark.unit
+    def test_an_edge_below_the_baseline_is_never_significant(self):
+        out = sig.edge_significance(int(0.45 * 1000), 1000, 0.50)
+        assert out["edge"] < 0 and not out["significant"]
+
+
+class TestMultipleTestingCorrection:
+    """
+    Un usuario consulta veinte activos y se queda con los que dicen que hay
+    señal. Con edge verdadero cero y veinte pruebas al 5 %, se espera ver varios
+    positivos por azar: sin corrección, el producto **fabrica falsos positivos
+    como funcionalidad**.
+    """
+
+    @pytest.mark.unit
+    def test_a_lone_strong_result_survives(self):
+        out = sig.benjamini_hochberg([0.001])
+        assert out["n_significant"] == 1
+
+    @pytest.mark.unit
+    def test_the_same_p_value_can_die_in_a_large_family(self):
+        """Es el efecto que se busca: el mismo p-valor significa menos cuando es
+        el mejor de muchas pruebas."""
+        alone = sig.benjamini_hochberg([0.04])
+        crowd = sig.benjamini_hochberg([0.04] + [0.5] * 40)
+        assert alone["n_significant"] == 1
+        assert crowd["n_significant"] == 0
+
+    @pytest.mark.unit
+    def test_it_is_less_brutal_than_bonferroni(self):
+        """Con veinte activos, Bonferroni exigiría 0,25 % por prueba y no
+        sobreviviría ninguna señal real moderada. BH acota la proporción de
+        falsos entre los positivos anunciados, que es la pregunta correcta."""
+        p_values = [0.001, 0.002, 0.003] + [0.6] * 17
+        out = sig.benjamini_hochberg(p_values, fdr=0.10)
+        bonferroni = sum(1 for p in p_values if p <= 0.05 / len(p_values))
+        assert out["n_significant"] >= bonferroni
+
+    @pytest.mark.unit
+    def test_results_come_back_in_the_order_they_went_in(self):
+        """Se ordenan para decidir el corte, pero devolverlos ordenados
+        rompería la correspondencia con los activos consultados."""
+        p_values = [0.9, 0.001, 0.5]
+        out = sig.benjamini_hochberg(p_values)
+        assert [r["p_value"] for r in out["results"]] == p_values
+        assert out["results"][1]["significant"]
+
+    @pytest.mark.unit
+    def test_an_empty_family_is_not_an_error(self):
+        assert sig.benjamini_hochberg([])["n_significant"] == 0

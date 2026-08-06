@@ -145,3 +145,92 @@ class TestLocalExplainability:
         a = predict_price_direction(df, horizon=5)
         b = predict_price_direction(df, horizon=5)
         assert a["drivers"] == b["drivers"]
+
+
+class TestPurgedValidation:
+    """
+    Respetar el orden temporal no basta.
+
+    Con horizonte 5, la etiqueta de la fila `k` se resuelve mirando `close[k+5]`:
+    si el test empieza en `k+1`, las últimas cinco filas del train ya contienen
+    información del periodo de test. `TimeSeriesSplit` no lo corrige, y la fuga
+    —pequeña pero sistemática— siempre empuja en el mismo sentido: infla la
+    precisión que se publica. Medido sobre ocho series de ruido puro, la inflaba
+    en 0,76 puntos porcentuales.
+    """
+
+    @pytest.mark.unit
+    def test_the_report_says_what_it_removed(self):
+        """Sin la cifra, purgar es un cambio invisible: los números se mueven y
+        nadie sabe si fue la corrección o la semilla."""
+        out = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        purge = out["purged_cv"]
+        assert purge["horizon"] == 5
+        assert purge["gap_bars"] > purge["horizon"]     # hay embargo además de purga
+        assert purge["embargo_bars"] > 0
+
+    @pytest.mark.unit
+    def test_the_gap_follows_the_horizon(self):
+        """Un horizonte más largo contamina más filas, y el hueco tiene que
+        seguirlo. Si fuera constante, la purga sería decorativa."""
+        short = predict_price_direction(_df(_trend_cycle(600)), horizon=3)["purged_cv"]
+        long_ = predict_price_direction(_df(_trend_cycle(600)), horizon=20)["purged_cv"]
+        assert long_["gap_bars"] > short["gap_bars"]
+
+
+class TestEdgeSignificance:
+    """
+    El veredicto `EDGE` era `edge >= 0.04`, una magnitud contra un umbral fijo.
+    Sobre unos cientos de muestras, cuatro puntos son menos de dos desviaciones
+    típicas: ese umbral no medía señal.
+    """
+
+    @pytest.mark.unit
+    def test_the_edge_travels_with_its_interval(self):
+        out = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        assert out["edge_ci_low"] <= out["edge"] <= out["edge_ci_high"]
+        assert out["n_oos"] > 0
+
+    @pytest.mark.unit
+    def test_edge_verdict_requires_the_interval_to_clear_zero(self):
+        """La condición que sustituye al umbral. Si el veredicto fuera EDGE con
+        el intervalo cruzando el cero, seguiríamos anunciando ruido."""
+        out = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        if out["verdict"] == "EDGE":
+            assert out["edge_ci_low"] > 0
+        assert out["edge_significant"] == (out["edge_ci_low"] > 0)
+
+    @pytest.mark.unit
+    def test_pure_noise_never_earns_an_edge_verdict(self):
+        for seed in (2, 5, 9):
+            out = predict_price_direction(_df(_noise(700, seed=seed)), horizon=5)
+            assert out["verdict"] != "EDGE"
+
+    @pytest.mark.unit
+    def test_a_weak_verdict_says_how_wide_the_interval_is(self):
+        """«Señal débil, tómatela con cautela» no dice nada accionable. El
+        intervalo sí: enseña que la ventaja observada cabe dentro del azar."""
+        out = predict_price_direction(_df(_noise(700, seed=2)), horizon=5)
+        if out["verdict"] == "WEAK":
+            assert "compatible con el azar" in out["verdict_text"]
+
+
+class TestNestedCalibrationMeasurement:
+    """
+    Medir el Brier sobre los mismos puntos con los que se ajustó Platt es
+    preguntarle al calibrador qué tal calibra en los datos que usó para
+    calibrarse. Sale bien por construcción y no dice nada.
+    """
+
+    @pytest.mark.unit
+    def test_the_brier_is_measured_out_of_sample_of_the_calibrator(self):
+        out = predict_price_direction(_df(_trend_cycle(800)), horizon=5)
+        assert out["brier_nested"] is True
+
+    @pytest.mark.unit
+    def test_when_it_cannot_be_nested_it_says_so_instead_of_hiding_it(self):
+        """Con muestra corta no se puede partir en dos. La cifra se da igual,
+        pero marcada — nadie puede leerla como fuera de muestra."""
+        out = predict_price_direction(_df(_trend_cycle(240)), horizon=5)
+        if out.get("brier_score") is not None:
+            assert isinstance(out["brier_nested"], bool)

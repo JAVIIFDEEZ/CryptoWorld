@@ -37,6 +37,8 @@ Capa de dominio: NumPy y SciPy, sin framework.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from scipy.stats import kurtosis, norm, skew
 
@@ -202,5 +204,155 @@ def annotate(returns, ppy: float = 365.0, benchmark_sharpe: float = 0.0) -> dict
             "El Sharpe es estadísticamente distinguible de cero con este histórico."
             if significant else
             "La magnitud del Sharpe no basta con este histórico: podría ser ruido."
+        ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Significancia de una PROPORCIÓN (precisión de un clasificador)
+# ═══════════════════════════════════════════════════════════════════
+
+def wilson_interval(successes: int, n: int, confidence: float = 0.95) -> dict:
+    """
+    Intervalo de Wilson para una proporción.
+
+    Por qué Wilson y no el intervalo normal de toda la vida
+    ──────────────────────────────────────────────────────
+    El intervalo de Wald (`p ± z·√(p(1−p)/n)`) es el que sale en los manuales y
+    es malo justo donde importa: con `n` moderado o `p` lejos de 0,5 da
+    coberturas por debajo del nominal y llega a producir extremos fuera de
+    [0, 1]. Wilson invierte el test de puntuación en lugar de aproximar la
+    varianza, y su cobertura es correcta en el rango en el que trabajamos aquí
+    —unos cientos de muestras y proporciones cerca de 0,5—.
+
+    Devuelve `None` en los extremos si `n` es cero: sin muestras no hay
+    intervalo, y devolver [0, 1] fingiría una medición que no existe.
+    """
+    n = int(n)
+    if n <= 0:
+        return {"point": None, "low": None, "high": None, "n": 0,
+                "confidence": confidence,
+                "note": "Sin muestras fuera de muestra: no hay intervalo que dar."}
+
+    z = float(norm.ppf(0.5 + confidence / 2.0))
+    p = successes / n
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = (z / denom) * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return {
+        "point": round(float(p), 4),
+        "low": round(float(max(0.0, centre - half)), 4),
+        "high": round(float(min(1.0, centre + half)), 4),
+        "n": n,
+        "confidence": confidence,
+    }
+
+
+def edge_significance(correct: int, n: int, baseline: float,
+                      confidence: float = 0.95) -> dict:
+    """
+    ¿La precisión de un clasificador supera a su línea base, o es ruido?
+
+    El problema que resuelve
+    ────────────────────────
+    Un veredicto del tipo «hay EDGE si la precisión supera a la base en 4 puntos»
+    compara una magnitud contra un umbral sin mirar de cuántas muestras sale. Con
+    500 observaciones, el error estándar de una proporción cerca de 0,5 es
+    `√(0,25/500) ≈ 2,2 %`: un edge de 4 puntos son **1,8 desviaciones típicas**,
+    que no alcanza la significancia ni en un contraste de una cola. El umbral no
+    estaba midiendo señal, estaba midiendo ruido con un nombre bonito.
+
+    Aquí el criterio pasa a ser el que corresponde: el edge es real si el
+    **extremo inferior** del intervalo queda por encima de cero.
+
+    Una advertencia honesta sobre el método
+    ───────────────────────────────────────
+    La línea base se estima de la MISMA muestra, así que la diferencia arrastra
+    su incertidumbre además de la de la precisión. Aquí se trata como conocida y
+    el intervalo se desplaza, lo que produce un intervalo algo **más estrecho**
+    de lo que daría un contraste emparejado — es decir, la lectura GENEROSA. Se
+    elige esa dirección a propósito: si ni siquiera con el criterio favorable el
+    extremo inferior supera cero, la conclusión de que no hay señal es sólida.
+    """
+    interval = wilson_interval(correct, n, confidence)
+    if interval["point"] is None:
+        return {**interval, "edge": None, "edge_low": None, "edge_high": None,
+                "baseline": round(float(baseline), 4), "significant": False,
+                "note": interval["note"]}
+
+    edge = interval["point"] - baseline
+    low = interval["low"] - baseline
+    high = interval["high"] - baseline
+    significant = low > 0
+    return {
+        "accuracy": interval["point"],
+        "accuracy_low": interval["low"],
+        "accuracy_high": interval["high"],
+        "baseline": round(float(baseline), 4),
+        "edge": round(float(edge), 4),
+        "edge_low": round(float(low), 4),
+        "edge_high": round(float(high), 4),
+        "n": interval["n"],
+        "confidence": confidence,
+        "significant": bool(significant),
+        "note": (
+            f"El edge se distingue de cero con {int(confidence * 100)} % de confianza "
+            f"sobre {interval['n']} muestras fuera de muestra."
+            if significant else
+            f"El intervalo del edge cruza el cero sobre {interval['n']} muestras: "
+            "la ventaja observada es compatible con el azar."
+        ),
+    }
+
+
+def benjamini_hochberg(p_values: list[float], fdr: float = 0.10) -> dict:
+    """
+    Corrección por multiplicidad de Benjamini-Hochberg.
+
+    Para qué hace falta aquí
+    ────────────────────────
+    Un usuario consulta el modelo sobre veinte activos y se queda con los que
+    dicen que hay señal. Eso es *multiple testing* ejecutado por el propio
+    producto: con edge verdadero cero y veinte consultas a un nivel del 5 %, se
+    espera ver un puñado de veredictos positivos por puro azar. Sin corrección,
+    **el producto fabrica falsos positivos como funcionalidad**.
+
+    Se usa BH (control de la tasa de falsos descubrimientos) y no Bonferroni
+    (control del error por familia) porque el objetivo aquí no es no equivocarse
+    nunca: es acotar qué proporción de los positivos anunciados son falsos. Con
+    veinte activos, Bonferroni exigiría un nivel de 0,25 % por prueba y no
+    sobreviviría ninguna señal real moderada.
+
+    Devuelve, por cada prueba, si sobrevive y su umbral, en el orden de entrada.
+    """
+    n = len(p_values)
+    if n == 0:
+        return {"n": 0, "fdr": fdr, "n_significant": 0, "results": [],
+                "threshold": None,
+                "note": "Sin pruebas en la familia: nada que corregir."}
+
+    order = sorted(range(n), key=lambda i: p_values[i])
+    # El mayor rango k cuyo p-valor ordenado cumple p(k) <= k/n · fdr marca el
+    # corte: todo lo que quede por debajo de ese p-valor sobrevive.
+    cutoff_rank = 0
+    for rank, idx in enumerate(order, start=1):
+        if p_values[idx] <= rank / n * fdr:
+            cutoff_rank = rank
+    threshold = (cutoff_rank / n * fdr) if cutoff_rank else 0.0
+
+    survives = [False] * n
+    for rank, idx in enumerate(order, start=1):
+        survives[idx] = rank <= cutoff_rank
+
+    return {
+        "n": n,
+        "fdr": fdr,
+        "threshold": round(float(threshold), 6),
+        "n_significant": cutoff_rank,
+        "results": [{"p_value": p_values[i], "significant": survives[i]} for i in range(n)],
+        "note": (
+            f"{cutoff_rank} de {n} pruebas sobreviven a la corrección por "
+            f"multiplicidad con una tasa de falsos descubrimientos del "
+            f"{int(fdr * 100)} %."
         ),
     }

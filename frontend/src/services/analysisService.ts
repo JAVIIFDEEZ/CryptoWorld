@@ -92,11 +92,35 @@ export interface PredictionResult {
   model?: string
   calibrated?: boolean
   brier_score?: number | null
+  /**
+   * `false` = el Brier se midió sobre los mismos puntos con los que se ajustó el
+   * calibrador, así que no es una medida fuera de muestra de la calibración.
+   * Se marca en vez de omitirse.
+   */
+  brier_nested?: boolean
   cv_accuracy?: number
   cv_std?: number
   oos_accuracy?: number
   baseline_accuracy?: number
   edge?: number
+  /**
+   * El edge CON su incertidumbre. «+4 % sobre el azar» es una magnitud sin
+   * escala: sobre 200 muestras es ruido y sobre 5000 es señal, y el número es
+   * el mismo. El veredicto `EDGE` exige `edge_ci_low > 0`.
+   */
+  edge_ci_low?: number
+  edge_ci_high?: number
+  edge_significant?: boolean
+  /** Velas descartadas entre train y test para que la validación no tenga fuga. */
+  purged_cv?: {
+    n_samples: number
+    n_splits_usable: number
+    horizon: number
+    embargo_bars: number
+    gap_bars: number
+    train_samples_removed: number
+    note: string
+  }
   precision_up?: number
   recall_up?: number
   f1_up?: number
