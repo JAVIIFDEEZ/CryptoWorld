@@ -53,6 +53,7 @@ import logging
 import numpy as np
 import pandas as pd
 
+from core.domain.services import feature_importance as fi
 from core.domain.services import significance as sig
 from core.domain.services.exogenous_features import AVAILABLE_SUFFIX
 from core.domain.services.purged_cv import PurgedTimeSeriesSplit
@@ -63,7 +64,11 @@ logger = logging.getLogger(__name__)
 # información a efectos de sustitución. 0,7 es el mismo listón que usa el filtro
 # de decorrelación del libro de estrategias: por debajo, dos series todavía
 # aportan variación propia.
-CLUSTER_THRESHOLD = 0.7
+# Se reexporta el del dominio en vez de repetir el literal: dos constantes con
+# el mismo nombre y distinto valor es la avería silenciosa que este módulo y el
+# modelo de dirección no se pueden permitir, porque contestan a la misma
+# pregunta y se comparan entre sí.
+CLUSTER_THRESHOLD = fi.CLUSTER_THRESHOLD
 
 # Permutaciones por clúster. Cada una es una barajada distinta de la misma
 # columna: con una sola, el resultado depende del sorteo.
@@ -81,25 +86,19 @@ def _cluster_columns(frame: pd.DataFrame, threshold: float = CLUSTER_THRESHOLD) 
     """
     Agrupa columnas que dicen casi lo mismo, por correlación absoluta.
 
-    Aglomeración voraz de un solo enlace: se recorre en orden y cada columna se
-    une al primer grupo con el que supere el umbral. No es clustering jerárquico
-    completo y no hace falta que lo sea — lo que se necesita es que ningún par
-    fuertemente correlacionado quede en grupos distintos, y eso lo garantiza.
+    La regla vive en el dominio (`feature_importance.cluster_columns`) porque la
+    comparte con la importancia que el modelo de dirección publica. Tenerla dos
+    veces, con dos umbrales que nadie garantiza iguales, es la forma más común
+    de que dos partes del sistema respondan distinto a la misma pregunta.
+
+    Aquí solo se traduce: entra un DataFrame, salen nombres de columna.
     """
     numeric = frame.select_dtypes(include=[np.number])
-    if numeric.shape[1] <= 1:
-        return [[c] for c in numeric.columns]
-
-    corr = numeric.corr().abs().fillna(0.0)
-    clusters: list[list[str]] = []
-    for col in numeric.columns:
-        for group in clusters:
-            if any(corr.loc[col, other] >= threshold for other in group):
-                group.append(col)
-                break
-        else:
-            clusters.append([col])
-    return clusters
+    names = list(numeric.columns)
+    if len(names) <= 1:
+        return [[c] for c in names]
+    return [[names[j] for j in group]
+            for group in fi.cluster_columns(numeric.to_numpy(dtype=float), threshold)]
 
 
 def _fit_predict(model_factory, X_tr, y_tr, X_te):

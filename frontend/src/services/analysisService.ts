@@ -72,9 +72,21 @@ export interface SignalsResult {
 }
 
 // Predicción
+//
+// `importance` es MDA: los PUNTOS DE PRECISIÓN que se pierden al permutar este
+// grupo de variables en los tramos purgados. No es un reparto que sume 1 —eso
+// era la métrica anterior, medida dentro de muestra— y puede ser NEGATIVO:
+// romper un grupo que solo aportaba ruido llega a mejorar el acierto.
 export interface FeatureImportance {
   feature: string
+  /** Columnas que el grupo representa; las muy correlacionadas se miden juntas. */
+  columns?: string[]
   importance: number
+  /** Incertidumbre entre tramos. `null` cuando hubo un solo tramo. */
+  std_error?: number | null
+  p_value?: number
+  /** Tras corrección por multiplicidad. Falso = no demostrado, no «inútil». */
+  significant?: boolean
 }
 
 // Explicabilidad local: contribución de cada feature a ESTA predicción
@@ -132,6 +144,8 @@ export interface PredictionResult {
   verdict?: 'EDGE' | 'WEAK' | 'NO_EDGE'
   verdict_text?: string
   features_importance?: FeatureImportance[]
+  importance_method?: 'MDA_PURGED' | string
+  importance_note?: string
   drivers?: PredictionDriver[]
   elapsed_ms?: number
   disclaimer?: string

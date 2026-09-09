@@ -19,6 +19,29 @@ import { useEffect } from 'react'
 import PredictionMonitoringPanel from '@/components/analysis/PredictionMonitoringPanel'
 import { EmptyState, MetricCard } from '@/components/analysis/analysisShared'
 
+/**
+ * Ancho de la barra de importancia, en porcentaje del carril.
+ *
+ * La métrica anterior (MDI) era un reparto que sumaba 1, así que normalizar por
+ * el primero y pintar `importancia/máximo` tenía sentido. MDA no: son puntos de
+ * precisión perdidos, y **puede ser negativo** cuando romper un grupo mejora el
+ * acierto. Pasarle ese valor a un `width` daba un porcentaje negativo, que el
+ * navegador ignora — la barra quedaba a cero y el grupo parecía simplemente
+ * irrelevante, cuando lo que dice el número es algo distinto.
+ *
+ * Se escala sobre el MAYOR VALOR ABSOLUTO para que un grupo con caída negativa
+ * grande se vea tan largo como uno positivo del mismo tamaño, y el signo lo
+ * lleve la cifra al lado.
+ */
+export function importanceBarWidth(
+  value: number,
+  all: Array<{ importance: number }>,
+): number {
+  const escala = Math.max(...all.map((f) => Math.abs(f.importance)), 0)
+  if (!Number.isFinite(escala) || escala <= 0) return 0
+  return Math.min((Math.abs(value) / escala) * 100, 100)
+}
+
 // ── Ring de confianza (SVG) ───────────────────────────────────────
 function ConfidenceRing({ value, neutral = false }: { value: number; neutral?: boolean }) {
   const pct = Math.round(value * 100)
@@ -245,23 +268,50 @@ function ReliabilitySection({ data }: { data: PredictionResult }) {
       )}
       {data.features_importance && data.features_importance.length > 0 && (
         <div>
-          <p className="text-xs text-slate-400 uppercase mb-2">Variables más influyentes (global)</p>
+          <p className="text-xs text-slate-400 uppercase mb-2">
+            Variables más influyentes{' '}
+            <span className="normal-case text-slate-500">
+              (fuera de muestra, por grupo)
+            </span>
+          </p>
           <div className="space-y-1.5">
-            {data.features_importance.map((fi) => (
-              <div key={fi.feature} className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-300 w-28 truncate" title={fi.feature}>{fi.feature}</span>
-                <div className="flex-1 bg-slate-700 rounded-full h-2">
-                  <div
-                    className="bg-blue-500 h-2 rounded-full transition-all"
-                    style={{ width: `${Math.min(fi.importance * 100 / (data.features_importance![0]?.importance || 1), 100)}%` }}
-                  />
+            {data.features_importance.map((fi) => {
+              const width = importanceBarWidth(fi.importance, data.features_importance!)
+              const agrupa = fi.columns && fi.columns.length > 1
+              return (
+                <div key={fi.feature} className="flex items-center gap-2">
+                  <span
+                    className="text-[11px] text-slate-300 w-28 truncate"
+                    title={agrupa ? `Grupo de ${fi.columns!.length}: ${fi.columns!.join(', ')}` : fi.feature}
+                  >
+                    {fi.feature}
+                    {agrupa && <span className="text-slate-500"> +{fi.columns!.length - 1}</span>}
+                  </span>
+                  <div className="flex-1 bg-slate-700 rounded-full h-2">
+                    <div
+                      className={`h-2 rounded-full transition-all ${
+                        fi.significant ? 'bg-blue-500' : 'bg-slate-500'
+                      }`}
+                      style={{ width: `${width}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 w-16 text-right">
+                    {fi.importance >= 0 ? '+' : ''}{(fi.importance * 100).toFixed(2)} pp
+                  </span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-400 w-12 text-right">
-                  {(fi.importance * 100).toFixed(1)}%
-                </span>
-              </div>
-            ))}
+              )
+            })}
           </div>
+          {/* El significado del número cambió: ya no es un reparto que suma 100 %,
+              son puntos de precisión perdidos al romper el grupo. Sin decirlo, se
+              lee con la escala anterior. */}
+          <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
+            Puntos de precisión que el modelo pierde al permutar cada grupo en los
+            tramos purgados. Las variables que dicen casi lo mismo se miden juntas.
+            En azul, los grupos cuya aportación sobrevive a la corrección por
+            multiplicidad; en gris, los que <strong>no se ha demostrado</strong> que
+            aporten — que no es lo mismo que haber demostrado que no aportan.
+          </p>
         </div>
       )}
     </>

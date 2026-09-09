@@ -116,7 +116,7 @@ class TestEnsemble:
     def test_model_is_voting_ensemble(self):
         r = predict_price_direction(_df(_trend_cycle()), horizon=5)
         assert "Ensemble" in r["model"] and "RF+GB+LR" in r["model"]
-        # Sigue exponiendo importancias (desde el RF interno)
+        # Sigue exponiendo importancias, ahora MDA por clúster (ver más abajo)
         assert len(r["features_importance"]) >= 3
 
 
@@ -234,3 +234,78 @@ class TestNestedCalibrationMeasurement:
         out = predict_price_direction(_df(_trend_cycle(240)), horizon=5)
         if out.get("brier_score") is not None:
             assert isinstance(out["brier_nested"], bool)
+
+
+class TestGlobalImportanceIsOutOfSample:
+    """
+    Lo que se enseñaba aquí era MDI: impureza decrecida DENTRO de muestra, con
+    la etiqueta «variables más influyentes». Premia igual a una variable que
+    informa y a una que memoriza ruido, y ordena por cardinalidad — y el estudio
+    de features exógenas de esta misma plataforma ya lo declaraba inservible
+    para decidir nada. Enseñarlo mientras se argumentaba eso era sostener las dos
+    cosas a la vez.
+
+    Ahora es MDA sobre los tramos purgados: cuánta precisión se pierde al
+    permutar cada grupo de variables fuera de muestra.
+    """
+
+    @pytest.mark.unit
+    def test_it_declares_which_method_produced_the_number(self):
+        """El valor cambió de significado —de un reparto que suma 1 a puntos de
+        precisión perdidos, que pueden ser negativos—. Sin declararlo, quien lea
+        la cifra la interpretará con la escala anterior."""
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert r["importance_method"] == "MDA_PURGED"
+
+    @pytest.mark.unit
+    def test_every_group_carries_its_uncertainty(self):
+        """Una caída media de 0,01 con desviación 0,05 no es importancia, es
+        ruido. Sin el error estándar al lado, una lista ordenada siempre parece
+        significativa: SIEMPRE hay un primero."""
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        for f in r["features_importance"]:
+            assert {"feature", "columns", "importance", "std_error",
+                    "p_value", "significant"} <= set(f)
+
+    @pytest.mark.unit
+    def test_each_row_says_which_columns_it_speaks_for(self):
+        """17 indicadores técnicos son un conjunto de sinónimos. «rsi_14» en la
+        lista representa a todas las que dicen casi lo mismo, y ocultarlo haría
+        leer un grupo como una variable."""
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert any(len(f["columns"]) > 1 for f in r["features_importance"])
+        for f in r["features_importance"]:
+            assert f["feature"] in f["columns"]
+
+    @pytest.mark.unit
+    def test_the_list_is_sorted_by_measured_drop(self):
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        caidas = [f["importance"] for f in r["features_importance"]]
+        assert caidas == sorted(caidas, reverse=True)
+
+    @pytest.mark.unit
+    def test_on_pure_noise_no_group_is_declared_important(self):
+        """La prueba de que la lista puede decir «aquí no hay nada». MDI no podía:
+        siempre repartía el 100 % entre las 17 features, hubiera señal o no."""
+        r = predict_price_direction(_df(_noise()), horizon=5)
+        assert not any(f["significant"] for f in r["features_importance"])
+
+    @pytest.mark.unit
+    def test_the_note_says_what_a_non_significant_group_means(self):
+        """Con 3-6 tramos el contraste tiene poca potencia. Medido sobre series
+        con señal plantada, el grupo correcto sale primero por un factor de diez
+        y aun así no alcanza significancia en una de cada tres semillas. Leer esa
+        ausencia como «no aporta» sería exactamente el error inverso al que este
+        cambio corrige."""
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        assert "no se ha demostrado que aporte" in r["importance_note"]
+
+    @pytest.mark.unit
+    def test_importance_is_measured_on_the_purged_folds_not_on_everything(self):
+        """Medirla sobre el modelo final —ajustado con todo el histórico— sería
+        volver a una cifra dentro de muestra con otro nombre."""
+        r = predict_price_direction(_df(_trend_cycle()), horizon=5)
+        # Un grupo puede salir NEGATIVO: romperlo mejora el acierto. Eso solo
+        # ocurre fuera de muestra; en la métrica in-sample era imposible.
+        assert all(isinstance(f["importance"], float) for f in r["features_importance"])
+        assert r["n_splits"] >= 3

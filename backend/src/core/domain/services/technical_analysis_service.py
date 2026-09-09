@@ -629,6 +629,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, brier_score_loss
 
+    from core.domain.services import feature_importance as fi
     from core.domain.services import significance as sig
     from core.domain.services.purged_cv import PurgedTimeSeriesSplit, leakage_report
 
@@ -693,6 +694,11 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     tscv = PurgedTimeSeriesSplit(n_splits=n_splits, horizon=horizon)
     purge = leakage_report(len(X), n_splits, horizon)
     oos_true, oos_pred, oos_proba, fold_acc = [], [], [], []
+    # Importancia MDA: se aprovecha que cada tramo ya entrena un modelo. Permutar
+    # el test y volver a predecir es barato; entrenar otra vez para medir
+    # importancia costaría el doble y mediría exactamente lo mismo.
+    clusters = fi.cluster_columns(X)
+    fold_drops = []
     for tr, te in tscv.split(X):
         if len(set(y[tr])) < 2:
             continue
@@ -702,6 +708,8 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         oos_true.extend(y[te])
         oos_proba.extend(m.predict_proba(X[te])[:, 1])
         fold_acc.append(accuracy_score(y[te], p))
+        if len(te) >= 10:
+            fold_drops.append(fi.permutation_drops(m, X[te], y[te], clusters))
 
     if not oos_true:
         return {"prediction": "INSUFFICIENT_DATA", "confidence": 0, "horizon": horizon,
@@ -793,8 +801,21 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     else:
         pred_label = "NEUTRAL"
 
-    top_features = sorted(zip(feature_cols, imp_model.feature_importances_),
-                          key=lambda x: x[1], reverse=True)[:8]
+    # ── Importancia GLOBAL: MDA por clúster, fuera de muestra ──
+    #
+    # Lo que había aquí era `imp_model.feature_importances_`, es decir MDI:
+    # impureza decrecida DENTRO de muestra. Se mostraba al usuario como
+    # «variables más influyentes» y no lo era — premia igual a una variable que
+    # informa y a una que memoriza ruido, y ordena por cardinalidad. El propio
+    # estudio de features de esta plataforma lo declara inservible para decidir
+    # nada; seguir enseñándolo era sostener las dos cosas a la vez.
+    #
+    # Ahora es la caída de precisión al permutar cada grupo de variables en los
+    # tramos de test PURGADOS, con su error estándar entre tramos y corrección
+    # por multiplicidad. Cambia el significado del número: ya no es un reparto
+    # que suma 1, son puntos de precisión perdidos, y puede ser negativo.
+    importance = fi.aggregate_clusters(feature_cols, clusters, fold_drops) if fold_drops else []
+    top_features = importance[:8]
 
     # ── Explicabilidad LOCAL de esta predicción (atribución por oclusión) ──
     # Para esta vela concreta, ¿qué features empujan la probabilidad alcista?
@@ -882,9 +903,15 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         "up_rate": round(up_rate, 4),
         "verdict": verdict,
         "verdict_text": verdict_text,
-        "features_importance": [
-            {"feature": name, "importance": round(float(imp), 4)} for name, imp in top_features
-        ],
+        "features_importance": top_features,
+        "importance_method": "MDA_PURGED",
+        "importance_note": (
+            "Caída de precisión fuera de muestra al permutar cada grupo de variables "
+            "en los tramos purgados. Las variables muy correlacionadas se agrupan: "
+            "medidas por separado se sustituyen entre sí y todas parecen inútiles. "
+            "La incertidumbre se estima ENTRE tramos, y con 3-6 tramos el contraste "
+            "tiene poca potencia: que un grupo no salga significativo significa «no "
+            "se ha demostrado que aporte», nunca «se ha demostrado que no aporta»."),
         "drivers": drivers,
         "elapsed_ms": int((_time.perf_counter() - t_start) * 1000),
         "disclaimer": "Predicción estadística evaluada fuera de muestra (walk-forward). "
