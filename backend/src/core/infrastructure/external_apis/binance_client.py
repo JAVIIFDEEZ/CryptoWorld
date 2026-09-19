@@ -195,6 +195,62 @@ class BinancePublicClient:
             params["endTime"] = int(end_time)
         return self._get_futures("/fapi/v1/fundingRate", params)
 
+    # ── Series de microestructura con HISTÓRICO (futures/data) ─────
+    #
+    # Estos tres endpoints devuelven hasta 30 días hacia atrás, que es lo que
+    # permite arrancar una serie sin esperar un mes a que el archivador la
+    # construya. Pasados esos 30 días, la única fuente es el propio almacén: por
+    # eso hay que archivarlos, y por eso el archivador no es opcional.
+
+    def open_interest_history(self, symbol: str, period: str = "1h",
+                              limit: int = 500) -> list:
+        """
+        GET /futures/data/openInterestHist — interés abierto histórico.
+
+        Trae contratos y nocional en USD por periodo. Máximo 30 días atrás.
+        """
+        return self._get_futures("/futures/data/openInterestHist",
+                                 {"symbol": symbol, "period": period,
+                                  "limit": min(int(limit), 500)})
+
+    def long_short_ratio_history(self, symbol: str, period: str = "1h",
+                                 limit: int = 500) -> list:
+        """
+        GET /futures/data/globalLongShortAccountRatio — cuántas CUENTAS están
+        largas frente a cortas.
+
+        Mide unilateralidad de la multitud, que es distinto de cuánto dinero hay
+        a cada lado: mucha gente pequeña larga y poco dinero grande corto dan un
+        ratio alto con posicionamiento neto modesto. Máximo 30 días atrás.
+        """
+        return self._get_futures("/futures/data/globalLongShortAccountRatio",
+                                 {"symbol": symbol, "period": period,
+                                  "limit": min(int(limit), 500)})
+
+    def taker_buy_sell_history(self, symbol: str, period: str = "1h",
+                               limit: int = 500) -> list:
+        """
+        GET /futures/data/takerlongshortRatio — volumen agresor comprador frente
+        a vendedor.
+
+        A diferencia del ratio de cuentas, esto es FLUJO: quién está cruzando el
+        spread ahora mismo. Máximo 30 días atrás.
+        """
+        return self._get_futures("/futures/data/takerlongshortRatio",
+                                 {"symbol": symbol, "period": period,
+                                  "limit": min(int(limit), 500)})
+
+    def order_book_depth(self, symbol: str, limit: int = 500) -> dict:
+        """
+        GET /fapi/v1/depth — libro de órdenes del perpetuo.
+
+        Sin histórico: es una foto del instante. Por eso la profundidad solo
+        puede tener serie si se archiva, y por eso ninguna métrica que dependa de
+        ella se puede calcular hacia atrás hoy.
+        """
+        return self._get_futures("/fapi/v1/depth",
+                                 {"symbol": symbol, "limit": min(int(limit), 1000)})
+
     def futures_exchange_info(self) -> dict:
         """
         GET /fapi/v1/exchangeInfo — catálogo de perpetuos con su ESTADO.

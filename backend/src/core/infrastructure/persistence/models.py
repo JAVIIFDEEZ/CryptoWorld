@@ -1598,3 +1598,71 @@ class QuantAlertFiring(models.Model):
 
     def __str__(self) -> str:
         return f"Firing({self.alert_id}, {self.value} {self.operator} {self.threshold})"
+
+
+class DerivativeMetricPoint(models.Model):
+    """
+    Punto de una serie de microestructura de derivados, con sello point-in-time.
+
+    El hueco que cierra
+    ───────────────────
+    La plataforma sabe LEER interés abierto, ratio long/short, taker buy/sell y
+    profundidad del libro —hay clientes y paneles que los consultan— pero no
+    archivaba ninguno. Solo se guardaban funding, movimientos de ballenas y
+    métricas de cadena.
+
+    La consecuencia es que esas cuatro series existen únicamente como «ahora
+    mismo», y con eso no se puede construir nada que necesite historia: ni un
+    índice de fragilidad, ni un estudio de importancia, ni un backtest que las
+    use. Peor todavía, invita a la salida fácil: propagar hacia atrás el valor de
+    hoy, que es lookahead del peor tipo porque parece un dato.
+
+    Por qué dos instantes y no uno
+    ──────────────────────────────
+    `observed_at` es cuándo el valor era cierto; `created_at`, cuándo se escribió
+    la fila. Guardar los dos es lo que permite auditar la disciplina
+    point-in-time después: si divergen mucho, el dato llegó tarde y cualquier
+    estudio que lo use en `observed_at` estaría usando información que en ese
+    momento no existía. Con un solo instante, esa comprobación es imposible y hay
+    que creerse el pipeline.
+
+    Por qué genérico y no un modelo por serie
+    ─────────────────────────────────────────
+    Todas son series escalares indexadas por (activo, venue, métrica, instante),
+    y el conjunto va a crecer: la dislocación de funding entre venues, el skew de
+    opciones y las liquidaciones agregadas encajan aquí sin migración nueva. Un
+    modelo por serie multiplicaría tablas idénticas y haría que cada fuente nueva
+    costara una migración, que es justo lo que frena a que se recojan.
+
+    El `venue` forma parte de la clave a propósito: el funding de Binance y el de
+    Bybit difieren en el mismo instante, y esa diferencia ES la oportunidad de
+    dislocación. Mezclarlos en una sola serie la borraría.
+    """
+
+    symbol = models.CharField(max_length=20, db_index=True)     # BTC, ETH…
+    venue = models.CharField(max_length=20, default="binance")  # binance, bybit, okx
+    metric = models.CharField(max_length=40)                    # open_interest_usd…
+    observed_at = models.BigIntegerField()                      # epoch ms UTC
+    value = models.FloatField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "derivative_metric_points"
+        verbose_name = "Punto de Métrica de Derivados"
+        verbose_name_plural = "Puntos de Métricas de Derivados"
+        # Unicidad por (activo, venue, métrica, instante): la ingesta se puede
+        # reejecutar sobre un tramo ya traído sin duplicar, que es lo que permite
+        # rellenar huecos sin miedo.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["symbol", "venue", "metric", "observed_at"],
+                name="uniq_derivative_metric_point",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["symbol", "metric", "observed_at"]),
+        ]
+        ordering = ["observed_at"]
+
+    def __str__(self) -> str:
+        return f"{self.symbol}@{self.venue}.{self.metric}={self.value}"
