@@ -3598,6 +3598,34 @@ class DerivativesView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class MethodologyView(APIView):
+    """
+    GET /api/methodology/ — Nota metodológica publicada: qué mide cada cifra
+    propia, bajo qué supuestos y —sobre todo— dónde deja de valer.
+
+    Incluye el estado real del motor: cuántas configuraciones se han evaluado,
+    cuál es la campeona y dónde cae su Sharpe frente al que produciría el azar
+    con ese mismo número de pruebas. Un Sharpe sin ese número no es
+    interpretable, y esa curva es la forma más rápida de enseñarlo.
+
+    Requiere autenticación porque la evidencia incluye la campeona del usuario;
+    el texto de las notas es genérico.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 300
+
+    def get(self, request):
+        from core.application.use_cases.methodology import MethodologyUseCase
+
+        cache_key = f"methodology:{request.user.id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+        result = MethodologyUseCase().execute(owner=request.user)
+        cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class ExecutionCostView(APIView):
     """
     GET /api/analysis/execution-cost/?asset_symbol=BTC — Qué cuesta ejecutar en

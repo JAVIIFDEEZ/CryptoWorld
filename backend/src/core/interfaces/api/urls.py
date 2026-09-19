@@ -98,6 +98,7 @@ urlpatterns = [
     path("analysis/quant/", views.QuantSnapshotView.as_view(), name="analysis-quant"),
     path("analysis/derivatives/", views.DerivativesView.as_view(), name="analysis-derivatives"),
     path("analysis/execution-cost/", views.ExecutionCostView.as_view(), name="analysis-execution-cost"),
+    path("methodology/", views.MethodologyView.as_view(), name="methodology"),
     path("market/regime/", views.MarketRegimeView.as_view(), name="market-regime"),
     path("market/lead-lag/", views.LeadLagView.as_view(), name="market-lead-lag"),
     path("oms/tca/", views.ExecutionTcaView.as_view(), name="oms-tca"),

@@ -38,6 +38,7 @@ const AlertsPage = lazy(() => import('@/pages/AlertsPage'))
 const NewsPage = lazy(() => import('@/pages/NewsPage'))
 const BlockchainPage = lazy(() => import('@/pages/BlockchainPage'))
 const LearnPage = lazy(() => import('@/pages/LearnPage'))
+const MethodologyPage = lazy(() => import('@/pages/MethodologyPage'))
 const Security2FAPage = lazy(() => import('@/pages/Security2FAPage'))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
 const AdminDashboardPage = lazy(() => import('@/pages/AdminDashboardPage'))
@@ -75,6 +76,7 @@ function AppRoutes() {
           <Route path="/strategies" element={<StrategyGeneratorPage />} />
           <Route path="/blockchain" element={<BlockchainPage />} />
           <Route path="/learn" element={<LearnPage />} />
+          <Route path="/metodologia" element={<MethodologyPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/trading" element={<TradingPage />} />
           <Route path="/news" element={<NewsPage />} />

@@ -293,6 +293,7 @@ const navSections: NavSection[] = [
     items: [
       { path: '/news', label: 'nav.news', shortLabel: 'News', icon: <IconNews /> },
       { path: '/learn', label: 'nav.learn', shortLabel: 'Learn', icon: <IconLearn /> },
+      { path: '/metodologia', label: 'nav.methodology', shortLabel: 'Método', icon: <IconLearn /> },
     ],
   },
 ]
