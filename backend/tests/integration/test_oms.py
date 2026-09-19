@@ -274,3 +274,130 @@ class TestConcentrationLimit:
         assert put2.data["daily_loss_limit_usd"] == 200.0
         get = authenticated_client.get("/api/trading/risk-policy/")
         assert get.data["max_concentration_pct"] == 5.0
+
+
+class TestElControlQueNoPuedeEvaluarNoAutoriza:
+    """
+    Los dos controles del OMS fallaban ABIERTOS: cualquier excepción dentro de
+    la comprobación se registraba en el log y devolvía «adelante». Justo cuando
+    el sistema está roto —que es cuando el control hace más falta— la orden
+    pasaba.
+
+    Y no era un problema del simulado: las dos comprobaciones gobiernan las dos
+    vías que mandan órdenes con dinero real, el espejo de paper a real y la
+    compra manual.
+
+    La regla ahora es la contraria, y estos tests la fijan simulando la avería
+    (la tabla de políticas inaccesible) en lugar de esperar a que ocurra.
+    """
+
+    @staticmethod
+    def _con_politica_rota(monkeypatch):
+        """Hace que leer la política de riesgo reviente, como si la base de
+        datos estuviera caída."""
+        from core.infrastructure.persistence import models
+
+        class _Rota:
+            def filter(self, *a, **k):
+                raise RuntimeError("base de datos no disponible")
+
+        monkeypatch.setattr(models.LiveRiskPolicy, "objects", _Rota())
+
+    @pytest.mark.integration
+    def test_la_comprobacion_rota_se_declara_en_vez_de_devolver_permitido(
+            self, db, test_user, monkeypatch):
+        from core.application.use_cases.paper_trading import (
+            RiskCheckUnavailable, _daily_loss_blocked,
+        )
+        self._con_politica_rota(monkeypatch)
+        with pytest.raises(RiskCheckUnavailable):
+            _daily_loss_blocked(test_user)
+
+    @pytest.mark.integration
+    def test_lo_mismo_para_la_concentracion(self, db, test_user, monkeypatch):
+        from core.application.use_cases.paper_trading import (
+            RiskCheckUnavailable, _concentration_blocked,
+        )
+        self._con_politica_rota(monkeypatch)
+        with pytest.raises(RiskCheckUnavailable):
+            _concentration_blocked(test_user, "BTC", 1000.0)
+
+    @pytest.mark.integration
+    def test_el_espejo_a_real_no_manda_la_compra_si_el_control_esta_roto(
+            self, db, test_user, monkeypatch):
+        """El caso que importa: con el control averiado, la orden NO sale al
+        exchange y queda registrada como bloqueada con su motivo."""
+        from core.infrastructure.persistence.models import LiveOrderRecord
+
+        acc, conn = _account(test_user)
+        enviadas = []
+
+        class _Broker:
+            def create_order(self, symbol, side, otype, amount, price=None):
+                enviadas.append(side)
+                return {"id": "1", "average": 100000.0}
+
+        self._con_politica_rota(monkeypatch)
+        trade = _apply_signal(acc, "BUY", price=100000.0)
+        _mirror_live(acc, trade, 100000.0, broker_factory=lambda c: _Broker())
+
+        assert enviadas == []
+        bloqueada = LiveOrderRecord.objects.filter(account=acc, status="blocked").first()
+        assert bloqueada is not None
+        assert "No se pudo comprobar" in bloqueada.error
+
+    @pytest.mark.integration
+    def test_bloquear_por_averia_no_apaga_la_promocion(self, db, test_user, monkeypatch):
+        """El error simétrico sería apagarlo todo por una lectura fallida. El
+        fallo puede ser transitorio; la compra se rechaza, la promoción sigue."""
+        acc, conn = _account(test_user)
+
+        class _Broker:
+            def create_order(self, *a, **k):
+                return {"id": "1", "average": 100000.0}
+
+        self._con_politica_rota(monkeypatch)
+        trade = _apply_signal(acc, "BUY", price=100000.0)
+        _mirror_live(acc, trade, 100000.0, broker_factory=lambda c: _Broker())
+        acc.refresh_from_db()
+        assert acc.live_enabled is True
+
+    @pytest.mark.integration
+    def test_la_averia_nunca_bloquea_una_venta(self, db, test_user, monkeypatch):
+        """Reducir exposición tiene que poder hacerse siempre, y sobre todo si
+        algo va mal. Las ventas no pasan por el control y así debe seguir."""
+        acc, conn = _account(test_user)
+        enviadas = []
+
+        class _Broker:
+            def create_order(self, symbol, side, otype, amount, price=None):
+                enviadas.append(side)
+                return {"id": "1", "average": 100000.0}
+
+        # Primero una compra con el control sano, para tener posición que vender.
+        trade = _apply_signal(acc, "BUY", price=100000.0)
+        _mirror_live(acc, trade, 100000.0, broker_factory=lambda c: _Broker())
+        assert enviadas == ["buy"]
+
+        # Ahora se rompe el control y se vende: la venta debe salir igualmente.
+        self._con_politica_rota(monkeypatch)
+        trade = _apply_signal(acc, "SELL", price=100000.0)
+        _mirror_live(acc, trade, 100000.0, broker_factory=lambda c: _Broker())
+        assert enviadas == ["buy", "sell"]
+
+    @pytest.mark.integration
+    def test_la_compra_manual_real_tambien_se_bloquea(self, db, test_user, monkeypatch):
+        """La otra vía con dinero real al otro lado."""
+        from core.application.use_cases.broker_trading import _manual_buy_block_reason
+
+        self._con_politica_rota(monkeypatch)
+        motivo = _manual_buy_block_reason(test_user, "BTC/USDT", 1000.0)
+        assert motivo is not None and "No se pudo comprobar" in motivo
+
+    @pytest.mark.integration
+    def test_sin_politica_configurada_sigue_autorizando(self, db, test_user):
+        """No confundir «el usuario no ha puesto tope» con «no he podido
+        mirarlo»: lo primero autoriza y tiene que seguir haciéndolo."""
+        from core.application.use_cases.broker_trading import _manual_buy_block_reason
+
+        assert _manual_buy_block_reason(test_user, "BTC/USDT", 1000.0) is None

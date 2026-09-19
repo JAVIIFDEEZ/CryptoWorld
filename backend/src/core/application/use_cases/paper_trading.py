@@ -177,21 +177,55 @@ def daily_live_realized_pnl(owner) -> float:
     return round(total, 2)
 
 
+class RiskCheckUnavailable(RuntimeError):
+    """
+    El control de riesgo no pudo evaluarse.
+
+    No es lo mismo que «no hay bloqueo», y confundirlos es el fallo que esta
+    excepción existe para impedir. Antes, cualquier error dentro de una
+    comprobación —la tabla de políticas inaccesible, la base de datos caída, un
+    cálculo de PnL que revienta— se registraba en el log y devolvía «adelante».
+    El control fallaba ABIERTO: justo cuando el sistema está roto, que es cuando
+    más falta hace, dejaba pasar la orden.
+
+    Y no era un problema teórico del simulado. Las dos comprobaciones gobiernan
+    las dos vías que mandan órdenes al exchange con dinero real: el espejo de
+    paper a real (`_mirror_live`) y la compra manual (`broker_trading`).
+
+    La regla ahora es la contraria: **un control que no puede evaluarse no
+    autoriza**. Se bloquea la compra y se dice por qué. El coste de equivocarse
+    hacia este lado es una compra que no sale; el del otro lado es saltarse el
+    límite de pérdida diaria del usuario con dinero real encima.
+
+    Las ventas no pasan por aquí y siguen sin bloquearse nunca: reducir
+    exposición tiene que poder hacerse siempre, sobre todo si algo va mal.
+    """
+
+
 def _daily_loss_blocked(owner) -> "float | None":
     """Si el usuario tiene límite diario y ya lo ha alcanzado, devuelve la
-    pérdida de hoy (para el mensaje); si no, None."""
+    pérdida de hoy (para el mensaje); si no, None.
+
+    Lanza `RiskCheckUnavailable` si no puede llegar a una respuesta: no hay
+    tercer valor de retorno que signifique «no lo sé», y devolver None lo haría
+    indistinguible de «no hay límite superado».
+    """
     try:
         from core.infrastructure.persistence.models import LiveRiskPolicy
         policy = LiveRiskPolicy.objects.filter(owner_id=owner if isinstance(owner, int) else owner.id).first()
+        # Sin política o sin límite fijado NO es un fallo: es que el usuario no
+        # ha puesto tope. Eso sí autoriza, y por eso vive dentro del try.
         if policy is None or not policy.daily_loss_limit_usd:
             return None
         pnl_today = daily_live_realized_pnl(owner)
         if pnl_today <= -abs(policy.daily_loss_limit_usd):
             return pnl_today
         return None
-    except Exception:  # noqa: BLE001 — el control de riesgo nunca rompe el paper
+    except Exception as exc:  # noqa: BLE001 — se convierte, no se traga
         logger.exception("daily_loss check falló")
-        return None
+        raise RiskCheckUnavailable(
+            "No se pudo comprobar el límite de pérdida diaria: compra no enviada."
+        ) from exc
 
 
 def _concentration_blocked(owner, symbol: str, add_usd: float) -> "str | None":
@@ -222,9 +256,11 @@ def _concentration_blocked(owner, symbol: str, add_usd: float) -> "str | None":
                     f"{pct:.0f}% del libro (máx. {policy.max_concentration_pct:.0f}%): "
                     "compra no enviada.")
         return None
-    except Exception:  # noqa: BLE001 — el control de riesgo nunca rompe el paper
+    except Exception as exc:  # noqa: BLE001 — se convierte, no se traga
         logger.exception("concentration check falló")
-        return None
+        raise RiskCheckUnavailable(
+            "No se pudo comprobar el límite de concentración: compra no enviada."
+        ) from exc
 
 
 def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
@@ -283,15 +319,21 @@ def _mirror_live(account, trade, price: float, broker_factory=None) -> None:
     # (abrir riesgo) sin desactivar la promoción — mañana se reanuda sola. Las
     # ventas jamás se bloquean: reducir exposición siempre está permitido.
     if side == "buy":
-        loss_today = _daily_loss_blocked(account.owner)
-        conc_msg = _concentration_blocked(
-            account.owner, account.asset_symbol, base_amount * float(price))
         block_reason = None
-        if loss_today is not None:
-            block_reason = (f"Límite de pérdida diaria alcanzado "
-                            f"({loss_today:+.2f} USD hoy): compra no enviada.")
-        elif conc_msg is not None:
-            block_reason = conc_msg
+        try:
+            loss_today = _daily_loss_blocked(account.owner)
+            conc_msg = _concentration_blocked(
+                account.owner, account.asset_symbol, base_amount * float(price))
+            if loss_today is not None:
+                block_reason = (f"Límite de pérdida diaria alcanzado "
+                                f"({loss_today:+.2f} USD hoy): compra no enviada.")
+            elif conc_msg is not None:
+                block_reason = conc_msg
+        except RiskCheckUnavailable as exc:
+            # Un control que no puede evaluarse no autoriza. Se bloquea la compra
+            # pero NO se desactiva la promoción: el fallo puede ser transitorio y
+            # apagarlo todo por una lectura fallida sería el error simétrico.
+            block_reason = str(exc)
         if block_reason is not None:
             record.status = "blocked"
             record.error = block_reason[:300]

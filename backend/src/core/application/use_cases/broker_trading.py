@@ -337,16 +337,21 @@ def _manual_buy_block_reason(owner, symbol: str, notional_usd: float) -> "str | 
     para que ambas vías compartan una única definición de la política.
     """
     from core.application.use_cases.paper_trading import (
-        _concentration_blocked, _daily_loss_blocked,
+        RiskCheckUnavailable, _concentration_blocked, _daily_loss_blocked,
     )
 
-    loss_today = _daily_loss_blocked(owner)
-    if loss_today is not None:
-        return (f"Límite de pérdida diaria alcanzado ({loss_today:+.2f} USD hoy): "
-                "compra no enviada.")
+    try:
+        loss_today = _daily_loss_blocked(owner)
+        if loss_today is not None:
+            return (f"Límite de pérdida diaria alcanzado ({loss_today:+.2f} USD hoy): "
+                    "compra no enviada.")
 
-    base = symbol.split("/")[0].upper()
-    return _concentration_blocked(owner, base, notional_usd)
+        base = symbol.split("/")[0].upper()
+        return _concentration_blocked(owner, base, notional_usd)
+    except RiskCheckUnavailable as exc:
+        # Aquí hay dinero real al otro lado. Un control que no ha podido
+        # evaluarse no es un control superado: la compra no sale.
+        return str(exc)
 
 
 def _replay(record) -> dict:
