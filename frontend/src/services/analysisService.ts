@@ -71,6 +71,38 @@ export interface SignalsResult {
   error?: string
 }
 
+// Coste de ejecución por tamaño.
+//
+// `impact_bps` sale de un MODELO (raíz cuadrada, calibrado con volumen y
+// volatilidad observados), no de leer el libro de órdenes — la plataforma
+// consulta profundidad en vivo pero no la archiva. Por eso `method` y `note`
+// viajan con los números y hay que mostrarlos: una estimación presentada como
+// medición es peor que no tener el dato.
+export interface ExecutionCostStep {
+  notional_usd: number
+  participation_pct: number
+  impact_bps: number
+  impact_usd: number
+  /** Falso = a este tamaño la orden ya no entra en un día sin mover el mercado. */
+  feasible: boolean
+}
+
+export interface ExecutionCost {
+  symbol?: string
+  available: boolean
+  steps: ExecutionCostStep[]
+  /** Techo por encima del cual la orden deja de ser ejecutable en un día. */
+  max_executable_usd?: number | null
+  adv_usd?: number
+  daily_volatility?: number
+  gamma?: number
+  max_participation_pct?: number
+  window_days?: number
+  method?: 'SQRT_IMPACT_MODEL' | string
+  note?: string
+  data_source?: string
+}
+
 // Predicción
 //
 // `importance` es MDA: los PUNTOS DE PRECISIÓN que se pierden al permutar este
@@ -498,6 +530,16 @@ export const analysisService = {
   /** Microestructura del perpetuo del activo: funding, basis e interés abierto. */
   async getDerivatives(assetSymbol: string): Promise<DerivativesSnapshot> {
     const { data } = await apiClient.get<DerivativesSnapshot>('/analysis/derivatives/', {
+      params: { asset_symbol: assetSymbol },
+    })
+    return data
+  },
+
+  /** Qué cuesta ejecutar en este activo a cada tamaño. Es lo que convierte una
+   * señal en una decisión: el mismo edge es un negocio a 10k y una pérdida a 1M
+   * en un activo estrecho. */
+  async getExecutionCost(assetSymbol: string): Promise<ExecutionCost> {
+    const { data } = await apiClient.get<ExecutionCost>('/analysis/execution-cost/', {
       params: { asset_symbol: assetSymbol },
     })
     return data

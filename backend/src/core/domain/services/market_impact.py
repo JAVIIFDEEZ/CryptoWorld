@@ -158,3 +158,89 @@ def daily_volatility_of(df, window: int = 30) -> float:
     returns = np.diff(close) / np.where(close[:-1] != 0, close[:-1], 1.0)
     sample = returns[-window:]
     return float(np.std(sample, ddof=1)) if sample.size >= 2 else 0.0
+
+
+# Tamaños de la escalera de coste, en USD. Cubren desde la orden de un usuario
+# pequeño hasta la de una mesa: el punto del ejercicio es que el coste NO es una
+# propiedad del activo sino de la pareja (activo, tamaño), y eso solo se ve
+# comparando varios órdenes de magnitud a la vez.
+DEFAULT_LADDER: tuple[float, ...] = (1_000.0, 10_000.0, 100_000.0, 1_000_000.0)
+
+
+def cost_ladder(adv_usd: float, daily_volatility: float,
+                notionals: tuple[float, ...] = DEFAULT_LADDER,
+                model: ImpactModel | None = None) -> dict:
+    """
+    Cuánto cuesta ejecutar, a cada tamaño, en este activo.
+
+    La pregunta que responde
+    ────────────────────────
+    Toda señal que muestra esta plataforma —un veredicto, una estrategia, una
+    alerta— es inaccionable hasta que se sabe qué cuesta actuar sobre ella. Un
+    edge de 30 puntos básicos es un negocio a 10.000 USD y una pérdida a
+    1.000.000 en un activo estrecho, y es exactamente el mismo edge: lo que
+    cambia es el coste de tomarlo.
+
+    Qué es este número, y qué NO es
+    ───────────────────────────────
+    Es el **modelo de raíz cuadrada** calibrado con dos cantidades observadas:
+    el volumen medio diario en USD y la volatilidad diaria. No es una lectura
+    del libro de órdenes. La diferencia importa y se declara en la salida:
+
+      · Un modelo estima el coste de una orden TÍPICA en condiciones típicas.
+        En un momento de estrés, con el libro vacío, el coste real es mayor.
+      · La profundidad ±2 % daría el coste medido de verdad, y esta plataforma
+        la consulta en vivo pero **no la archiva**, así que no hay serie con la
+        que calcularla hacia atrás ni con la que validar este modelo.
+
+    Decirlo no es un descargo: es la diferencia entre una estimación que se
+    puede auditar y un número que parece un dato. Quien lea «12 bps» tiene
+    derecho a saber que sale de una fórmula con un parámetro libre (`gamma`) y
+    no de haber mirado cuánta profundidad había.
+
+    El techo de ejecutabilidad
+    ──────────────────────────
+    Por encima de cierta participación sobre el volumen diario la orden deja de
+    ser ejecutable en un día sin mover el mercado de forma evidente. Ese techo
+    se devuelve explícito (`max_executable_usd`) porque es la cifra que convierte
+    la escalera en una decisión: no «cuánto me cuesta», sino «hasta dónde puedo».
+    """
+    m = model or ImpactModel()
+    if adv_usd <= 0 or daily_volatility <= 0:
+        return {
+            "available": False,
+            "steps": [],
+            "max_executable_usd": None,
+            "note": ("Sin volumen medio diario o sin volatilidad no se puede "
+                     "estimar el coste. Se dice en vez de devolver un cero que "
+                     "se leería como «ejecutar aquí es gratis»."),
+        }
+
+    steps = []
+    for notional in notionals:
+        participation = notional / adv_usd
+        bps = impact_bps(notional, adv_usd, daily_volatility, m)
+        steps.append({
+            "notional_usd": float(notional),
+            "participation_pct": round(participation * 100, 4),
+            "impact_bps": round(bps, 2),
+            "impact_usd": round(bps / 10_000.0 * notional, 2),
+            "feasible": bool(participation <= m.max_participation),
+        })
+
+    return {
+        "available": True,
+        "adv_usd": round(float(adv_usd), 2),
+        "daily_volatility": round(float(daily_volatility), 6),
+        "gamma": m.gamma,
+        "max_participation_pct": m.max_participation * 100,
+        "max_executable_usd": round(float(adv_usd) * m.max_participation, 2),
+        "steps": steps,
+        "method": "SQRT_IMPACT_MODEL",
+        "note": (
+            "Modelo de raíz cuadrada calibrado con el volumen medio diario y la "
+            "volatilidad observados. NO es una lectura del libro de órdenes: es "
+            "el coste esperado de una orden típica en condiciones típicas, y en "
+            "un momento de estrés será mayor."
+        ),
+    }

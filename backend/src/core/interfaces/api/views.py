@@ -3598,6 +3598,41 @@ class DerivativesView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class ExecutionCostView(APIView):
+    """
+    GET /api/analysis/execution-cost/?asset_symbol=BTC — Qué cuesta ejecutar en
+    este activo a cada tamaño: impacto esperado en puntos básicos y en dinero
+    para 1k, 10k, 100k y 1M USD, más el techo por encima del cual la orden deja
+    de ser ejecutable en un día.
+
+    Es lo que convierte una señal en una decisión. Un edge de 30 puntos básicos
+    es un negocio a 10.000 USD y una pérdida a 1.000.000 en un activo estrecho,
+    y es exactamente el mismo edge.
+
+    La respuesta declara su método (`SQRT_IMPACT_MODEL`): es un modelo calibrado
+    con volumen y volatilidad observados, NO una lectura del libro de órdenes.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 900  # segundos — se calibra con 30 días; no cambia por minutos
+
+    def get(self, request):
+        from core.application.use_cases.execution_cost import ExecutionCostUseCase
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"execution_cost:{symbol}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = ExecutionCostUseCase().execute(asset_symbol=symbol)
+        if result.get("available"):
+            cache.set(cache_key, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class MarketRegimeView(APIView):
     """
     GET /api/market/regime/ — Correlaciones cross-asset de la cesta (top por

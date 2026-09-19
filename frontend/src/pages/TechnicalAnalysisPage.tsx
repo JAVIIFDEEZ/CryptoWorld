@@ -6,6 +6,7 @@ import AnalysisPanel from '@/components/analysis/AnalysisPanel'
 import ConfluencePanel from '@/components/analysis/ConfluencePanel'
 import QuantTerminal from '@/components/analysis/QuantTerminal'
 import DerivativesPanel from '@/components/analysis/DerivativesPanel'
+import ExecutionCostPanel from '@/components/analysis/ExecutionCostPanel'
 import RobustnessPanel from '@/components/analysis/RobustnessPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
@@ -104,6 +105,8 @@ function TechnicalAnalysisPage() {
           <QuantTerminal symbol={selectedSymbol} />
           {/* Microestructura de derivados: funding, basis e interés abierto */}
           <DerivativesPanel symbol={selectedSymbol} />
+          {/* Qué cuesta actuar sobre todo lo anterior, al tamaño de quien mira */}
+          <ExecutionCostPanel symbol={selectedSymbol} />
           {/* Confluencia 360°: el resumen ejecutivo antes del detalle por pestañas */}
           <ConfluencePanel symbol={selectedSymbol} />
           <AnalysisPanel symbol={selectedSymbol} />
