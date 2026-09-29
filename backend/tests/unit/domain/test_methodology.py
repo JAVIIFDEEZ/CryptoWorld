@@ -56,7 +56,7 @@ class TestCubreLoQueLaPlataformaEnsena:
     @pytest.mark.parametrize("clave", [
         "fitness", "deflated_sharpe", "pbo", "purged_cv", "edge_ml",
         "feature_importance", "execution_cost", "edge_test", "incubation",
-        "risk_gate",
+        "risk_gate", "factor_alpha",
     ])
     def test_la_metrica_tiene_nota(self, clave):
         assert note_for(clave) is not None
@@ -142,3 +142,12 @@ class TestLaVersion:
         copia = all_notes()
         copia[0]["limits"] = "manipulado"
         assert NOTES[0]["limits"] != "manipulado"
+
+    @pytest.mark.unit
+    def test_el_alfa_por_factores_declara_sus_dos_sesgos(self):
+        """Los dos que no se pueden eliminar con los datos que hay: el tamaño
+        aproximado por volumen y el universo elegido entre supervivientes."""
+        limites = note_for("factor_alpha")["limits"]
+        assert "lookahead" in limites
+        assert "SUPERVIVIENTES" in limites
+        assert "Liu" in limites

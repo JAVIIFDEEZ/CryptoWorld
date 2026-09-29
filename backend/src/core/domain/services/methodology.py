@@ -139,6 +139,30 @@ NOTES: tuple[dict, ...] = (
             "bosque— era dentro de muestra y estaba sesgada por cardinalidad."),
     },
     {
+        "key": "factor_alpha",
+        "title": "Alfa frente a los tres factores de cripto",
+        "what": (
+            "Intercepto de la regresión de los retornos de la estrategia sobre "
+            "mercado (CMKT), tamaño (CSMB) y momento (CMOM), con errores estándar "
+            "de Newey-West. Es el retorno que no explica ninguna de las tres "
+            "exposiciones."),
+        "assumptions": (
+            "Que el universo tiene al menos diez activos por periodo —con menos, "
+            "un quintil son dos monedas y el factor es ruido— y que las variables "
+            "de ordenación describen la semana anterior a la que se mide."),
+        "limits": (
+            "El tamaño se aproxima con volumen en dólares y no con capitalización: "
+            "la capitalización solo existe como foto actual y usarla para ordenar "
+            "el pasado sería lookahead. El universo se elige con la capitalización "
+            "de hoy, así que los factores están medidos sobre SUPERVIVIENTES y su "
+            "rendimiento está sesgado al alza. Y un alfa estadísticamente "
+            "significativo con magnitud económica nula no cuenta: una estrategia "
+            "que ES una combinación de los factores deja residuos minúsculos, el "
+            "error estándar se va a cero y el estadístico t se dispara sobre un "
+            "alfa de 0,00 % — se exige además un 1 % anual como mínimo. "
+            "Referencia: Liu, Tsyvinski y Wu (2022), Journal of Finance 77(2)."),
+    },
+    {
         "key": "execution_cost",
         "title": "Coste de ejecución por tamaño",
         "what": (
