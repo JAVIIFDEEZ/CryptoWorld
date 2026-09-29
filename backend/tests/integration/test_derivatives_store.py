@@ -224,3 +224,58 @@ class TestElComandoDeIngesta:
                                    "errors": {"open_interest_usd": "Timeout"},
                                    "note": "0 puntos nuevos de 0 traídos."})
         assert "sin datos de open_interest_usd" in self._run("BTC")
+
+
+class TestLaTareaProgramada:
+    """
+    Sin tarea programada, la profundidad del libro no se recoge — y es la única
+    de las cuatro series que no se puede recuperar hacia atrás. Estos tests fijan
+    que la tarea existe, que está en el planificador y que un símbolo caído no se
+    lleva por delante al resto.
+    """
+
+    @pytest.mark.integration
+    def test_esta_en_el_planificador_de_celery(self, db):
+        from django.conf import settings
+
+        entrada = settings.CELERY_BEAT_SCHEDULE.get("sync-derivative-metrics")
+        assert entrada is not None
+        assert entrada["task"] == "core.tasks.sync_derivative_metrics"
+        # La profundidad es una foto: con una cadencia larga se pierde resolución
+        # que no se recupera. Cuarto de hora o menos.
+        assert entrada["schedule"] <= 900.0
+
+    @pytest.mark.integration
+    def test_la_tarea_recoge_los_activos_del_almacen(self, db, monkeypatch):
+        from core.infrastructure.persistence.models import CryptoAsset
+        import core.application.use_cases.derivatives_store as ds
+        from core.tasks import sync_derivative_metrics
+
+        CryptoAsset.objects.create(symbol="BTC", name="Bitcoin", market_cap=1e12)
+        CryptoAsset.objects.create(symbol="ETH", name="Ether", market_cap=5e11)
+        monkeypatch.setattr(
+            ds.IngestDerivativesUseCase, "execute",
+            lambda self, symbol, **k: {"points_stored": 7, "symbol": symbol})
+
+        out = sync_derivative_metrics()
+        assert out["stored"] == 14
+        assert set(out["by_symbol"]) == {"BTC", "ETH"}
+
+    @pytest.mark.integration
+    def test_un_simbolo_caido_no_frena_al_resto(self, db, monkeypatch):
+        from core.infrastructure.persistence.models import CryptoAsset
+        import core.application.use_cases.derivatives_store as ds
+        from core.tasks import sync_derivative_metrics
+
+        CryptoAsset.objects.create(symbol="BTC", name="Bitcoin", market_cap=1e12)
+        CryptoAsset.objects.create(symbol="ETH", name="Ether", market_cap=5e11)
+
+        def _falla_btc(self, symbol, **k):
+            if symbol == "BTC":
+                raise RuntimeError("API caída")
+            return {"points_stored": 5, "symbol": symbol}
+
+        monkeypatch.setattr(ds.IngestDerivativesUseCase, "execute", _falla_btc)
+        out = sync_derivative_metrics()
+        assert out["stored"] == 5
+        assert "ETH" in out["by_symbol"] and "BTC" not in out["by_symbol"]

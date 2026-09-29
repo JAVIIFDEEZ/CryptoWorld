@@ -841,6 +841,49 @@ def sync_funding_history(self, target_settlements: int = 3000) -> dict:
 
 
 @shared_task(
+    name="core.tasks.sync_derivative_metrics",
+    bind=True,
+    max_retries=0,
+)
+def sync_derivative_metrics(self) -> dict:
+    """
+    Archiva la microestructura de derivados de los activos relevantes.
+
+    Tres de las cuatro series —interés abierto, ratio long/short y taker
+    buy/sell— tienen 30 días de histórico accesible, así que un hueco corto se
+    recupera. La **profundidad del libro no tiene histórico de ninguna forma**:
+    cada ejecución que no ocurre es un punto que no existirá nunca.
+
+    Esa asimetría es la razón de que esto sea una tarea programada y no un
+    comando que alguien recuerde lanzar. El índice de fragilidad se construye
+    sobre estas series, y no se puede falsar sobre datos que no se recogieron.
+    """
+    from core.application.use_cases.derivatives_store import IngestDerivativesUseCase
+    from core.infrastructure.persistence.models import CryptoAsset, PaperTradingAccount
+
+    top = list(
+        CryptoAsset.objects.exclude(market_cap__isnull=True)
+        .order_by("-market_cap").values_list("symbol", flat=True)[:8]
+    )
+    active = list(
+        PaperTradingAccount.objects.filter(is_active=True)
+        .values_list("asset_symbol", flat=True).distinct()
+    )
+    use_case = IngestDerivativesUseCase()
+    stored = 0
+    results = {}
+    for symbol in dict.fromkeys(top + active):
+        try:
+            res = use_case.execute(symbol)
+            stored += res.get("points_stored", 0)
+            results[symbol] = res.get("points_stored", 0)
+        except Exception as exc:  # noqa: BLE001 — un símbolo caído no frena el resto
+            logger.warning("sync_derivative_metrics %s: %s", symbol, exc)
+    logger.info("sync_derivative_metrics: %d puntos nuevos", stored)
+    return {"stored": stored, "by_symbol": results}
+
+
+@shared_task(
     name="core.tasks.sync_asset_lifecycle",
     bind=True,
     max_retries=0,

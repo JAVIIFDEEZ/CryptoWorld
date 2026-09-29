@@ -494,6 +494,15 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.sync_funding_history",
         "schedule": 21600.0,
     },
+    # Microestructura de derivados (cada 15 min). Interés abierto, long/short y
+    # taker se pueden recuperar 30 días hacia atrás; la PROFUNDIDAD del libro no
+    # tiene histórico de ninguna forma, así que cada ejecución perdida es un punto
+    # que no existirá nunca. De aquí sale el índice de fragilidad, y no se puede
+    # falsar sobre datos que no se recogieron.
+    "sync-derivative-metrics": {
+        "task": "core.tasks.sync_derivative_metrics",
+        "schedule": 900.0,
+    },
     # Altas y bajas del universo (diario): la condición para reconstruirlo
     # point-in-time y no medir solo sobre los que sobrevivieron.
     "sync-asset-lifecycle": {
