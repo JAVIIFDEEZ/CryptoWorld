@@ -56,7 +56,7 @@ class TestCubreLoQueLaPlataformaEnsena:
     @pytest.mark.parametrize("clave", [
         "fitness", "deflated_sharpe", "pbo", "purged_cv", "edge_ml",
         "feature_importance", "execution_cost", "edge_test", "incubation",
-        "risk_gate", "factor_alpha",
+        "risk_gate", "factor_alpha", "conformal",
     ])
     def test_la_metrica_tiene_nota(self, clave):
         assert note_for(clave) is not None
@@ -151,3 +151,13 @@ class TestLaVersion:
         assert "lookahead" in limites
         assert "SUPERVIVIENTES" in limites
         assert "Liu" in limites
+
+    @pytest.mark.unit
+    def test_el_conformal_no_promete_la_garantia_que_no_tiene(self):
+        """La garantía clásica es de muestra finita pero exige intercambiabilidad,
+        y una serie de precios no la cumple. Citar el teorema sin sus condiciones
+        es exactamente lo que esta nota existe para no hacer."""
+        limites = note_for("conformal")["limits"]
+        assert "intercambiabilidad" in limites
+        assert "LARGO PLAZO" in limites
+        assert "68,8" in limites          # la medición que justifica el cambio

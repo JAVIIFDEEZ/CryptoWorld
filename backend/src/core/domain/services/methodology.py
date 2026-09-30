@@ -139,6 +139,29 @@ NOTES: tuple[dict, ...] = (
             "bosque— era dentro de muestra y estaba sesgada por cardinalidad."),
     },
     {
+        "key": "conformal",
+        "title": "Umbral conformal de la predicción",
+        "what": (
+            "Umbral que decide si se proclama dirección, derivado de la tasa de "
+            "error tolerada (10 %) en lugar de elegido. Devuelve un conjunto de "
+            "etiquetas: una (dirección), dos (el modelo no distingue) o ninguna "
+            "(la vela es atípica para lo que el modelo vio al calibrarse)."),
+        "assumptions": (
+            "Se calibra en la primera mitad del tramo fuera de muestra y se mide "
+            "la cobertura en la segunda, para que el umbral no se evalúe sobre los "
+            "puntos que lo fijaron."),
+        "limits": (
+            "La garantía clásica de la predicción conformal es de muestra finita "
+            "PERO exige intercambiabilidad, y una serie de precios no la cumple: "
+            "hay dependencia temporal y cambios de régimen. Lo que se afirma aquí "
+            "es la garantía de LARGO PLAZO del nivel adaptativo, que es más débil "
+            "y es la verdadera. Y la cobertura sola engaña: el 90 % se consigue "
+            "devolviendo siempre las dos etiquetas, así que hay que leerla junto al "
+            "tamaño medio del conjunto. Sustituye a una banda fija del 0,05 que, "
+            "medida sobre ruido puro, proclamaba dirección en el 68,8 % de las velas "
+            "fallando el 50,6 %; el umbral conformal proclama en el 15,3 %."),
+    },
+    {
         "key": "factor_alpha",
         "title": "Alfa frente a los tres factores de cripto",
         "what": (

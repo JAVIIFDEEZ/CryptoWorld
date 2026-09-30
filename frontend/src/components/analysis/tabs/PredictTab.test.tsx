@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { importanceBarWidth } from './PredictTab'
+import { importanceBarWidth, neutralReason } from './PredictTab'
 
 const grupos = (...v: number[]) => v.map((importance) => ({ importance }))
 
@@ -48,5 +48,44 @@ describe('importanceBarWidth', () => {
 
   it('sobrevive a una lista vacía', () => {
     expect(importanceBarWidth(0.1, [])).toBe(0)
+  })
+})
+
+describe('neutralReason', () => {
+  const conformal = (status: string) => ({
+    available: true,
+    min_proba: 0.213,
+    prediction_set: { status },
+  })
+
+  it('distingue «no distingue» de «no reconoce el terreno»', () => {
+    // Antes había un solo motivo posible y los dos se contaban igual. El segundo
+    // merece más cautela, no la misma.
+    const ambos = neutralReason({ prob_up: 0.51, conformal: conformal('AMBOS') })
+    const vacio = neutralReason({ prob_up: 0.51, conformal: conformal('VACIO') })
+    expect(ambos).not.toBe(vacio)
+    expect(ambos).toContain('no distingue')
+    expect(vacio).toContain('no reconoce el terreno')
+  })
+
+  it('dice que el umbral no es una constante elegida', () => {
+    expect(neutralReason({ prob_up: 0.51, conformal: conformal('AMBOS') }))
+      .toContain('tasa de error')
+  })
+
+  it('muestra el umbral calibrado, no el 5 % fijo', () => {
+    expect(neutralReason({ prob_up: 0.51, conformal: conformal('AMBOS') }))
+      .toContain('21.3%')
+  })
+
+  it('cae al texto de la banda fija cuando no hay conformal', () => {
+    // Con poca muestra el umbral no se calibra y la regla anterior sigue
+    // gobernando: el texto tiene que corresponder a la regla que decidió.
+    const texto = neutralReason({ prob_up: 0.52, neutral_band: 0.05 })
+    expect(texto).toContain('5 puntos del 50%')
+  })
+
+  it('nunca deja el porcentaje en NaN', () => {
+    expect(neutralReason({})).not.toContain('NaN')
   })
 })

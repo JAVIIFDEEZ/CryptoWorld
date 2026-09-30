@@ -20,6 +20,43 @@ import PredictionMonitoringPanel from '@/components/analysis/PredictionMonitorin
 import { EmptyState, MetricCard } from '@/components/analysis/analysisShared'
 
 /**
+ * Por qué la predicción es NEUTRAL, en palabras.
+ *
+ * Antes había un solo motivo posible —la probabilidad caía dentro de una banda
+ * fija del 5 %— y el texto lo explicaba con ese número. Ahora el umbral lo deriva
+ * la calibración conformal de la tasa de error tolerada, y hay DOS motivos
+ * distintos que no se deben contar igual:
+ *
+ *  · **AMBOS** — las dos direcciones superan el umbral: el modelo no distingue.
+ *  · **VACIO** — ninguna lo supera: la vela es atípica respecto a lo que el
+ *    modelo vio al calibrarse. No es que dude entre dos opciones, es que no
+ *    reconoce el terreno, y eso merece más cautela, no la misma.
+ */
+export function neutralReason(data: {
+  prob_up?: number
+  neutral_band?: number
+  conformal?: { available: boolean; min_proba?: number; prediction_set?: { status: string } }
+}): string {
+  const pct = ((data.prob_up ?? 0.5) * 100).toFixed(1)
+  const estado = data.conformal?.prediction_set?.status
+  const minimo = data.conformal?.min_proba
+
+  if (data.conformal?.available && estado === 'VACIO') {
+    return `Ninguna dirección supera el umbral calibrado (${((minimo ?? 0) * 100).toFixed(1)}%): `
+      + 'esta vela es atípica respecto a lo que el modelo vio al calibrarse. No es que dude '
+      + 'entre subir y bajar, es que no reconoce el terreno. No cuenta en el historial.'
+  }
+  if (data.conformal?.available && estado === 'AMBOS') {
+    return `Las dos direcciones superan el umbral calibrado (${((minimo ?? 0) * 100).toFixed(1)}%), `
+      + `con ${pct}% de probabilidad de subida: el modelo no distingue. El umbral no es una `
+      + 'constante elegida, sale de la tasa de error que se tolera. No cuenta en el historial.'
+  }
+  return `La probabilidad calibrada (${pct}% de subida) está a menos de `
+    + `${((data.neutral_band ?? 0.05) * 100).toFixed(0)} puntos del 50%: el modelo no ve `
+    + 'dirección clara y no cuenta esta predicción en el historial.'
+}
+
+/**
  * Ancho de la barra de importancia, en porcentaje del carril.
  *
  * La métrica anterior (MDI) era un reparto que sumaba 1, así que normalizar por
@@ -193,9 +230,7 @@ function PredictionHero({ data }: { data: PredictionResult }) {
           <p className={`text-3xl font-bold ${headlineColor}`}>{headline}</p>
           {isNeutral ? (
             <p className="text-[11px] text-slate-400 mt-1 max-w-md">
-              La probabilidad calibrada ({((data.prob_up ?? 0.5) * 100).toFixed(1)}% de subida) está a menos de
-              {' '}{((data.neutral_band ?? 0.05) * 100).toFixed(0)} puntos del 50%: el modelo no ve dirección clara
-              y no cuenta esta predicción en el historial.
+              {neutralReason(data)}
             </p>
           ) : (
             <div className="flex flex-wrap gap-4 mt-2">

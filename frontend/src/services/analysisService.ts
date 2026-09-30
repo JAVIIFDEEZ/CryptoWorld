@@ -71,6 +71,52 @@ export interface SignalsResult {
   error?: string
 }
 
+// Umbral conformal de la predicción.
+//
+// Sustituye a una banda fija del 0,05 elegida a mano. El umbral se deriva de la
+// tasa de error tolerada (`alpha`): una etiqueta entra en el conjunto solo si su
+// probabilidad supera `min_proba`. De ahí las tres respuestas posibles —una
+// etiqueta, las dos, o ninguna— y las dos últimas son NEUTRAL por motivos
+// distintos que la interfaz debe separar.
+//
+// `guarantee` es 'LONG_RUN' a propósito: la garantía clásica es de muestra finita
+// pero exige intercambiabilidad, y una serie de precios no la cumple.
+export interface ConformalCoverage {
+  n: number
+  covered_pct: number | null
+  both_labels_pct?: number
+  empty_pct?: number
+  /** La cobertura sola engaña: el 90 % se consigue devolviendo siempre las dos. */
+  avg_set_size?: number
+}
+
+export interface ConformalSet {
+  set: string[]
+  label: string
+  status: 'DECIDIDO' | 'AMBOS' | 'VACIO'
+  min_proba: number
+  note?: string
+}
+
+export interface ConformalReport {
+  available: boolean
+  alpha?: number
+  q_hat?: number
+  min_proba?: number
+  n_calibration?: number
+  holdout_coverage?: ConformalCoverage
+  adaptive?: {
+    available: boolean
+    target_error_pct?: number
+    empirical_error_pct?: number
+    avg_set_size?: number
+    alpha_drift?: number
+  }
+  guarantee?: 'LONG_RUN' | string
+  prediction_set?: ConformalSet
+  note?: string
+}
+
 // Coste de ejecución por tamaño.
 //
 // `impact_bps` sale de un MODELO (raíz cuadrada, calibrado con volumen y
@@ -132,6 +178,10 @@ export interface PredictionResult {
   confidence: number
   prob_up?: number
   neutral_band?: number
+  /** Qué regla decidió la etiqueta. Dos predicciones con reglas distintas no son
+   * comparables, así que el campo viaja con el resultado. */
+  decision_rule?: 'CONFORMAL' | 'FIXED_BAND'
+  conformal?: ConformalReport
   horizon: number
   model?: string
   calibrated?: boolean

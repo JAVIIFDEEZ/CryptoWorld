@@ -309,3 +309,103 @@ class TestGlobalImportanceIsOutOfSample:
         # ocurre fuera de muestra; en la métrica in-sample era imposible.
         assert all(isinstance(f["importance"], float) for f in r["features_importance"])
         assert r["n_splits"] >= 3
+
+
+class TestElUmbralYaNoEsUnaConstanteElegidaAMano:
+    """
+    `_NEUTRAL_BAND = 0.05` decidía cuándo la herramienta se calla, y por tanto
+    cuántas veces se equivoca al hablar. Ese 0,05 no salía de ningún sitio.
+
+    Medido sobre el mismo tramo fuera de muestra de una serie de RUIDO PURO, la
+    banda fija proclamaba dirección en el 68,8 % de las velas y fallaba el 50,6 %
+    de las veces — una moneda al aire vestida de señal en siete de cada diez
+    velas. El umbral conformal proclama en el 15,3 %: los errores al proclamar
+    dirección bajan de 127 a 35.
+
+    Sobre una serie con señal el intercambio es aún mejor: proclama menos
+    (57 % frente a 87,7 %) y acierta más cuando lo hace (falla 20,7 % frente a
+    25,6 %).
+    """
+
+    @pytest.mark.unit
+    def test_la_regla_de_decision_se_declara(self):
+        """Dos predicciones decididas con reglas distintas no son comparables, y
+        sin este campo se leerían como si lo fueran."""
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        assert r["decision_rule"] in ("CONFORMAL", "FIXED_BAND")
+
+    @pytest.mark.unit
+    def test_con_muestra_suficiente_manda_el_conformal(self):
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        assert r["decision_rule"] == "CONFORMAL"
+        assert r["conformal"]["available"] is True
+
+    @pytest.mark.unit
+    def test_el_umbral_sale_de_la_tasa_de_error_tolerada(self):
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        c = r["conformal"]
+        assert c["alpha"] == 0.10
+        assert 0.0 < c["min_proba"] < 0.5
+
+    @pytest.mark.unit
+    def test_la_cobertura_se_mide_fuera_de_los_puntos_que_calibraron(self):
+        """Misma disciplina anidada que el Brier: un umbral evaluado sobre los
+        puntos con los que se calibró sale bien por construcción."""
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        cobertura = r["conformal"]["holdout_coverage"]
+        assert cobertura["n"] > 0
+        assert 70.0 <= cobertura["covered_pct"] <= 100.0
+
+    @pytest.mark.unit
+    def test_el_tamano_medio_del_conjunto_viaja_con_la_cobertura(self):
+        """Una cobertura del 90 % con conjuntos de tamaño 2 se consigue diciendo
+        siempre «no sé». Sin el tamaño al lado, la cobertura sola engaña."""
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        assert 1.0 <= r["conformal"]["holdout_coverage"]["avg_set_size"] <= 2.0
+
+    @pytest.mark.unit
+    def test_sobre_ruido_el_conjunto_es_casi_siempre_ambas_etiquetas(self):
+        """Lo correcto ante un modelo sin información no es equivocarse: es
+        negarse a proclamar dirección. La banda fija no podía hacerlo."""
+        r = predict_price_direction(_df(_noise(900)), horizon=5)
+        assert r["conformal"]["holdout_coverage"]["avg_set_size"] > 1.7
+
+    @pytest.mark.unit
+    def test_con_senal_los_conjuntos_se_estrechan(self):
+        """La mitad sin la cual el test anterior describiría igual de bien a un
+        instrumento que nunca se moja."""
+        ruido = predict_price_direction(_df(_noise(900)), horizon=5)
+        senal = predict_price_direction(_df(_trend_cycle(900)), horizon=5)
+        assert (senal["conformal"]["holdout_coverage"]["avg_set_size"]
+                < ruido["conformal"]["holdout_coverage"]["avg_set_size"])
+
+    @pytest.mark.unit
+    def test_el_conjunto_de_la_vela_actual_se_publica(self):
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        conjunto = r["conformal"]["prediction_set"]
+        assert conjunto["status"] in ("DECIDIDO", "AMBOS", "VACIO")
+        if conjunto["status"] != "DECIDIDO":
+            assert r["prediction"] == "NEUTRAL"
+
+    @pytest.mark.unit
+    def test_se_reporta_tambien_el_nivel_adaptativo(self):
+        """La garantía clásica exige intercambiabilidad y una serie de precios no
+        la cumple. El adaptativo es el que sí se sostiene aquí."""
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        adaptativo = r["conformal"]["adaptive"]
+        assert adaptativo["available"] is True
+        assert "target_error_pct" in adaptativo and "empirical_error_pct" in adaptativo
+
+    @pytest.mark.unit
+    def test_declara_que_la_garantia_es_de_largo_plazo_y_no_de_muestra_finita(self):
+        r = predict_price_direction(_df(_trend_cycle(600)), horizon=5)
+        assert r["conformal"]["guarantee"] == "LONG_RUN"
+
+    @pytest.mark.unit
+    def test_con_poca_muestra_cae_a_la_banda_fija_y_lo_dice(self):
+        """No se inventa un umbral con 40 observaciones: se declara que no se
+        pudo calibrar y se usa la regla anterior."""
+        r = predict_price_direction(_df(_trend_cycle(200)), horizon=5)
+        if not r["conformal"]["available"]:
+            assert r["decision_rule"] == "FIXED_BAND"
+            assert "insuficiente" in r["conformal"]["note"]

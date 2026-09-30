@@ -629,6 +629,7 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, brier_score_loss
 
+    from core.domain.services import conformal as conf
     from core.domain.services import feature_importance as fi
     from core.domain.services import significance as sig
     from core.domain.services.purged_cv import PurgedTimeSeriesSplit, leakage_report
@@ -778,6 +779,48 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
                            if platt is not None else oos_proba)
             brier = float(brier_score_loss(oos_true, shown_proba))
 
+    # ── Umbral conformal: la banda neutral deja de ser una constante ──
+    #
+    # `_NEUTRAL_BAND = 0.05` decidía cuándo la herramienta se calla, y por tanto
+    # cuántas veces se equivoca cuando habla. Ese 0,05 no salía de ningún sitio.
+    #
+    # Aquí el umbral se CALCULA a partir de la tasa de error que se tolera: se
+    # calibra en la primera mitad del tramo OOS y se mide la cobertura en la
+    # segunda, con la misma disciplina anidada que el Brier — un umbral evaluado
+    # sobre los puntos que lo calibraron sale bien por construcción.
+    #
+    # La garantía es de LARGO PLAZO, no de muestra finita: la clásica exige
+    # intercambiabilidad y una serie de precios no la cumple. Por eso se reporta
+    # además el nivel adaptativo, que es el que sí se sostiene aquí.
+    conformal_report = {"available": False,
+                        "note": "Muestra insuficiente para calibrar el umbral."}
+    q_hat = None
+    if len(set(oos_true)) == 2 and len(oos_true) >= 2 * conf.MIN_CALIBRATION:
+        mitad = len(oos_true) // 2
+        cal_scores = conf.nonconformity(oos_proba[:mitad], oos_true[:mitad])
+        calibracion = conf.calibrate(cal_scores, alpha=conf.DEFAULT_ALPHA)
+        if calibracion.get("available"):
+            q_hat = calibracion["q_hat"]
+            cobertura = conf.coverage(oos_proba[mitad:], oos_true[mitad:], q_hat)
+            adaptativo = conf.AdaptiveConformal(alpha=conf.DEFAULT_ALPHA).run(
+                oos_proba[mitad:], oos_true[mitad:], cal_scores)
+            conformal_report = {
+                "available": True,
+                "alpha": conf.DEFAULT_ALPHA,
+                "q_hat": q_hat,
+                "min_proba": calibracion["min_proba"],
+                "n_calibration": calibracion["n_calibration"],
+                "holdout_coverage": cobertura,
+                "adaptive": adaptativo,
+                "guarantee": "LONG_RUN",
+                "note": (
+                    f"Umbral derivado de una tasa de error del "
+                    f"{conf.DEFAULT_ALPHA:.0%}, no de una constante: una dirección "
+                    f"solo se proclama si su probabilidad supera "
+                    f"{calibracion['min_proba']:.3f}. Calibrado en la primera mitad "
+                    "del tramo fuera de muestra y medido en la segunda."),
+            }
+
     # ── Modelo final con TODO el histórico → predicción de la vela actual ──
     # Importancias desde un RF plano (ni el ensemble ni el calibrador las exponen).
     imp_model = _rf().fit(X, y)
@@ -794,12 +837,24 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
     # Zona NEUTRAL: con la probabilidad calibrada a un paso del 50%, proclamar
     # dirección sería vender una moneda al aire como señal. NEUTRAL no se
     # registra en el historial (log_prediction solo guarda ALCISTA/BAJISTA).
-    if prob_up >= 0.5 + _NEUTRAL_BAND:
+    if q_hat is not None:
+        # Con umbral conformal disponible, manda él: el conjunto puede tener una
+        # etiqueta (dirección), dos (el modelo no distingue) o ninguna (la vela es
+        # atípica para lo que el modelo vio). Los dos últimos casos son NEUTRAL,
+        # pero por motivos distintos y el informe los separa.
+        conjunto = conf.prediction_set(prob_up, q_hat)
+        pred_label = conjunto["label"]
+        conformal_report["prediction_set"] = conjunto
+        decision_rule = "CONFORMAL"
+    elif prob_up >= 0.5 + _NEUTRAL_BAND:
         pred_label = "ALCISTA"
+        decision_rule = "FIXED_BAND"
     elif prob_up <= 0.5 - _NEUTRAL_BAND:
         pred_label = "BAJISTA"
+        decision_rule = "FIXED_BAND"
     else:
         pred_label = "NEUTRAL"
+        decision_rule = "FIXED_BAND"
 
     # ── Importancia GLOBAL: MDA por clúster, fuera de muestra ──
     #
@@ -870,6 +925,10 @@ def predict_price_direction(df: pd.DataFrame, horizon: int = 5) -> dict:
         "confidence": round(float(max(proba)), 4),
         "prob_up": round(float(proba[1]), 4),
         "neutral_band": _NEUTRAL_BAND,
+        # Qué regla decidió la etiqueta. Sin esto, dos predicciones con
+        # reglas distintas se leerían como comparables y no lo son.
+        "decision_rule": decision_rule,
+        "conformal": conformal_report,
         "horizon": horizon,
         "model": "Ensemble (RF+GB+LR) calibrado, walk-forward" if calibrated else "Ensemble (RF+GB+LR), walk-forward",
         "calibrated": calibrated,
