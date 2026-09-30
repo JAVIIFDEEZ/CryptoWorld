@@ -139,6 +139,32 @@ NOTES: tuple[dict, ...] = (
             "bosque— era dentro de muestra y estaba sesgada por cardinalidad."),
     },
     {
+        "key": "option_moments",
+        "title": "Momentos implícitos de la superficie de opciones",
+        "what": (
+            "Varianza implícita libre de modelo (la integral del VIX sobre precios "
+            "de opciones fuera del dinero ponderados por 1/K²), risk reversal y "
+            "butterfly a 25 delta, y prima de riesgo de varianza contra la "
+            "volatilidad realizada. Del vencimiento cotizado más cercano a 30 días."),
+        "assumptions": (
+            "Que la cadena tiene al menos cinco strikes con precio fuera del dinero "
+            "y que el vencimiento está a más de cinco días — por debajo, la "
+            "implícita se vuelve errática y ensucia la serie."),
+        "limits": (
+            "La truncación de las colas SIEMPRE infravalora la varianza: la fórmula "
+            "es una integral sobre strikes infinitos aproximada con los que existen, "
+            "y el integrando es positivo, así que cortarlo solo puede restar. En "
+            "cripto las cadenas son más estrechas que en renta variable y el sesgo "
+            "es mayor; la salida reporta hasta dónde llega la cadena en σ para "
+            "poder juzgarlo. La varianza es libre de modelo PERO el delta con el "
+            "que se localizan las alas de 25 no lo es: no se observa, se calcula "
+            "con Black-76. Y la volatilidad de la volatilidad no sale de una foto: "
+            "necesita serie, y una cadena de opciones no se reconstruye hacia atrás. "
+            "La prima de varianza no es un carry cosechable — paga el riesgo de "
+            "cola, que en cripto es una pérdida enorme tras muchas ganancias "
+            "pequeñas."),
+    },
+    {
         "key": "conformal",
         "title": "Umbral conformal de la predicción",
         "what": (

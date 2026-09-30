@@ -56,7 +56,7 @@ class TestCubreLoQueLaPlataformaEnsena:
     @pytest.mark.parametrize("clave", [
         "fitness", "deflated_sharpe", "pbo", "purged_cv", "edge_ml",
         "feature_importance", "execution_cost", "edge_test", "incubation",
-        "risk_gate", "factor_alpha", "conformal",
+        "risk_gate", "factor_alpha", "conformal", "option_moments",
     ])
     def test_la_metrica_tiene_nota(self, clave):
         assert note_for(clave) is not None
@@ -161,3 +161,12 @@ class TestLaVersion:
         assert "intercambiabilidad" in limites
         assert "LARGO PLAZO" in limites
         assert "68,8" in limites          # la medición que justifica el cambio
+
+    @pytest.mark.unit
+    def test_los_momentos_de_opciones_declaran_su_sesgo_de_truncacion(self):
+        """El límite más importante del módulo y el que va en la misma dirección
+        siempre: cortar las colas solo puede restar varianza."""
+        limites = note_for("option_moments")["limits"]
+        assert "SIEMPRE infravalora" in limites
+        assert "libre de modelo PERO el delta" in limites
+        assert "riesgo de cola" in limites

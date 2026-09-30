@@ -841,6 +841,41 @@ def sync_funding_history(self, target_settlements: int = 3000) -> dict:
 
 
 @shared_task(
+    name="core.tasks.sync_option_surface",
+    bind=True,
+    max_retries=0,
+)
+def sync_option_surface(self) -> dict:
+    """
+    Archiva los momentos implícitos de la superficie de opciones.
+
+    Una cadena de opciones NO se puede reconstruir hacia atrás: Deribit no
+    publica el histórico de la superficie. Cada ejecución que no ocurre es un
+    punto que no existirá nunca, igual que con la profundidad del libro.
+
+    Y el factor que la literatura señala como el de mayor contenido predictivo
+    sobre el exceso de retorno de BTC —la volatilidad de la volatilidad— es
+    justamente el que necesita serie. Sin esta tarea no llega a existir.
+    """
+    from core.application.use_cases.option_surface import OptionSurfaceUseCase
+
+    use_case = OptionSurfaceUseCase()
+    stored = 0
+    results = {}
+    # Solo BTC y ETH tienen mercado de opciones con liquidez en Deribit; pedir
+    # más sería gastar llamadas en cadenas vacías.
+    for currency in ("BTC", "ETH"):
+        try:
+            res = use_case.execute(currency)
+            stored += res.get("stored", 0) or 0
+            results[currency] = res.get("stored", 0) or 0
+        except Exception as exc:  # noqa: BLE001 — una moneda caída no frena la otra
+            logger.warning("sync_option_surface %s: %s", currency, exc)
+    logger.info("sync_option_surface: %d puntos nuevos", stored)
+    return {"stored": stored, "by_currency": results}
+
+
+@shared_task(
     name="core.tasks.sync_derivative_metrics",
     bind=True,
     max_retries=0,

@@ -494,6 +494,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.sync_funding_history",
         "schedule": 21600.0,
     },
+    # Superficie de opciones (cada 30 min). Una cadena de opciones no se puede
+    # reconstruir hacia atrás: Deribit no publica el histórico de la superficie.
+    # La volatilidad de la volatilidad —el factor con más contenido predictivo
+    # según la literatura de cripto— solo existe si esto ha estado corriendo.
+    "sync-option-surface": {
+        "task": "core.tasks.sync_option_surface",
+        "schedule": 1800.0,
+    },
     # Microestructura de derivados (cada 15 min). Interés abierto, long/short y
     # taker se pueden recuperar 30 días hacia atrás; la PROFUNDIDAD del libro no
     # tiene histórico de ninguna forma, así que cada ejecución perdida es un punto
