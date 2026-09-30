@@ -52,9 +52,14 @@ OPEN_INTEREST_USD = "open_interest_usd"
 LONG_SHORT_RATIO = "long_short_ratio"
 TAKER_BUY_SELL_RATIO = "taker_buy_sell_ratio"
 DEPTH_2PCT_USD = "depth_2pct_usd"
+# Hasta dónde llega el libro que se pidió, en % del medio y por el lado más
+# corto. Se archiva SIEMPRE, incluso cuando la banda no se cubre, porque es el
+# único dato que permite saber si `depth_2pct_usd` de un día es comparable con
+# el de otro.
+DEPTH_REACH_PCT = "depth_reach_pct"
 
 HISTORICAL_METRICS = (OPEN_INTEREST_USD, LONG_SHORT_RATIO, TAKER_BUY_SELL_RATIO)
-SNAPSHOT_METRICS = (DEPTH_2PCT_USD,)
+SNAPSHOT_METRICS = (DEPTH_2PCT_USD, DEPTH_REACH_PCT)
 ALL_METRICS = HISTORICAL_METRICS + SNAPSHOT_METRICS
 
 # Profundidad del libro que se mide, como fracción del precio medio. ±2 % es el
@@ -68,18 +73,30 @@ def _pair(symbol: str) -> str:
     return s if s.endswith("USDT") else f"{s}USDT"
 
 
-def depth_within_band(book: dict, band: float = DEPTH_BAND) -> float | None:
+def depth_within_band(book: dict, band: float = DEPTH_BAND) -> dict | None:
     """
-    Dinero disponible a ±`band` del precio medio, en USD, sumando ambos lados.
+    Dinero disponible a ±`band` del precio medio, y HASTA DÓNDE llega el libro.
 
     Es una medida de resiliencia, no de precio: cuánto se puede ejecutar antes de
     que el libro se quede sin contrapartida. Se suman las dos caras porque la
     pregunta que responde —«¿cuánto aguanta esto antes de romperse?»— no depende
     de la dirección.
 
-    Devuelve None si el libro llega vacío o malformado, en vez de cero: un cero
-    significaría «no hay liquidez», que es una afirmación muy distinta de «no he
-    podido mirar».
+    Por qué devuelve también el alcance
+    ───────────────────────────────────
+    Antes esta función sumaba lo que hubiera dentro de la banda y devolvía el
+    total, sin comprobar si el libro **llegaba** a la banda. Se pide un libro de
+    500 niveles, y en un símbolo con tick fino —BTCUSDT tiene tick de 0,1— esos
+    500 niveles casi seguro no cubren ±2 %.
+
+    El resultado era una serie llamada «profundidad a ±2 %» que no lo era, y que
+    además no es comparable entre activos: un símbolo de tick ancho agota sus 500
+    niveles mucho más lejos del medio que uno de tick fino, así que el mismo
+    número significaba cosas distintas según el activo.
+
+    Ahora se devuelve `covered`, y el llamante decide. Un dato truncado no se
+    mezcla en la misma serie que uno completo: eso hace que la serie sea
+    inservible sin que nada falle de forma visible.
     """
     try:
         bids = [(float(p), float(q)) for p, q in (book.get("bids") or [])]
@@ -89,14 +106,36 @@ def depth_within_band(book: dict, band: float = DEPTH_BAND) -> float | None:
     if not bids or not asks:
         return None
 
-    medio = (bids[0][0] + asks[0][0]) / 2.0
+    # Mejor puja y mejor oferta por MÁXIMO y MÍNIMO, no por posición. Los
+    # exchanges devuelven el libro ordenado, pero tomar `[0]` hace que un libro
+    # desordenado —o una fuente nueva con otro convenio— produzca un medio
+    # equivocado en silencio, y con él un alcance equivocado.
+    mejor_puja = max(p for p, _ in bids)
+    mejor_oferta = min(p for p, _ in asks)
+    medio = (mejor_puja + mejor_oferta) / 2.0
     if medio <= 0:
         return None
 
     suelo, techo = medio * (1 - band), medio * (1 + band)
     total = sum(p * q for p, q in bids if p >= suelo)
     total += sum(p * q for p, q in asks if p <= techo)
-    return float(total)
+
+    # Alcance real: hasta dónde llega el libro que se ha pedido, por cada lado.
+    alcance_bid = (medio - min(p for p, _ in bids)) / medio
+    alcance_ask = (max(p for p, _ in asks) - medio) / medio
+    # El lado más corto manda: si el libro llega a −3 % pero solo a +0,5 %, la
+    # banda de ±2 % NO está cubierta.
+    alcance = min(alcance_bid, alcance_ask)
+
+    return {
+        "usd": float(total),
+        "covered": bool(alcance >= band),
+        "reach_pct": round(alcance * 100, 4),
+        "reach_bid_pct": round(alcance_bid * 100, 4),
+        "reach_ask_pct": round(alcance_ask * 100, 4),
+        "levels": len(bids) + len(asks),
+        "band_pct": band * 100,
+    }
 
 
 class IngestDerivativesUseCase:
@@ -130,11 +169,25 @@ class IngestDerivativesUseCase:
         try:
             from datetime import datetime, timezone as _tz
 
-            libro = cliente.order_book_depth(par)
+            # 1.000 niveles es el máximo que admite el endpoint. Se piden todos:
+            # con 500 la banda de ±2 % no se cubre en símbolos de tick fino, y
+            # pedir de menos era la causa del truncado.
+            libro = cliente.order_book_depth(par, limit=1000)
             profundidad = depth_within_band(libro)
             if profundidad is not None:
                 ahora = int(datetime.now(_tz.utc).timestamp() * 1000)
-                puntos.append((DEPTH_2PCT_USD, ahora, profundidad))
+                # El alcance se archiva SIEMPRE: es lo que permite saber si la
+                # profundidad de un día es comparable con la de otro.
+                puntos.append((DEPTH_REACH_PCT, ahora, profundidad["reach_pct"]))
+                if profundidad["covered"]:
+                    puntos.append((DEPTH_2PCT_USD, ahora, profundidad["usd"]))
+                else:
+                    # Truncado: no entra en la serie de ±2 %. Mezclar un dato
+                    # truncado con uno completo hace la serie inservible sin que
+                    # nada falle de forma visible.
+                    errores[DEPTH_2PCT_USD] = (
+                        f"libro truncado: llega a {profundidad['reach_pct']:.2f} % "
+                        f"y la banda pide {profundidad['band_pct']:.0f} %")
         except Exception as exc:  # noqa: BLE001
             logger.info("derivatives_store: profundidad no disponible para %s (%s)",
                         symbol, type(exc).__name__)

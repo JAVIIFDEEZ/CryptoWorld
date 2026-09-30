@@ -19,8 +19,8 @@ módulo con lo que Binance devuelva, incluido cuando no devuelve nada.
 import pytest
 
 from core.application.use_cases.derivatives_store import (
-    DEPTH_2PCT_USD, LONG_SHORT_RATIO, OPEN_INTEREST_USD, TAKER_BUY_SELL_RATIO,
-    IngestDerivativesUseCase, coverage, depth_within_band,
+    DEPTH_2PCT_USD, DEPTH_REACH_PCT, LONG_SHORT_RATIO, OPEN_INTEREST_USD,
+    TAKER_BUY_SELL_RATIO, IngestDerivativesUseCase, coverage, depth_within_band,
 )
 
 
@@ -64,14 +64,14 @@ class TestLaProfundidadDelLibro:
         libro = {"bids": [["100.0", "5"], ["50.0", "100"]],
                  "asks": [["101.0", "5"], ["200.0", "100"]]}
         # medio = 100.5; banda = [98.49, 102.51] → solo 100×5 y 101×5
-        assert depth_within_band(libro) == pytest.approx(500.0 + 505.0)
+        assert depth_within_band(libro)["usd"] == pytest.approx(500.0 + 505.0)
 
     @pytest.mark.unit
     def test_suma_los_dos_lados(self):
         """La pregunta es cuánto aguanta antes de romperse, y eso no depende de
         la dirección."""
         libro = {"bids": [["100.0", "1"]], "asks": [["100.0", "1"]]}
-        assert depth_within_band(libro) == pytest.approx(200.0)
+        assert depth_within_band(libro)["usd"] == pytest.approx(200.0)
 
     @pytest.mark.unit
     def test_un_libro_vacio_devuelve_none_y_no_cero(self):
@@ -90,10 +90,12 @@ def test_archiva_las_cuatro_series(db):
     from core.infrastructure.persistence.models import DerivativeMetricPoint
 
     out = IngestDerivativesUseCase().execute("BTC", client=_ClienteFalso(n=5))
-    assert out["points_stored"] == 16          # 5×3 series + 1 foto de profundidad
+    # 5×3 series + alcance + profundidad: el alcance se archiva SIEMPRE.
+    assert out["points_stored"] == 17
     assert set(out["metrics"]) == {OPEN_INTEREST_USD, LONG_SHORT_RATIO,
-                                   TAKER_BUY_SELL_RATIO, DEPTH_2PCT_USD}
-    assert DerivativeMetricPoint.objects.filter(symbol="BTC").count() == 16
+                                   TAKER_BUY_SELL_RATIO, DEPTH_2PCT_USD,
+                                   DEPTH_REACH_PCT}
+    assert DerivativeMetricPoint.objects.filter(symbol="BTC").count() == 17
 
 
 @pytest.mark.integration
@@ -117,7 +119,7 @@ def test_una_fuente_caida_no_se_lleva_a_las_demas(db):
         "BTC", client=_ClienteFalso(n=5, falla=(LONG_SHORT_RATIO,)))
     assert LONG_SHORT_RATIO in out["errors"]
     assert OPEN_INTEREST_USD in out["metrics"]
-    assert out["points_stored"] == 11          # 5×2 + profundidad
+    assert out["points_stored"] == 12          # 5×2 + alcance + profundidad
 
 
 @pytest.mark.integration
@@ -279,3 +281,102 @@ class TestLaTareaProgramada:
         out = sync_derivative_metrics()
         assert out["stored"] == 5
         assert "ETH" in out["by_symbol"] and "BTC" not in out["by_symbol"]
+
+
+class TestLaProfundidadNoSeLlamaMasDeLoQueEs:
+    """
+    Esta serie se llamaba «profundidad a ±2 %» y no lo era: se pedía un libro de
+    500 niveles y se sumaba lo que hubiera dentro de la banda SIN comprobar si el
+    libro llegaba a la banda. Con tick de 0,1 en BTCUSDT, 500 niveles no cubren
+    ±2 % casi nunca.
+
+    Peor que el sesgo: el número no era comparable entre activos. Un símbolo de
+    tick ancho agota sus niveles mucho más lejos del medio que uno de tick fino,
+    así que el mismo valor significaba cosas distintas según el activo.
+
+    Lo encontró la especificación de investigación (§8.1).
+    """
+
+    @staticmethod
+    def _libro(alcance_pct: float, niveles: int = 50):
+        """Libro que llega exactamente hasta `alcance_pct` a cada lado."""
+        medio = 100.0
+        paso = medio * (alcance_pct / 100.0) / niveles
+        bids = [[f"{medio - paso * (i + 1):.6f}", "1"] for i in range(niveles)]
+        asks = [[f"{medio + paso * (i + 1):.6f}", "1"] for i in range(niveles)]
+        return {"bids": bids, "asks": asks}
+
+    @pytest.mark.unit
+    def test_declara_hasta_donde_llega_el_libro(self):
+        out = depth_within_band(self._libro(alcance_pct=0.5))
+        assert out["reach_pct"] == pytest.approx(0.5, abs=0.02)
+
+    @pytest.mark.unit
+    def test_un_libro_que_no_llega_a_la_banda_se_marca_como_no_cubierto(self):
+        """El caso real de BTCUSDT: el libro pedido llega al 0,5 % y la banda
+        pide el 2 %."""
+        assert depth_within_band(self._libro(alcance_pct=0.5))["covered"] is False
+
+    @pytest.mark.unit
+    def test_uno_que_si_llega_se_marca_como_cubierto(self):
+        assert depth_within_band(self._libro(alcance_pct=5.0))["covered"] is True
+
+    @pytest.mark.unit
+    def test_manda_el_lado_mas_corto(self):
+        """Si el libro llega a −5 % pero solo a +0,3 %, la banda de ±2 % NO está
+        cubierta: una orden de venta se quedaría sin contrapartida."""
+        # Libro realista: pujas descendentes, ofertas ascendentes. Llega al 5 %
+        # por abajo y solo al 0,3 % por arriba.
+        libro = {"bids": [["99.9", "1"], ["95.0", "1"]],
+                 "asks": [["100.1", "1"], ["100.3", "1"]]}
+        out = depth_within_band(libro)
+        assert out["reach_bid_pct"] > out["reach_ask_pct"]
+        assert out["covered"] is False
+
+    @pytest.mark.integration
+    def test_un_libro_truncado_no_entra_en_la_serie_de_dos_por_ciento(self, db):
+        """Mezclar un dato truncado con uno completo en la misma serie la hace
+        inservible sin que nada falle de forma visible."""
+        from core.infrastructure.persistence.models import DerivativeMetricPoint
+
+        cliente = _ClienteFalso(n=3, libro=self._libro(alcance_pct=0.4))
+        out = IngestDerivativesUseCase().execute("BTC", client=cliente)
+        assert DEPTH_2PCT_USD in out["errors"]
+        assert "truncado" in out["errors"][DEPTH_2PCT_USD]
+        assert not DerivativeMetricPoint.objects.filter(metric=DEPTH_2PCT_USD).exists()
+
+    @pytest.mark.integration
+    def test_pero_el_alcance_si_se_archiva_siempre(self, db):
+        """Es el único dato que permite saber si la profundidad de un día es
+        comparable con la de otro, así que se guarda aunque la banda falle."""
+        from core.infrastructure.persistence.models import DerivativeMetricPoint
+
+        cliente = _ClienteFalso(n=3, libro=self._libro(alcance_pct=0.4))
+        IngestDerivativesUseCase().execute("BTC", client=cliente)
+        punto = DerivativeMetricPoint.objects.filter(metric=DEPTH_REACH_PCT).first()
+        assert punto is not None and punto.value == pytest.approx(0.4, abs=0.02)
+
+    @pytest.mark.integration
+    def test_se_piden_los_mil_niveles_que_admite_el_endpoint(self, db):
+        """Pedir 500 era la causa del truncado. Mil es el máximo del endpoint."""
+        pedidos = {}
+
+        class _Espia(_ClienteFalso):
+            def order_book_depth(self, symbol, limit=500):
+                pedidos["limit"] = limit
+                return super().order_book_depth(symbol, limit)
+
+        IngestDerivativesUseCase().execute("BTC", client=_Espia(n=3))
+        assert pedidos["limit"] == 1000
+
+    @pytest.mark.unit
+    def test_un_libro_desordenado_no_produce_un_medio_equivocado(self):
+        """Los exchanges lo devuelven ordenado, pero tomar el primer elemento
+        hace que una fuente nueva con otro convenio dé un alcance equivocado sin
+        que nada falle."""
+        ordenado = {"bids": [["99.9", "1"], ["95.0", "1"]],
+                    "asks": [["100.1", "1"], ["105.0", "1"]]}
+        revuelto = {"bids": [["95.0", "1"], ["99.9", "1"]],
+                    "asks": [["105.0", "1"], ["100.1", "1"]]}
+        assert (depth_within_band(ordenado)["reach_pct"]
+                == pytest.approx(depth_within_band(revuelto)["reach_pct"]))

@@ -41,11 +41,32 @@ from __future__ import annotations
 
 import numpy as np
 
-# Retardos del HAR clásico, en múltiplos de la ventana de volatilidad
-# realizada. Corresponden a los componentes diario / semanal / mensual del
+# Escalas del HAR, en DÍAS. Los componentes diario / semanal / mensual del
 # modelo de Corsi: el mercado tiene participantes con horizontes distintos y
 # cada uno deja su huella en una escala.
-HAR_LAGS: tuple[int, int, int] = (1, 5, 22)
+#
+# Por qué (1, 7, 30) y no (1, 5, 22)
+# ──────────────────────────────────
+# Corsi trabaja con renta variable, donde la semana son 5 SESIONES y el mes 22.
+# Cripto cotiza 24/7: no hay sesiones, y una semana son 7 días naturales. Copiar
+# (5, 22) importa el calendario de un mercado que cierra a uno que no cierra —
+# el componente «semanal» cubriría 5 de los 7 días y el «mensual» 22 de los 30.
+#
+# El error que esto corrige era peor que ese matiz
+# ────────────────────────────────────────────────
+# Estos números se aplicaban como VELAS, no como días, y el comentario anterior
+# decía «en múltiplos de la ventana» sin que la llamada multiplicara por nada.
+# Con velas horarias y una ventana de volatilidad de 24, los tres componentes
+# resultaban ser 1 h, 5 h y 22 h: **los tres caben dentro del mismo día**. Lo
+# que se llamaba «HAR» no medía memoria larga de ninguna clase, y el veredicto
+# de `edge_test` descansaba sobre él.
+#
+# Ahora `har_features` recibe cuántas velas hay en un día y convierte.
+HAR_LAGS_DAYS: tuple[int, int, int] = (1, 7, 30)
+
+# Se conserva el nombre antiguo apuntando a las escalas en días para que nada
+# que lo importe se rompa en silencio con un significado distinto.
+HAR_LAGS = HAR_LAGS_DAYS
 
 
 def realized_volatility(returns, window: int) -> np.ndarray:
@@ -92,18 +113,47 @@ def future_volatility(returns, horizon: int) -> np.ndarray:
     return out
 
 
-def har_features(rv, lags: tuple[int, ...] = HAR_LAGS) -> np.ndarray:
+def har_lags_in_bars(bars_per_day: int,
+                     lags_days: tuple[int, ...] = HAR_LAGS_DAYS) -> tuple[int, ...]:
+    """
+    Traduce las escalas de calendario del HAR a número de velas.
+
+    La primera escala es siempre 1 vela: la volatilidad realizada ya cubre un día
+    por construcción (su ventana ES un día), así que su valor actual *es* el
+    componente diario. Las otras se escalan por cuántas velas hay en un día.
+
+    Con velas horarias (24/día) las escalas (1, 7, 30) días se vuelven
+    (1, 168, 720) velas. Ese es el número que faltaba: antes se usaban (1, 5, 22)
+    velas, es decir 1 h, 5 h y 22 h — los tres componentes dentro del mismo día.
+    """
+    b = max(int(bars_per_day), 1)
+    salida = []
+    for i, dias in enumerate(lags_days):
+        salida.append(1 if i == 0 else max(int(round(dias * b)), 1))
+    return tuple(salida)
+
+
+def har_features(rv, bars_per_day: int = 1,
+                 lags_days: tuple[int, ...] = HAR_LAGS_DAYS,
+                 lags_bars: tuple[int, ...] | None = None) -> np.ndarray:
     """
     Componentes HAR: media de la volatilidad realizada sobre varias escalas.
 
     Cada columna es la media de `rv` sobre las últimas `lag` observaciones,
     incluyendo la actual. La intuición de Corsi es que el mercado tiene
-    operadores con horizontes distintos —intradía, semanal, mensual— y que cada
+    operadores con horizontes distintos —diario, semanal, mensual— y que cada
     uno deja huella en su escala; la suma de tres medias móviles reproduce la
     memoria larga de la volatilidad sin necesidad de un modelo fraccionario.
 
+    `bars_per_day` es obligatorio en la práctica: sin él las escalas se aplican
+    como velas y el modelo deja de ser un HAR. Se deja con valor 1 por defecto
+    para el caso en que `rv` ya venga en escala diaria, y `lags_bars` permite
+    pasar los retardos ya convertidos cuando el llamante los conoce.
+
     Causal por construcción: la fila `i` solo usa `rv[≤ i]`.
     """
+    lags = lags_bars if lags_bars is not None else har_lags_in_bars(
+        bars_per_day, lags_days)
     series = np.asarray(rv, dtype=float)
     n = series.size
     cols = []

@@ -288,3 +288,86 @@ class TestLaCalibracionEnLasDosDirecciones:
         veredicto = self._veredicto(_funding_positivo(media=0.000012, ruido=0.0002))
         if veredicto["verdict"] == "INDISTINGUIBLE_DEL_NULO":
             assert "racha" in veredicto["note"]
+
+
+class TestLaCadenciaSaleDelDatoYNoDeUnaConstante:
+    """
+    `PERIODS_PER_YEAR` estaba clavado en 1095 —tres liquidaciones diarias— y con
+    él se anualizaba el rendimiento Y se calculaba la duración del tramo.
+
+    Es correcto hoy para BTC y ETH en Binance, y falso para símbolos que liquidan
+    cada 4 h o cada hora, y para Hyperliquid, que es horario. Con cadencia real
+    de 1 h y el valor clavado, un tramo de 1.095 liquidaciones —45 días— se
+    contaba como un año entero y el rendimiento anualizado salía dividido por
+    ocho.
+
+    Lo encontró la especificación de investigación (§8.2). El dato para hacerlo
+    bien ya estaba en la base de datos: `FundingRateRecord.interval_hours`.
+    """
+
+    @pytest.mark.unit
+    def test_la_conversion_desde_horas_es_la_evidente(self):
+        from core.domain.services.carry import periods_per_year
+
+        assert periods_per_year(8.0) == pytest.approx(1095.0)
+        assert periods_per_year(1.0) == pytest.approx(8760.0)
+        assert periods_per_year(4.0) == pytest.approx(2190.0)
+
+    @pytest.mark.unit
+    def test_una_cadencia_no_valida_cae_al_valor_por_defecto(self):
+        from core.domain.services.carry import (
+            DEFAULT_PERIODS_PER_YEAR, periods_per_year,
+        )
+        assert periods_per_year(0.0) == DEFAULT_PERIODS_PER_YEAR
+        assert periods_per_year(-1.0) == DEFAULT_PERIODS_PER_YEAR
+
+    @pytest.mark.unit
+    def test_la_duracion_del_tramo_depende_de_la_cadencia(self):
+        """El error concreto: 1.095 liquidaciones son un año a 8 h y 45 días a
+        1 h. Con la constante clavada, las dos se contaban como un año."""
+        from core.domain.services.carry import periods_per_year
+
+        rates = np.full(1095, 0.0001)
+        ocho = simulate_carry(rates, periods_per_year_=periods_per_year(8.0))
+        una = simulate_carry(rates, periods_per_year_=periods_per_year(1.0))
+        assert ocho["years"] == pytest.approx(1.0, rel=0.01)
+        assert una["years"] == pytest.approx(0.125, rel=0.01)
+
+    @pytest.mark.unit
+    def test_y_con_ella_el_rendimiento_anualizado(self):
+        """Mismo flujo cobrado, ocho veces más rápido: el anualizado es ocho
+        veces mayor. Con la constante clavada los dos salían iguales."""
+        from core.domain.services.carry import periods_per_year
+
+        rates = np.full(1095, 0.0001)
+        ocho = simulate_carry(rates, periods_per_year_=periods_per_year(8.0))
+        una = simulate_carry(rates, periods_per_year_=periods_per_year(1.0))
+        assert una["net_annualized_pct"] > ocho["net_annualized_pct"] * 7
+
+    @pytest.mark.unit
+    def test_el_informe_publica_la_cadencia_que_uso(self):
+        """Dos informes con cadencias distintas no son comparables, y sin este
+        campo se leerían como si lo fueran."""
+        from core.domain.services.carry import periods_per_year
+
+        out = simulate_carry(np.full(500, 0.0001),
+                             periods_per_year_=periods_per_year(4.0))
+        assert out["periods_per_year"] == pytest.approx(2190.0)
+        assert out["funding_interval_hours"] == pytest.approx(4.0, abs=0.01)
+
+    @pytest.mark.unit
+    def test_el_nulo_usa_la_misma_cadencia_que_lo_observado(self):
+        """Si el nulo anualizara con otra cadencia, el coste de capital de las
+        dos ramas no coincidiría y la comparación mediría eso además del sesgo."""
+        from core.domain.services.carry import periods_per_year
+
+        rates = np.full(1000, 0.0001)
+        costes = CarryCosts(capital_cost_annual_pct=5.0)
+        ppy = periods_per_year(1.0)
+        obs = simulate_carry(rates, costs=costes, periods_per_year_=ppy)
+        nulo = null_distribution(rates, costs=costes, periods_per_year_=ppy,
+                                n_draws=200)
+        # El coste de capital del nulo está implícito en su mediana: con la misma
+        # cadencia, la mediana del nulo es el negativo de los costes totales.
+        esperado = -(obs["order_costs_usd"] + obs["capital_cost_usd"])
+        assert nulo["median_usd"] == pytest.approx(esperado, rel=0.15)

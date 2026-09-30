@@ -391,7 +391,9 @@ class TestItDoesNotCheat:
 
         mod.vf.HARModel = Espia
         try:
-            out = _volatility_question(_frame(_garch(1200, seed=5)),
+            # 1.200 velas ya no bastan: con el HAR corregido el componente
+            # mensual consume 720 antes de dar su primer valor.
+            out = _volatility_question(_frame(_garch(3000, seed=5)),
                                        horizon=24, rv_window=24, n_splits=5)
         finally:
             mod.vf.HARModel = real
@@ -412,3 +414,58 @@ class TestItDoesNotCheat:
     @pytest.mark.unit
     def test_the_report_says_how_many_candles_it_saw(self, con_agrupamiento):
         assert con_agrupamiento["candles"] == 3000
+
+
+class TestElHarEsUnHarDeVerdad:
+    """
+    Los retardos se aplicaban como VELAS: con datos horarios y ventana 24, los
+    componentes «diario», «semanal» y «mensual» eran 1 h, 5 h y 22 h — los tres
+    dentro del mismo día. El informe llamaba HAR a un modelo sin memoria larga,
+    y el veredicto de volatilidad descansaba sobre él.
+
+    Lo encontró la especificación de investigación (§8.6), no estos tests: el que
+    cubría los retardos afirmaba la constante equivocada.
+    """
+
+    @pytest.mark.unit
+    def test_el_informe_publica_los_retardos_que_uso(self, con_agrupamiento):
+        """Sin publicarlos, dos ejecuciones con marcos temporales distintos se
+        leerían como comparables y no lo son: los retardos en velas dependen de
+        la ventana."""
+        assert con_agrupamiento["har_lags_days"] == [1, 7, 30]
+        assert con_agrupamiento["har_lags_bars"] == [1, 168, 720]
+
+    @pytest.mark.unit
+    def test_las_tres_escalas_no_caben_en_un_dia(self):
+        """La comprobación directa del defecto: con ventana de 24 velas, la
+        escala más larga tiene que superar con mucho las 24."""
+        from core.domain.services.volatility_forecast import har_lags_in_bars
+
+        assert har_lags_in_bars(24)[-1] > 24 * 7
+
+    @pytest.mark.unit
+    def test_el_minimo_de_muestra_sube_con_la_escala_mas_larga(self):
+        """El componente mensual necesita 720 velas antes de existir. Con el
+        mínimo anterior de 150 filas no tendría ninguna, y el modelo habría
+        corrido con una columna entera de NaN."""
+        out = _volatility_question(_frame(_homoscedastic(900, seed=8)),
+                                   horizon=24, rv_window=24, n_splits=5)
+        assert out["n_oos"] == 0
+        assert "componente" in out["note"] and "720" in out["note"]
+
+    @pytest.mark.unit
+    def test_con_muestra_suficiente_si_calcula(self):
+        out = _volatility_question(_frame(_garch(5000, seed=1)),
+                                   horizon=24, rv_window=24, n_splits=5)
+        assert out["n_oos"] > 1000
+
+    @pytest.mark.unit
+    def test_un_har_correcto_puede_batir_a_la_persistencia(self):
+        """La confirmación de que el arreglo es real y no cosmético: con el HAR
+        roto el mejor predictor era SIEMPRE la persistencia. Con las escalas de
+        calendario, y a muestra suficiente, el HAR gana — que es lo que dice la
+        literatura sobre datos con agrupamiento de volatilidad."""
+        out = _volatility_question(_frame(_garch(8000, seed=1)),
+                                   horizon=24, rv_window=24, n_splits=5)
+        assert out["predictable"] is True
+        assert out["best_predictor"] == "har"

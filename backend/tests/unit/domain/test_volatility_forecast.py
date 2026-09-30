@@ -24,8 +24,9 @@ import numpy as np
 import pytest
 
 from core.domain.services.volatility_forecast import (
-    HAR_LAGS, HARModel, accuracy_edge_to_r, diebold_mariano, future_volatility,
-    har_features, observations_needed, oos_r2, realized_volatility,
+    HAR_LAGS_DAYS, HARModel, accuracy_edge_to_r, diebold_mariano, future_volatility,
+    har_features, har_lags_in_bars, observations_needed, oos_r2,
+    realized_volatility,
 )
 
 
@@ -114,21 +115,50 @@ class TestFutureVolatilityIsTheLabel:
 class TestHarFeatures:
 
     @pytest.mark.unit
-    def test_the_lags_are_the_ones_corsi_uses(self):
-        """Diario, semanal, mensual: los tres horizontes de operador del modelo
-        original. Cambiarlos sin motivo convertiría una referencia de la
-        literatura en un modelo propio sin validar."""
-        assert HAR_LAGS == (1, 5, 22)
+    def test_the_scales_are_calendar_days_not_bars(self):
+        """Este test afirmaba `HAR_LAGS == (1, 5, 22)` y con ello fijaba un error.
+
+        Esos números se aplicaban como VELAS: con datos horarios y una ventana de
+        volatilidad de 24, los componentes «diario», «semanal» y «mensual» eran
+        1 h, 5 h y 22 h — los tres dentro del mismo día. Lo que se llamaba HAR no
+        medía memoria larga de nada, y el veredicto de `edge_test` descansaba
+        sobre él.
+
+        Ahora las escalas son de calendario y se convierten con las velas que
+        tiene un día."""
+        assert HAR_LAGS_DAYS == (1, 7, 30)
+
+    @pytest.mark.unit
+    def test_the_week_is_seven_days_because_crypto_does_not_close(self):
+        """Corsi usa (1, 5, 22) porque en renta variable la semana son 5 SESIONES
+        y el mes 22. Cripto cotiza 24/7: copiar ese calendario importaría el
+        horario de un mercado que cierra a uno que no cierra."""
+        assert HAR_LAGS_DAYS[1] == 7 and HAR_LAGS_DAYS[2] == 30
+
+    @pytest.mark.unit
+    def test_the_conversion_to_bars_uses_the_bars_in_a_day(self):
+        """Con velas horarias, (1, 7, 30) días son (1, 168, 720) velas. Ese factor
+        es el que faltaba."""
+        assert har_lags_in_bars(24) == (1, 168, 720)
+        assert har_lags_in_bars(1) == (1, 7, 30)        # velas diarias
+        assert har_lags_in_bars(96) == (1, 672, 2880)   # velas de 15 minutos
+
+    @pytest.mark.unit
+    def test_the_first_scale_is_always_one_bar(self):
+        """La volatilidad realizada ya cubre un día por construcción —su ventana
+        ES un día—, así que su valor actual es el componente diario. Multiplicarlo
+        también por las velas del día lo contaría dos veces."""
+        assert har_lags_in_bars(24)[0] == 1
 
     @pytest.mark.unit
     def test_the_first_column_is_the_series_itself(self):
         rv = np.array([1.0, 2.0, 3.0, 4.0])
-        assert har_features(rv, (1,))[:, 0] == pytest.approx(rv)
+        assert har_features(rv, lags_bars=(1,))[:, 0] == pytest.approx(rv)
 
     @pytest.mark.unit
     def test_each_column_is_a_backward_mean(self):
         rv = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        col = har_features(rv, (3,))[:, 0]
+        col = har_features(rv, lags_bars=(3,))[:, 0]
         assert col[2] == pytest.approx(2.0)     # (1+2+3)/3
         assert col[4] == pytest.approx(4.0)     # (3+4+5)/3
         assert np.isnan(col[:2]).all()

@@ -62,8 +62,13 @@ class CarryTestUseCase:
         costs = c.CarryCosts(taker_fee_bps=taker_fee_bps, slippage_bps=slippage_bps,
                              capital_cost_annual_pct=capital_cost_annual_pct)
 
-        observed = c.simulate_carry(rates, position, costs)
-        null = c.null_distribution(rates, position, costs)
+        # La cadencia sale del dato, no de una constante. Con 1.095 clavado, un
+        # símbolo horario contaba 45 días como un año y el rendimiento anualizado
+        # salía dividido por ocho.
+        ppy = (c.periods_per_year(cobertura["interval_hours"])
+               if cobertura.get("interval_hours") else c.DEFAULT_PERIODS_PER_YEAR)
+        observed = c.simulate_carry(rates, position, costs, periods_per_year_=ppy)
+        null = c.null_distribution(rates, position, costs, periods_per_year_=ppy)
         shock = c.shock_margin_probability(rates, position, shock_pct)
         verdict = c.carry_verdict(observed, null, shock)
 
@@ -124,14 +129,33 @@ class CarryTestUseCase:
             return datetime.fromtimestamp(int(ms) / 1000, _tz.utc).isoformat()
 
         rates = [float(r) for r, _ in filas]
+        # Cadencia REAL, derivada de las marcas temporales: la mediana de los
+        # huecos entre liquidaciones. Se usa la mediana y no la media porque un
+        # hueco de recogida —un día que el recolector no corrió— desplazaría la
+        # media y con ella el rendimiento anualizado.
+        cadencia_horas = None
+        if len(filas) >= 3:
+            import numpy as _np
+            marcas = _np.array([int(t) for _, t in filas], dtype=float)
+            huecos = _np.diff(marcas) / 3_600_000.0
+            huecos = huecos[huecos > 0]
+            if huecos.size:
+                cadencia_horas = float(_np.median(huecos))
+
         return rates, {
             "available": True,
             "periods": len(rates),
+            "interval_hours": round(cadencia_horas, 3) if cadencia_horas else None,
             "first": _iso(filas[0][1]),
             "last": _iso(filas[-1][1]),
             "days_requested": days,
-            "note": (f"{len(rates)} liquidaciones archivadas. Con cadencia de 8 h, "
-                     f"un año completo son {int(c.PERIODS_PER_YEAR)}."),
+            "note": (
+                f"{len(rates)} liquidaciones archivadas"
+                + (f" con cadencia mediana de {cadencia_horas:.1f} h, así que un "
+                   f"año completo son {c.periods_per_year(cadencia_horas):.0f}."
+                   if cadencia_horas else
+                   ". Cadencia no derivable con tan pocas marcas: se usa la de 8 h.")
+            ),
         }
 
     @staticmethod

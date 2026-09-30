@@ -185,3 +185,47 @@ class TestElComando:
         ajustado = self._run("BTC", "--margin", "0.10")
         assert "OPERABLE" in holgado
         assert "RIESGO_DE_LIQUIDACION" in ajustado
+
+
+@pytest.mark.integration
+def test_la_cadencia_se_deriva_de_las_marcas_temporales(db):
+    """El caso que la constante clavada calculaba mal: un símbolo que liquida
+    cada hora. Se siembran marcas horarias y la cadencia tiene que salir 1 h, no
+    las 8 h que estaban supuestas."""
+    from core.application.use_cases.carry_test import CarryTestUseCase
+
+    _sembrar(n=600, media=0.0001, paso_horas=1)
+    out = CarryTestUseCase().execute("BTC", days=60)
+    assert out["funding_coverage"]["interval_hours"] == pytest.approx(1.0, abs=0.01)
+    assert out["observed"]["periods_per_year"] == pytest.approx(8760.0, rel=0.01)
+
+
+@pytest.mark.integration
+def test_con_cadencia_horaria_la_duracion_no_se_infla(db):
+    """600 liquidaciones horarias son 25 días. Con 1.095 clavado se contaban como
+    medio año, y el rendimiento anualizado salía dividido por más de siete."""
+    from core.application.use_cases.carry_test import CarryTestUseCase
+
+    _sembrar(n=600, media=0.0001, paso_horas=1)
+    out = CarryTestUseCase().execute("BTC", days=60)
+    assert out["observed"]["years"] == pytest.approx(600 / 8760, rel=0.02)
+
+
+@pytest.mark.integration
+def test_la_cadencia_de_ocho_horas_sigue_saliendo_bien(db):
+    """La corrección no puede romper el caso que ya funcionaba."""
+    from core.application.use_cases.carry_test import CarryTestUseCase
+
+    _sembrar(n=1095, media=0.0001, paso_horas=8)
+    out = CarryTestUseCase().execute("BTC", days=400)
+    assert out["funding_coverage"]["interval_hours"] == pytest.approx(8.0, abs=0.01)
+    assert out["observed"]["years"] == pytest.approx(1.0, rel=0.02)
+
+
+@pytest.mark.integration
+def test_la_cobertura_dice_la_cadencia_en_su_nota(db):
+    from core.application.use_cases.carry_test import CarryTestUseCase
+
+    _sembrar(n=400, media=0.0001, paso_horas=4)
+    nota = CarryTestUseCase().execute("BTC", days=100)["funding_coverage"]["note"]
+    assert "4.0 h" in nota and "2190" in nota

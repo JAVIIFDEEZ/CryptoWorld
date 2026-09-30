@@ -195,13 +195,29 @@ def _volatility_question(df: pd.DataFrame, horizon: int, rv_window: int,
     returns = np.concatenate([[0.0], np.diff(np.log(close))])
     rv = vf.realized_volatility(returns, rv_window)
     target = vf.future_volatility(returns, horizon)
-    features = vf.har_features(rv)
+
+    # Las escalas del HAR son de CALENDARIO (1, 7 y 30 días), y aquí es donde se
+    # traducen a velas. La ventana de volatilidad realizada cubre un día por
+    # construcción, así que son también las velas que tiene un día.
+    #
+    # Sin esta conversión los retardos se aplicaban como velas —(1, 5, 22)— y con
+    # datos horarios eso son 1 h, 5 h y 22 h: los tres componentes dentro del
+    # mismo día. Lo que se llamaba HAR no medía memoria larga de nada.
+    lags_bars = vf.har_lags_in_bars(rv_window)
+    features = vf.har_features(rv, lags_bars=lags_bars)
 
     ok = np.isfinite(target) & np.isfinite(rv) & np.isfinite(features).all(axis=1)
-    if ok.sum() < 150:
+    # El componente mensual necesita 30 días de velas antes de dar su primer
+    # valor. Con el mínimo anterior de 150 filas, un HAR correcto no tendría
+    # ninguna: el listón sube con la escala más larga que se pide.
+    minimo = max(150, int(lags_bars[-1]) + 60)
+    if ok.sum() < minimo:
         return {"answerable": False, "n_oos": 0, "predictable": False,
-                "note": ("Muestra insuficiente para la pregunta de volatilidad "
-                         f"({int(ok.sum())} filas utilizables).")}
+                "har_lags_bars": list(lags_bars),
+                "note": ("Muestra insuficiente para la pregunta de volatilidad: "
+                         f"{int(ok.sum())} filas utilizables y el componente "
+                         f"mensual del HAR necesita {lags_bars[-1]} velas antes "
+                         f"de existir (mínimo {minimo}).")}
 
     X = features[ok]
     y = target[ok]
@@ -362,6 +378,11 @@ def run_edge_test(df: pd.DataFrame, horizon: int = DEFAULT_HORIZON,
         "candles": int(len(df)),
         "horizon_bars": horizon,
         "rv_window_bars": rv_window,
+        # Qué modelo juzgó de verdad. Los retardos en velas dependen de la
+        # ventana, y sin publicarlos dos ejecuciones con marcos distintos se
+        # leerían como comparables.
+        "har_lags_days": list(vf.HAR_LAGS_DAYS),
+        "har_lags_bars": list(vf.har_lags_in_bars(rv_window)),
         "n_splits": n_splits,
         "direction": direction,
         "volatility": volatility,

@@ -242,7 +242,13 @@ NOTES: tuple[dict, ...] = (
             "calibrar sobre series con la respuesta conocida, porque falla en las "
             "dos direcciones: una serie homocedástica, impredecible por "
             "construcción, lo cumple con R² relativo +0,45, y series GARCH con "
-            "correlación de 0,7 no lo cumplen en 7 de 9 casos."),
+            "correlación de 0,7 no lo cumplen en 7 de 9 casos. Y el HAR con el que "
+            "se juzga NO era un HAR hasta 1.340: sus escalas se aplicaban como "
+            "VELAS, así que con datos horarios los componentes diario, semanal y "
+            "mensual eran 1 h, 5 h y 22 h — los tres dentro del mismo día. Ahora "
+            "son escalas de calendario (1, 7 y 30 días, el análogo 24/7 de las "
+            "sesiones de Corsi) y el componente mensual consume 720 velas antes "
+            "de existir, así que hace falta bastante más muestra."),
     },
     {
         "key": "incubation",

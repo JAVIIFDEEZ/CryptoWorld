@@ -59,7 +59,34 @@ from dataclasses import dataclass
 import numpy as np
 
 # Liquidaciones de funding al año con la cadencia estándar de 8 horas.
-PERIODS_PER_YEAR = 1095.0
+#
+# Es un valor POR DEFECTO, no una constante del mundo. Era lo segundo: estaba
+# clavado en 1095 y con él se anualizaba el rendimiento y se calculaba la
+# duración del tramo (`anos = n / PERIODS_PER_YEAR`).
+#
+# La cadencia de 8 h es correcta hoy para BTC y ETH en Binance, y falsa para
+# símbolos que liquidan cada 4 h o cada hora, y para Hyperliquid, que es horario.
+# Con una cadencia real de 1 h y el valor clavado, un tramo de 1.095
+# liquidaciones —45 días— se contaba como un año entero: el rendimiento
+# anualizado salía dividido por ocho.
+#
+# `FundingRateRecord` ya guarda `interval_hours`, así que el dato para hacerlo
+# bien estaba en la base de datos y no se usaba.
+DEFAULT_PERIODS_PER_YEAR = 1095.0
+PERIODS_PER_YEAR = DEFAULT_PERIODS_PER_YEAR      # compatibilidad
+
+
+def periods_per_year(interval_hours: float) -> float:
+    """
+    Liquidaciones al año a partir de la cadencia real, en horas.
+
+    Se deriva del dato en vez de suponerse. Es la regla del proyecto —cadencias
+    reales, nunca constantes— aplicada al sitio donde más caro salía romperla.
+    """
+    h = float(interval_hours)
+    if h <= 0:
+        return DEFAULT_PERIODS_PER_YEAR
+    return 24.0 * 365.0 / h
 
 # Margen de mantenimiento típico de un perpetuo grande en Binance/Bybit para
 # tamaños modestos. Por encima de esta fracción del nocional, la posición se
@@ -138,7 +165,8 @@ def funding_income(rates, notional_usd: float) -> np.ndarray:
 def simulate_carry(rates, position: CarryPosition | None = None,
                    costs: CarryCosts | None = None,
                    entry_price: float | None = None,
-                   max_price: float | None = None) -> dict:
+                   max_price: float | None = None,
+                   periods_per_year_: float = DEFAULT_PERIODS_PER_YEAR) -> dict:
     """
     Resultado de mantener el delta-neutral durante toda la serie de funding.
 
@@ -163,7 +191,7 @@ def simulate_carry(rates, position: CarryPosition | None = None,
     bruto = float(ingresos.sum())
     coste_ordenes = pos.notional_usd * cst.round_trip_bps / 10_000.0
 
-    anos = n / PERIODS_PER_YEAR
+    anos = n / float(periods_per_year_)
     # Capital inmovilizado: el spot entero más el margen de la pata corta.
     capital = pos.notional_usd * (1.0 + pos.margin_pct)
     coste_capital = capital * cst.capital_cost_annual_pct / 100.0 * anos
@@ -191,6 +219,11 @@ def simulate_carry(rates, position: CarryPosition | None = None,
         "liquidation_price": round(precio_liq, 2) if precio_liq else None,
         "liquidated": liquidado,
         "round_trip_bps": cst.round_trip_bps,
+        # Con qué cadencia se anualizó. Dos informes con cadencias distintas no
+        # son comparables, y sin este campo se leerían como si lo fueran.
+        "periods_per_year": round(float(periods_per_year_), 2),
+        "funding_interval_hours": round(24.0 * 365.0 / float(periods_per_year_), 3)
+        if periods_per_year_ > 0 else None,
     }
 
 
@@ -224,7 +257,8 @@ def shock_margin_probability(rates, position: CarryPosition | None = None,
 
 def null_distribution(rates, position: CarryPosition | None = None,
                       costs: CarryCosts | None = None,
-                      n_draws: int = 1000, seed: int = 42) -> dict:
+                      n_draws: int = 1000, seed: int = 42,
+                      periods_per_year_: float = DEFAULT_PERIODS_PER_YEAR) -> dict:
     """
     Qué carry neto saldría si el funding no tuviera sesgo de signo.
 
@@ -248,7 +282,7 @@ def null_distribution(rates, position: CarryPosition | None = None,
     rng = np.random.default_rng(seed)
     netos = np.empty(n_draws)
     coste_ordenes = pos.notional_usd * cst.round_trip_bps / 10_000.0
-    anos = arr.size / PERIODS_PER_YEAR
+    anos = arr.size / float(periods_per_year_)
     capital = pos.notional_usd * (1.0 + pos.margin_pct)
     coste_capital = capital * cst.capital_cost_annual_pct / 100.0 * anos
 

@@ -170,3 +170,12 @@ class TestLaVersion:
         assert "SIEMPRE infravalora" in limites
         assert "libre de modelo PERO el delta" in limites
         assert "riesgo de cola" in limites
+
+    @pytest.mark.unit
+    def test_el_test_de_potencia_admite_que_su_har_no_era_un_har(self):
+        """Las escalas se aplicaban como velas: con datos horarios los tres
+        componentes caían dentro del mismo día. El veredicto de volatilidad
+        descansaba sobre ese modelo, así que la nota tiene que decirlo."""
+        limites = note_for("edge_test")["limits"]
+        assert "NO era un HAR" in limites
+        assert "1 h, 5 h y 22 h" in limites
