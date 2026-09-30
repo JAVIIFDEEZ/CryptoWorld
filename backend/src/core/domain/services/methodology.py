@@ -373,6 +373,64 @@ NOTES: tuple[dict, ...] = (
             "de ninguna regla y ponerlas a ojo produciría un estudio sobre días en "
             "los que no pasó nada."),
     },
+    {
+        "key": "correlation_map",
+        "title": "Mapa de correlaciones y apuestas efectivas",
+        "what": (
+            "Matriz de correlaciones de la cesta sobre retornos desvolatilizados, "
+            "ORDENADA por conglomerados —el mismo recorrido de hojas que la paridad "
+            "de riesgo jerárquica— y resumida en dos cifras del espectro: la "
+            "fracción de varianza que explica un único factor común y el número "
+            "efectivo de apuestas, que es la exponencial de la entropía del "
+            "espectro normalizado."),
+        "assumptions": (
+            "Que las series están unidas por marca temporal y no emparejadas por "
+            "posición: dos series desfasadas una barra no dan una correlación mal "
+            "estimada, dan otra cantidad. Y que se lee como una estimación con "
+            "error: con ventana 90 el error típico de cada celda es de 0,11 en el "
+            "espacio de Fisher, así que dos celdas que difieren en menos que eso "
+            "son la misma celda pintada distinta."),
+        "limits": (
+            "Las marcas de «cambió más que el ruido» NO llevan corrección por "
+            "multiplicidad: son n(n−1)/2 comparaciones y con veinte activos son "
+            "190, de las que unas diez saldrán marcadas sin que nada haya cambiado. "
+            "Sirven para dirigir la mirada; para AFIRMAR que una correlación se ha "
+            "roto está el detector de rupturas, que calibra su umbral contra el "
+            "nulo de cada pareja. Medido: la tasa de celdas marcadas sobre series "
+            "con correlación constante es del 4,1 %, coherente con el umbral de dos "
+            "errores típicos. Y la correlación es lineal y contemporánea: no ve una "
+            "relación no lineal ni una con retardo, que es lo que mide el estudio "
+            "de adelanto-retardo."),
+    },
+    {
+        "key": "seasonality",
+        "title": "Rejilla de hora de la semana",
+        "what": (
+            "Movimiento absoluto medio y retorno medio en cada una de las 168 "
+            "casillas de 7 días × 24 horas UTC, contrastados contra un nulo por "
+            "PERMUTACIÓN DE BLOQUES de longitud coprima con 168 — que rompe la "
+            "alineación con la rejilla y conserva el agrupamiento de volatilidad "
+            "dentro de cada bloque."),
+        "assumptions": (
+            "Que hay semanas suficientes para que cada casilla tenga observaciones: "
+            "por debajo de doce por casilla el ruido de la casilla domina cualquier "
+            "efecto y no se emite veredicto. Y que se respeta el orden del "
+            "procedimiento: PRIMERO un contraste global y solo si pasa las casillas "
+            "una por una. Son 168 contrastes y al 5 % por casilla ocho saldrían "
+            "significativas sin que haya nada."),
+        "limits": (
+            "La rejilla es en UTC y fija, así que no se mueve con el horario de "
+            "verano: una casilla que corresponda a la apertura de un mercado "
+            "concreto se reparte entre dos casillas contiguas durante ocho meses al "
+            "año y el efecto aparece diluido en las dos. Los p-valores por casilla "
+            "usan los momentos del nulo empírico y la COLA DE LA NORMAL, porque un "
+            "recuento sobre R réplicas no baja de 1/(R+1) y con 168 casillas el "
+            "umbral de Benjamini-Hochberg es más pequeño que eso; es una "
+            "aproximación defendible por el teorema central del límite, no una "
+            "medición exacta. Y una casilla activa NO es una oportunidad: más "
+            "movimiento con dirección impredecible es más deslizamiento y más stops "
+            "saltados por ruido, así que el uso correcto es evitarla."),
+    },
 )
 
 # La regla que gobierna todo lo anterior, en una frase que se pueda citar.

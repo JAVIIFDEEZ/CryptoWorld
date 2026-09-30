@@ -12,6 +12,7 @@ import Viz3DSwitch from '@/components/viz3d/Viz3DSwitch'
 import MarketTreemap2D from '@/components/market/MarketTreemap2D'
 import MarketRegimePanel from '@/components/market/MarketRegimePanel'
 import LeadLagPanel from '@/components/market/LeadLagPanel'
+import CorrelationHeatmap from '@/components/market/CorrelationHeatmap'
 import { buildMarketBodies } from '@/components/market/marketViz'
 
 const MarketUniverse3D = lazy(() => import('@/components/market/MarketUniverse3D'))
@@ -119,6 +120,13 @@ function MarketPage() {
 
       {/* Régimen de mercado + correlaciones cross-asset de la cesta */}
       <MarketRegimePanel />
+
+      {/* Mapa de correlaciones ordenado por conglomerados, con el error de cada
+          celda y el cambio frente a una referencia que no se solapa. Va justo
+          después del régimen porque responde a la misma pregunta con detalle: el
+          régimen dice si la cesta se mueve junta, y el mapa dice quién con quién
+          y cuántas apuestas independientes quedan de verdad. */}
+      <CorrelationHeatmap />
 
       {/* Señales lead-lag: qué activos adelantan a cuáles */}
       <LeadLagPanel />

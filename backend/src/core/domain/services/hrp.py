@@ -67,6 +67,18 @@ def _linkage_order(dist: np.ndarray) -> list[int]:
     return clusters[0]
 
 
+def seriation_order(corr) -> list[int]:
+    """Orden cuasi-diagonal de una matriz de correlación.
+
+    El mismo orden que usa la bisección de la paridad de riesgo jerárquica,
+    expuesto para que lo pueda reutilizar cualquier cosa que necesite mostrar o
+    recorrer una matriz de correlación con los activos parecidos juntos — un mapa
+    de calor ordenado alfabéticamente esconde exactamente la estructura de bloques
+    que hay que ver.
+    """
+    return _linkage_order(correlation_distance(np.asarray(corr, dtype=float)))
+
+
 def _inverse_variance_weights(cov: np.ndarray, idx: list[int]) -> np.ndarray:
     """Pesos por varianza inversa dentro de un grupo (paridad de riesgo ingenua)."""
     variances = np.diag(cov)[idx]

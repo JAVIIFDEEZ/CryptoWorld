@@ -1494,3 +1494,184 @@ pytest tests/unit/domain/test_event_study.py          # 31 tests · el contraste
 pytest tests/unit/domain/test_economic_calendar.py    # 26 tests · calendario y PIT
 pytest tests/integration/test_calendar_study.py       # 20 tests · almacén y comando
 ```
+
+---
+
+# Mapa de correlaciones — un degradado que no dice más de lo que sabe
+
+`backend/src/core/domain/services/correlation_heatmap.py`
+· `backend/src/core/application/use_cases/correlation_map.py`
+· `GET /api/market/correlation-map/`
+· `frontend/src/components/market/CorrelationHeatmap.tsx`
+
+## Los tres defectos del mapa de calor de siempre
+
+Un mapa de calor de correlaciones es la pieza más fácil de convertir en adorno
+peligroso, y casi todos tienen los mismos tres problemas, que empujan a la misma
+conclusión equivocada:
+
+1. **Ordenado alfabéticamente.** El orden esconde la estructura. Una cartera con
+   dos bloques claros parece ruido uniforme si ADA va antes que BTC por el
+   abecedario. Aquí el orden lo da la aglomeración por conglomerados — el mismo
+   recorrido de hojas que ya usaba la paridad de riesgo jerárquica, expuesto como
+   `hrp.seriation_order` en vez de duplicado.
+2. **Sin error de estimación.** Con ventana 90 el error típico de cada celda es de
+   **0,11** en el espacio de Fisher. Pintar 0,62 y 0,58 con colores distintos es
+   mentir con un gradiente. El error se calcula, se publica y sale en el titular,
+   no en una nota al pie.
+3. **Solo el nivel, nunca el cambio.** El nivel es lo que se miró al construir la
+   cartera; lo que la rompe es que el nivel se mueva. Se devuelven las dos capas, y
+   la referencia **no se solapa** con la ventana pintada: dos matrices que
+   comparten datos darían un cambio artificialmente pequeño.
+
+## El número que sustituye a mirar la cuadrícula
+
+Una matriz no se lee de un vistazo, así que se reduce a dos cifras del espectro:
+
+- **Cuota del primer autovalor** — qué fracción de la varianza explica un único
+  factor común. Si es el 75 %, la cartera es una posición apalancada en ese factor
+  con adornos.
+- **Número efectivo de apuestas** — `exp(−Σ pᵢ·ln pᵢ)` sobre el espectro
+  normalizado. Con *n* activos independientes vale *n*; con *n* que se mueven igual,
+  vale 1. No depende de ningún umbral, así que es comparable entre carteras de
+  tamaños distintos.
+
+Verificado sobre datos sintéticos:
+
+| cesta | cuota del primer factor | apuestas efectivas | veredicto |
+|---|---|---|---|
+| 5 activos, un factor con carga 0,97 | 0,94 | 1,4 de 5 | `CONCENTRADO` |
+| 5 activos, dos bloques (3 + 2) | 0,54 | 2,9 de 5 | `INTERMEDIO` |
+| 5 activos independientes | 0,24 | 4,9 de 5 | `REPARTIDO` |
+
+Y el caso que importa, un colapso de diversificación plantado (ρ de 0,2 a 0,85 en
+la última ventana): correlación media **0,04 → 0,74**, apuestas efectivas
+**9,4 → 2,8**, y las 45 de 45 parejas marcadas como cambio mayor que el ruido.
+
+## Las marcas de cambio se acompañan de cuántas son falsas
+
+El umbral es de dos errores típicos de la diferencia, en el espacio de Fisher
+porque ahí el error no depende del nivel. Medido sobre series con correlación
+**constante**: **4,1 %** de las parejas marcadas, coherente con la tasa nominal.
+
+Pero son n(n−1)/2 comparaciones **sin corrección por multiplicidad**, y eso no se
+esconde: la interfaz imprime al lado cuántas marcas se esperan por azar —con doce
+activos, tres de sesenta y seis—. La marca dirige la mirada; para **afirmar** que
+una correlación se ha roto está el detector de rupturas, que sí calibra su umbral
+contra el nulo de cada pareja.
+
+## Qué NO cubre
+
+La correlación es lineal y contemporánea. No ve una relación que se vuelve no
+lineal conservando su correlación, ni una que actúa con retardo: dos activos con
+correlación cero a la misma vela pueden tener una relación fuerte con una hora de
+desfase, y eso lo mide el estudio de adelanto-retardo, no este mapa.
+
+## Verificación
+
+```bash
+pytest tests/unit/domain/test_correlation_heatmap.py     # 20 tests · dominio
+pytest tests/integration/test_correlation_map_api.py     # 13 tests · unión y endpoint
+npx vitest run src/components/market/CorrelationHeatmap  # 10 tests · presentación
+```
+
+---
+
+# Rejilla de hora de la semana — 168 casillas y la disciplina para no contar cuentos
+
+`backend/src/core/domain/services/seasonality.py`
+· `python manage.py seasonality BTC`
+
+## De dónde sale la pregunta
+
+Del estudio de eventos. Allí el hallazgo incómodo fue que un efecto de «viernes por
+la mañana» se disfraza de efecto del vencimiento si el control no conserva la
+casilla del calendario: la volatilidad observada salía 2,5× la normal y no había
+ningún efecto del evento. Ese confusor quedó **controlado** pero nunca **medido**.
+Esto lo mide.
+
+Cripto opera 24/7, lo cual se suele leer como «no hay sesiones» — y es lo contrario
+de lo que pasa: los solapes de Asia, Europa y Estados Unidos siguen ahí, solo que
+nadie cierra.
+
+## El problema: 168 contrastes
+
+Al 5 % por casilla, **ocho salen significativas sin que haya nada**, y con 168
+números delante es psicológicamente imposible no encontrarles una historia. El
+procedimiento lo impide por construcción:
+
+1. **Contraste global primero.** Si no pasa, las casillas **no se miran**.
+2. Si pasa, las casillas con Benjamini-Hochberg, diciendo cuántas sobreviven de
+   cuántas se probaron.
+
+## Tres defectos que solo la calibración encontró
+
+Los tres producían un módulo que corría y no significaba nada.
+
+### 1. El nulo por rotación circular era degenerado
+
+La primera versión rotaba la serie entera y la volvía a cruzar con las mismas
+etiquetas, con el argumento —correcto— de que eso conserva **exactamente** toda la
+dependencia temporal. El argumento es bueno y el nulo es inservible: la rejilla
+tiene periodo 168 y un histórico de semanas completas tiene longitud **múltiplo de
+168**, así que rotar mapea cada casilla entera sobre otra casilla. El conjunto de
+medias por casilla es idéntico, la dispersión no cambia, y **el nulo es la
+observación**.
+
+Medido: con la actividad duplicada en cuatro casillas, el contraste del máximo daba
+**p = 0,57**. Sustituido por permutación de bloques de longitud **coprima con 168**
+(25, no 24): cada bloque aterriza en un desfase distinto y dentro del bloque el
+agrupamiento sigue intacto.
+
+### 2. El p-valor por casilla no podía cruzar su propio umbral
+
+Un p-valor contado sobre *R* réplicas no baja de 1/(*R*+1). Con 300 réplicas son
+**0,0033**, y el umbral de Benjamini-Hochberg para la primera de 168 casillas es
+0,10/168 = **0,0006**. **Ninguna casilla podía pasar nunca**, por grande que fuera
+el efecto — y se comprobó: con la actividad duplicada en cuatro casillas,
+sobrevivían cero.
+
+Las salidas eran subir a más de 1.680 réplicas, que multiplica el coste por seis
+para ganar solo resolución en la cola, o estimar la cola. Se estima: **los momentos
+del nulo salen de las réplicas y la cola de la normal**, lo cual es defendible
+porque la media de una casilla es la de decenas de observaciones — y queda
+declarado como aproximación en la salida.
+
+### 3. Un solo estadístico global era ciego a lo concentrado
+
+La dispersión promedia sobre las 168 casillas, así que tiene potencia contra una
+estructura **repartida** y casi ninguna contra una **concentrada**: con la actividad
+duplicada en cuatro casillas daba p = 0,04, al borde de no detectar un efecto del
+doble. Se añadió el **máximo**, que es lo contrario, y el nivel se reparte entre los
+cuatro contrastes que hay de verdad (dos estadísticos × dos preguntas). Sin
+repartirlo, el «global» eran cuatro oportunidades de disparar al 5 % y la tasa real
+rondaba el 20 %.
+
+## Lo que se mide
+
+| escenario | resultado |
+|---|---|
+| 20 series con agrupamiento de volatilidad y **sin** estructura horaria | global se dispara **0/20**; casillas marcadas **0 de 3.360** |
+| actividad ×2 en 4 casillas (vie 12–15 UTC) | `CON_ESTRUCTURA`, p<0,004 en los dos estadísticos, **4 casillas y las 4 son las plantadas** |
+| actividad +25 % en 84 casillas (horario diurno) | `CON_ESTRUCTURA` por dispersión; 12 casillas sobreviven — infrapotenciado por casilla, y así se dice |
+| una casilla anormalmente **tranquila** | también se detecta: el contraste es a dos colas |
+
+## Qué NO cubre
+
+La rejilla es en UTC y **fija**: no se mueve con el horario de verano, así que una
+casilla que corresponda a la apertura de un mercado concreto se reparte entre dos
+casillas contiguas durante ocho meses al año y el efecto aparece diluido en las dos.
+Es una limitación conocida, no un error: corregirla exigiría elegir a qué mercado se
+ancla la rejilla.
+
+Y una casilla activa **no es una oportunidad**: más movimiento con dirección
+impredecible significa más deslizamiento y más stops saltados por ruido, así que el
+uso correcto es evitarla. La dirección se mide aparte y casi nunca sale — si una
+hora subiera de forma sistemática, se descontaría.
+
+## Verificación
+
+```bash
+pytest tests/unit/domain/test_seasonality.py           # 21 tests · el contraste
+pytest tests/integration/test_seasonality_command.py   # 13 tests · almacén y comando
+```

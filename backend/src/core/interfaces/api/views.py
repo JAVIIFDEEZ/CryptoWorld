@@ -3684,6 +3684,72 @@ class MarketRegimeView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class CorrelationMapView(APIView):
+    """
+    GET /api/market/correlation-map/ — Matriz de correlaciones de la cesta,
+    ORDENADA POR CONGLOMERADOS, con el error de estimación de cada celda y el
+    cambio respecto a una ventana de referencia que no se solapa.
+
+    Las tres cosas que la diferencian de un mapa de calor cualquiera:
+
+      · **El orden agrupa los parecidos** (mismo recorrido de hojas que la paridad
+        de riesgo jerárquica). Alfabético esconde exactamente la estructura de
+        bloques que hay que ver.
+      · **Cada celda lleva su error.** Con ventana 90 el error típico en el espacio
+        de Fisher es de 0,11, así que dos celdas que difieren en menos de eso son
+        la misma celda pintada distinta. El cambio solo se marca cuando supera dos
+        errores típicos, y se declara que esas marcas NO llevan corrección por
+        multiplicidad: sirven para dirigir la mirada, no para afirmar.
+      · **El espectro se resume en dos cifras**: qué fracción de la varianza
+        explica un único factor común y el número efectivo de apuestas. Es lo que
+        traduce la matriz a «cuántos riesgos distintos tengo de verdad».
+
+    Parámetros opcionales: `symbols` (lista separada por comas), `interval`,
+    `window`, `reference_window`.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 600  # segundos — la matriz se mueve en días, no en minutos
+
+    def get(self, request):
+        from core.application.use_cases.correlation_map import CorrelationMapUseCase
+
+        crudos = (request.query_params.get("symbols") or "").strip()
+        simbolos = [s.strip().upper() for s in crudos.split(",") if s.strip()] or None
+        interval = (request.query_params.get("interval") or "1h").strip()
+
+        def _entero(nombre, defecto, minimo, maximo):
+            try:
+                v = int(request.query_params.get(nombre, defecto))
+            except (TypeError, ValueError):
+                return None
+            return v if minimo <= v <= maximo else None
+
+        window = _entero("window", 90, 12, 1000)
+        if window is None:
+            return Response({"error": "window ha de ser un entero entre 12 y 1000."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        referencia = request.query_params.get("reference_window")
+        if referencia is not None:
+            referencia = _entero("reference_window", window, 12, 1000)
+            if referencia is None:
+                return Response(
+                    {"error": "reference_window ha de ser un entero entre 12 y 1000."},
+                    status=status.HTTP_400_BAD_REQUEST)
+
+        clave = f"correlation_map:{interval}:{window}:{referencia}:{crudos}"
+        cached = cache.get(clave)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = CorrelationMapUseCase().execute(
+            symbols=simbolos, interval=interval, window=window,
+            reference_window=referencia,
+        )
+        if result.get("verdict") != "SIN_DATOS":
+            cache.set(clave, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class ExecutionTcaView(APIView):
     """
     GET /api/oms/tca/ — Analítica de coste de ejecución real del usuario:

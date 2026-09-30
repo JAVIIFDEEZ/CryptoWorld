@@ -33,6 +33,58 @@ export interface MarketOverview {
   updated_at: string
 }
 
+/**
+ * Mapa de correlaciones de la cesta.
+ *
+ * Tres campos que NO son decorativos y que la interfaz tiene obligación de usar:
+ *
+ *  · `cell_se_z` — error típico de cada celda en el espacio de Fisher. Con
+ *    ventana 90 vale ~0,11, así que dos celdas que difieran en menos que eso son
+ *    la misma celda pintada distinta. Pintar el degradado sin enseñar este
+ *    número es mentir con un gradiente.
+ *  · `delta_beyond_noise` — qué celdas cambiaron más de lo que explica el ruido.
+ *    NO lleva corrección por multiplicidad: son n(n−1)/2 comparaciones, así que
+ *    sirve para dirigir la mirada y no para afirmar.
+ *  · `eigen` — el resumen que se lee cuando nadie mira la matriz: qué fracción
+ *    de la varianza explica un único factor y cuántas apuestas independientes
+ *    hay de verdad.
+ */
+export interface CorrelationMap {
+  verdict: 'CONCENTRADO' | 'INTERMEDIO' | 'REPARTIDO' | 'SIN_DATOS'
+  labels: string[]
+  matrix: number[][]
+  window: number
+  devolatilized: boolean
+  returns_used?: number
+  warmup_returns_dropped?: number
+  cell_se_z: number
+  average_correlation: number | null
+  eigen: {
+    n: number
+    top_share: number | null
+    effective_bets: number | null
+    eigenvalues?: number[]
+  }
+  ordering?: string
+  reference_window?: number
+  reference_matrix?: number[][]
+  delta?: number[][]
+  delta_beyond_noise?: boolean[][]
+  delta_threshold_z?: number
+  pairs_beyond_noise?: number
+  reference_average_correlation?: number | null
+  reference_eigen?: CorrelationMap['eigen']
+  delta_note?: string
+  reference_note?: string
+  interval?: string
+  missing?: string[]
+  candles_aligned?: number
+  first?: string
+  last?: string
+  note: string
+  limits?: string
+}
+
 export interface FxRates {
   base: 'usd'
   rates: Record<string, number>
@@ -166,6 +218,35 @@ export const marketService = {
     if (cached) return cached
     const { data } = await apiClient.get<FxRates>('/market/fx/')
     _cSet('fx_rates', data, 60 * 60_000)
+    return data
+  },
+
+  /**
+   * Mapa de correlaciones de la cesta, ordenado por conglomerados.
+   * GET /api/market/correlation-map/
+   *
+   * Caché en memoria de 10 min, la misma que aplica el backend: la matriz se
+   * mueve en días y recalcularla en cada render sería gasto sin información.
+   */
+  async getCorrelationMap(params?: {
+    symbols?: string[]
+    interval?: string
+    window?: number
+    referenceWindow?: number
+  }): Promise<CorrelationMap> {
+    const query: Record<string, string | number> = {}
+    if (params?.symbols?.length) query.symbols = params.symbols.join(',')
+    if (params?.interval) query.interval = params.interval
+    if (params?.window) query.window = params.window
+    if (params?.referenceWindow) query.reference_window = params.referenceWindow
+
+    const key = `corr_map_${JSON.stringify(query)}`
+    const cached = _cGet<CorrelationMap>(key)
+    if (cached) return cached
+    const { data } = await apiClient.get<CorrelationMap>('/market/correlation-map/', {
+      params: query,
+    })
+    _cSet(key, data, 10 * 60_000)
     return data
   },
 }
