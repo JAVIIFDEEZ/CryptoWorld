@@ -1211,3 +1211,143 @@ pytest tests/unit/domain/test_strategy_variants.py          #  8 tests · varian
 pytest tests/unit/domain/test_generation_power.py           # 16 tests · potencia de la muestra
 pytest tests/unit/domain/test_block_sampling.py             # 15 tests · búsqueda en dos fases
 ```
+
+---
+
+# Detección de rupturas — cuándo dejar de creerse una correlación
+
+`backend/src/core/domain/services/structural_break.py`
+· `backend/src/core/application/use_cases/correlation_watch.py`
+· `python manage.py correlation_watch BTC ETH SOL`
+
+## El problema
+
+Una cartera de cripto se justifica con un número que casi nadie vuelve a mirar
+después de construirla: la correlación entre sus patas. Y es justo el número que
+se mueve. En los episodios que importan las correlaciones de este mercado se van
+hacia uno, y la cartera que parecía repartida en cinco riesgos resulta ser una
+posición apalancada en uno solo. El daño no llega cuando cambia la correlación:
+llega cuando alguien se entera tres meses después.
+
+El detector es un CUSUM de dos colas —acumula desviaciones estandarizadas
+respecto a un nivel de referencia y salta al superar un umbral—, que es el
+detector óptimo para un cambio de nivel persistente. Y esa es exactamente la
+forma de una ruptura de régimen: no un pico aislado sino un desplazamiento que se
+queda.
+
+Corre entero sobre el almacén propio de velas: no pide nada a ningún exchange, así
+que funciona con la red caída y no consume cuota.
+
+## El punto que decide si sirve: el umbral no se elige
+
+Un CUSUM con umbral puesto a ojo hace una de dos cosas, y las dos son inútiles.
+Medido sobre las mismas series sintéticas con correlación **constante**:
+
+| umbral fijo | falsa alarma |
+|---|---|
+| 5 | 96,5 % |
+| 10 | 85,0 % |
+| 25 | 42,5 % |
+| 50 | 9,0 % |
+
+No hay un valor que sirva, porque el umbral correcto depende de la volatilidad de
+la propia serie. Así que se calibra contra el nulo de cada pareja: se generan
+réplicas bajo «la correlación no ha cambiado», se recalcula el estadístico sobre
+cada una y se toma el estadístico de orden ⌈(R+1)(1−α)⌉ del máximo por réplica.
+El umbral que sale tiene una lectura comprobable: *bajo el nulo, la probabilidad
+de al menos una alarma en toda la ventana vigilada es α*.
+
+## Tres defectos que la calibración encontró, y que una revisión de código no
+
+Los tres estaban en la primera versión, y los tres producían un detector que
+corría, devolvía veredictos y no significaba nada.
+
+1. **La holgura estaba puesta a media sigma «porque parece razonable».** Sobre el
+   producto cruzado por barra, pasar de una correlación de 0,80 a 0,30 —una
+   ruptura brutal— es un desplazamiento de solo 0,42 sigmas: la holgura se lo
+   comía entero. Detectaba **8 de 60** rupturas evidentes. Ahora la holgura se
+   deriva de la caída de correlación que se quiere cazar, que es lo que quien
+   decide sabe expresar.
+2. **Sin desvolatilizar, la falsa alarma medida era del 12,3 %** contra un 5 %
+   prometido. La correlación de una ventana se estima con más ruido cuando la
+   ventana es convulsa, así que un tramo tranquilo fijaba una sigma pequeña y
+   cualquier racha de volatilidad posterior movía el estadístico sin que la
+   correlación hubiera cambiado: el detector avisaba de tormentas, no de
+   rupturas. Dividir cada pata por su volatilidad local lo baja a ~7 % y además
+   **gana** potencia, porque es el estimador más eficiente bajo
+   heterocedasticidad.
+3. **Devolvía una «cota inferior» del momento de la ruptura que era falsa.**
+   Medida contra rupturas plantadas acertaba **0 de 10**. Se sustituyó por el
+   estimador de punto de cambio del propio CUSUM —su último reinicio a cero—, que
+   se sitúa unas 5 barras *después* del suceso para una caída grande y unas 30
+   para una pequeña. Es un estimador que llega tarde, no una cota, y así se
+   informa.
+
+Un cuarto, encontrado por los tests: el mínimo de histórico se contaba en
+observaciones de la correlación y no en **ventanas independientes**. Con 300
+retornos salían 171 correlaciones y una referencia de 68 — que con ventana 30 son
+2,3 ventanas independientes, el mismo dato contado treinta veces. El módulo
+emitía veredicto sobre eso. Ahora exige 12 ventanas independientes o dice
+`SIN_DATOS`.
+
+## Lo que se mide, y lo que cuesta
+
+| | falsa alarma (correlación constante) |
+|---|---|
+| nominal | 5 % |
+| retornos homocedásticos | 6,7 % |
+| volatilidad agrupada (caso realista) | 6–8 % |
+| volatilidad agrupada, sin desvolatilizar | 12,3 % |
+
+| ruptura plantada | detección | retardo (mediana) |
+|---|---|---|
+| 0,80 → 0,30 | 100 % | 33 barras |
+| 0,80 → 0,50 | 100 % | 50 barras |
+| 0,80 → 0,65 | 90 % | 121 barras |
+
+**El exceso sobre el 5 % no se arregla con más réplicas.** Medido a 200, 400,
+1.000 y 2.000 réplicas la tasa se queda plana (6,0 %, 6,0 %, 6,5 %, 7,0 %), así
+que no viene del ruido de Monte Carlo del cuantil sino del nulo remuestreado, que se queda
+algo corto de cola. Subir las réplicas cuesta tiempo y no compra exactitud; el
+valor por defecto se queda en 400 y quien necesite un 5 % efectivo pide α≈0,035.
+
+## Las parejas son contrastes múltiples, y el informe lo trata como tal
+
+Con n activos hay n(n−1)/2 parejas. El veredicto agregado comparaba las roturas
+observadas con la media esperada por azar, y con seis parejas al 5 % **una sola
+rotura salía `ROTO`** — cuando una rotura entre seis contrastes al 5 % ocurre el
+26 % de las veces sin que nada haya cambiado. Era el error de pruebas múltiples
+que el propio informe decía vigilar.
+
+Ahora se contrasta contra la **cola binomial**: la probabilidad de ver al menos
+esas roturas si ninguna fuera real. Una de seis da 26 % → `INDICIOS`; dos de seis
+dan 3,3 % → `ROTO`. Y `--family-wise` reparte el α entre todas las parejas
+(Bonferroni), con lo que el 5 % pasa a ser la falsa alarma de la cartera completa
+y una sola rotura sí es significativa. No es el comportamiento por defecto porque
+cuesta potencia: con quince parejas cada una se juzgaría al 0,33 %.
+
+## Qué NO cubre
+
+El CUSUM detecta un desplazamiento de **nivel** persistente. No ve un cambio de
+varianza con la misma media, ni una relación que se vuelve no lineal conservando
+su correlación, ni un cambio que dura menos que el retardo de detección — para ese
+último el estadístico sube, la holgura lo devuelve a cero y no queda rastro. Es
+una elección: un detector sensible a picos aislados avisaría de cada noticia.
+
+Y el retardo es real. Un veredicto `ESTABLE` sobre un tramo vigilado corto no dice
+que la correlación aguante: dice que todavía no había datos para verlo. El informe
+imprime las dos cosas.
+
+## Verificación
+
+```bash
+pytest tests/unit/domain/test_structural_break.py       # 39 tests · dominio
+pytest tests/integration/test_correlation_watch.py      # 24 tests · almacén y comando
+```
+
+El test que justifica el fichero de integración es el de la **unión por marca
+temporal**. `load_dataframe` devuelve las últimas N velas de cada símbolo por
+separado, y en este mismo almacén hay un `find_gaps` porque faltan velas.
+Emparejar por posición dos series con huecos distintos desfasa una respecto a la
+otra, y una correlación sobre series desfasadas una barra no es una correlación
+mal estimada: es otra cantidad.

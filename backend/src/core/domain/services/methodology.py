@@ -281,6 +281,42 @@ NOTES: tuple[dict, ...] = (
             "pasan por el control y nunca se bloquean: reducir exposición tiene "
             "que poder hacerse siempre."),
     },
+    {
+        "key": "correlation_break",
+        "title": "Ruptura de correlación (CUSUM)",
+        "what": (
+            "Suma acumulada de desviaciones estandarizadas de la correlación "
+            "móvil entre dos activos, transformada con Fisher y calculada sobre "
+            "retornos divididos por su volatilidad local. Avisa cuando la suma "
+            "supera un umbral que NO se elige: es el estadístico de orden "
+            "⌈(R+1)(1−α)⌉ del máximo alcanzado en réplicas de un nulo de "
+            "correlación constante construido sobre el propio histórico."),
+        "assumptions": (
+            "Que el tramo de referencia estaba tranquilo de verdad. La media y la "
+            "desviación con las que se mide todo salen de ahí, y si la "
+            "correlación ya derivaba despacio durante la referencia, esa deriva "
+            "infla la desviación y el detector pierde potencia. Se puede "
+            "comprobar: `sigma0_z` muy por encima de 1/√(ventana−3) dice que el "
+            "tramo tranquilo no lo era. Y que la referencia cubre al menos doce "
+            "ventanas INDEPENDIENTES, no doce observaciones."),
+        "limits": (
+            "El umbral controla la falsa alarma de forma APROXIMADA. Medido sobre "
+            "series sintéticas con correlación constante, la tasa observada fue de "
+            "alrededor del 7 % contra un 5 % nominal, y el exceso no baja al subir "
+            "las réplicas del nulo: viene del propio nulo remuestreado, que se "
+            "queda algo corto de cola. Se queda del lado generoso, que para un "
+            "vigilante de riesgo es el lado correcto, pero no es el 5 % exacto; "
+            "quien necesite un 5 % efectivo ha de pedir α≈0,035. El detector ve "
+            "desplazamientos de NIVEL persistentes y no ve un cambio de varianza "
+            "con la misma media, ni una relación que se vuelve no lineal "
+            "conservando su correlación, ni un cambio más corto que su propio "
+            "retardo. Y el retardo es real: una caída de 0,80 a 0,30 se detectó "
+            "en unas 33 barras y una de 0,80 a 0,65 en unas 121, con el 90 % de "
+            "detección. Un veredicto ESTABLE sobre un tramo vigilado corto no "
+            "dice que la correlación aguante: dice que aún no había datos para "
+            "verlo. El punto de cambio que se informa es un estimador que llega "
+            "unas barras TARDE, no una cota del momento del suceso."),
+    },
 )
 
 # La regla que gobierna todo lo anterior, en una frase que se pueda citar.
