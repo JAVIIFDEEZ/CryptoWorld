@@ -317,6 +317,62 @@ NOTES: tuple[dict, ...] = (
             "verlo. El punto de cambio que se informa es un estimador que llega "
             "unas barras TARDE, no una cota del momento del suceso."),
     },
+    {
+        "key": "event_study",
+        "title": "Estudio de eventos del calendario",
+        "what": (
+            "Dos medidas alrededor de cada evento programado: el retorno anormal "
+            "acumulado frente a la media de una ventana de estimación separada por "
+            "un hueco, y la razón entre la volatilidad realizada en la ventana de "
+            "reacción y la de esa misma referencia. El contraste es una permutación "
+            "de etiquetas entre los eventos y un grupo de control formado por "
+            "instantes de la MISMA hora y el MISMO día de la semana sin evento."),
+        "assumptions": (
+            "Que el grupo de control es comparable. Es el supuesto que sostiene "
+            "todo y el que casi nadie declara: si el control no conserva la casilla "
+            "del calendario, cualquier efecto de día u hora se atribuye al evento. "
+            "Medido: sobre una serie con un efecto fuerte de viernes por la mañana "
+            "y NINGÚN efecto de vencimiento, un control de instantes uniformes da "
+            "un falso positivo en 7 de 8 muestras y el control emparejado en 1 de "
+            "8. Y que el número de eventos da para concluir: cuatro halvings no "
+            "permiten ningún contraste."),
+        "limits": (
+            "Un efecto detectado NO es una estrategia. Dice que alrededor del "
+            "evento pasa algo medible, no que se pueda capturar después de "
+            "comisiones y deslizamiento — y el evento es justo el momento en que el "
+            "diferencial se abre y la profundidad desaparece, así que el coste de "
+            "ejecución ahí es varias veces el normal. Hay familias cuyo efecto NO "
+            "es identificable en absoluto: si la familia ocupa todas las casillas "
+            "de su hora, «¿mueve el evento?» y «¿se mueve el mercado a esa hora?» "
+            "son la misma pregunta, y el informe lo declara en vez de devolver un "
+            "«sin efecto» que sería un artefacto. Los eventos macro afectan a todos "
+            "los activos a la vez, así que promediar entre activos no reduce la "
+            "varianza: un estudio sobre diez activos y un calendario tiene la "
+            "potencia de uno sobre un activo."),
+    },
+    {
+        "key": "calendar_features",
+        "title": "Variables de calendario",
+        "what": (
+            "Distancia a los próximos eventos programados de importancia alta, la "
+            "distancia desde el último y si la vela cae dentro de su ventana de "
+            "reacción, todo normalizado y con tope."),
+        "assumptions": (
+            "Que el evento estaba ANUNCIADO antes de la vela. Es la única familia "
+            "de variables exógenas de esta plataforma a la que se le permite mirar "
+            "hacia delante, porque las fechas se publican con antelación, y por eso "
+            "mismo la más fácil de contaminar: solo entran eventos cuyo anuncio es "
+            "anterior o igual a la vela."),
+        "limits": (
+            "Solo instantes, nunca CONTENIDO. La sorpresa frente al consenso no "
+            "aparece y no es un olvido: no existe hasta que el evento ocurre, así "
+            "que en una vela anterior sería lookahead. Y el calendario cubre lo "
+            "derivable por regla —liquidaciones de financiación, vencimientos, "
+            "cierres de periodo, nómina no agrícola y halvings ocurridos—; el FOMC, "
+            "el IPC, el PCE, el PIB y el BCE NO están, porque sus fechas no salen "
+            "de ninguna regla y ponerlas a ojo produciría un estudio sobre días en "
+            "los que no pasó nada."),
+    },
 )
 
 # La regla que gobierna todo lo anterior, en una frase que se pueda citar.

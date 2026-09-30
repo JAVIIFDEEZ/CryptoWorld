@@ -1351,3 +1351,146 @@ separado, y en este mismo almacén hay un `find_gaps` porque faltan velas.
 Emparejar por posición dos series con huecos distintos desfasa una respecto a la
 otra, y una correlación sobre series desfasadas una barra no es una correlación
 mal estimada: es otra cantidad.
+
+---
+
+# Calendario económico y estudio de eventos
+
+`backend/src/core/domain/services/economic_calendar.py`
+· `backend/src/core/domain/services/event_study.py`
+· `backend/src/core/application/use_cases/calendar_study.py`
+· `python manage.py calendar_study BTC`
+
+## Por qué un calendario no es una tabla de fechas
+
+El instante de un evento programado es **la única variable exógena que se conoce
+con antelación**. El funding se conoce cuando se liquida, el flujo de ballenas
+cuando ocurre; la fecha de la próxima nómina no agrícola se sabe con un año de
+adelanto. Eso convierte al calendario en la única familia que se puede usar
+mirando hacia delante sin cometer lookahead — y por eso mismo en la más peligrosa,
+porque la frontera es fina.
+
+La distinción que lo gobierna todo son los **tres sellos temporales** de cada
+evento:
+
+| sello | qué es | se puede usar en la vela `t`… |
+|---|---|---|
+| `announced_at` | cuándo se supo que ocurriría | es el filtro: si `> t`, el evento no existe para esa fila |
+| `scheduled_at` | cuándo está previsto | sí, aunque hable del futuro |
+| contenido / sorpresa | el dato frente al consenso | **no**, hasta que ocurre |
+
+Confundir el tercero con el segundo produce un modelo espectacular e inoperable.
+
+## Lo que se deriva sin red, y lo que no se inventa
+
+Aquí hay una línea que no se cruza: **no se inventan fechas.** Un calendario con
+reuniones del FOMC puestas a ojo produciría un estudio sobre días en los que no
+pasó nada, y el ruido resultante se leería como «lo macro no mueve cripto»: una
+conclusión falsa sacada de datos falsos.
+
+**Derivable por regla** (tres años de velas horarias):
+
+| familia | eventos en 3 años |
+|---|---|
+| liquidación de financiación (00/08/16 UTC) | 3.285 |
+| vencimiento de opciones semanal (viernes 08:00 UTC) | 120 |
+| nómina no agrícola (primer viernes, 08:30 Nueva York) | 36 |
+| vencimiento mensual / cierre de mes | 24 / 24 |
+| vencimiento trimestral / cierre de trimestre | 12 / 12 |
+| halvings de Bitcoin ocurridos | 4 en toda la historia |
+
+El horario de verano importa y está tratado: 08:30 de Nueva York son **13:30 UTC
+en invierno y 12:30 en verano**, y tratarlo como una hora UTC fija desplazaría el
+evento exactamente una vela horaria durante ocho meses al año.
+
+**No derivable**, y declarado como ausente en `UNDERIVABLE`: FOMC, IPC, PCE, PIB,
+BCE y decisiones regulatorias. Sus fechas las publica cada organismo.
+
+## El test que justifica el módulo entero
+
+Un estudio de eventos es trivial de escribir y casi imposible de creer. El fallo
+que mata a casi todos es que **la referencia ingenua está contaminada por la
+estructura del calendario**: los vencimientos son todos viernes a las 08:00, así
+que cualquier efecto de «viernes por la mañana» —que existe— aparece como efecto
+del evento.
+
+Medido sobre una serie sintética con un efecto fuerte de viernes por la mañana y
+**ningún** efecto de vencimiento:
+
+| control | se deja engañar |
+|---|---|
+| instantes sorteados uniformemente | **7 de 8** muestras |
+| emparejado por hora y día de la semana | **1 de 8** |
+
+La razón de volatilidad observada en los vencimientos era de ~2,5× en las ocho.
+El control correcto son los demás viernes a las 08:00, que llevan el mismo efecto
+dentro, así que lo único que queda en juego es el evento.
+
+## Tres correcciones que la calibración encontró
+
+Ninguna se habría visto leyendo el código; todas se midieron.
+
+1. **El control se sorteaba sin reemplazo.** La corrección de población finita
+   —sortear 36 de 120 multiplica la varianza por 0,7— estrechaba el nulo y la tasa
+   de falso positivo medida subió al **21 %** contra un 5 % prometido.
+2. **Se comparaba contra un remuestreo del control.** Eso deja el nulo centrado en
+   la media del control, que tiene su propio error de orden σ/√n_control: con 36
+   eventos y 120 controles el descentramiento es de media desviación típica del
+   estadístico observado. Falso positivo al **17 %**. Sustituido por una
+   **permutación de etiquetas**, que está exactamente calibrada: **3 de 72**, un
+   4,2 % contra el 5 % nominal.
+3. **`SIN_POTENCIA` ocultaba los estadísticos.** Devolver el veredicto sin los
+   números obligaba a suponer que no se había medido nada.
+
+## Lo que se mide
+
+| efecto plantado en el vencimiento mensual | veredicto |
+|---|---|
+| volatilidad ×1,2 | `MUEVE_VOLATILIDAD` |
+| volatilidad ×1,5 y ×2,0 | `MUEVE_AMBOS` |
+| deriva 0,20 %/vela | `MUEVE_DIRECCION` |
+| deriva 0,05 %/vela | `SIN_EFECTO_DETECTABLE` — y es correcto: el efecto mínimo detectable con 36 eventos es 0,78 % y lo plantado sumaba 0,35 % |
+
+Ese último caso es el que justifica publicar la potencia siempre. «No se detecta»
+y «no lo hay» no son lo mismo, y con 36 eventos la diferencia es enorme.
+
+## La no identificabilidad, que es un resultado y no un error
+
+Si una familia ocupa **todas** las casillas de su hora, no hay control posible:
+«¿mueve el evento?» y «¿se mueve el mercado a esa hora de ese día?» son la misma
+pregunta y ninguna metodología las separa. El módulo lo declara
+(`NO_IDENTIFICABLE`) en vez de devolver un «sin efecto» que sería un artefacto.
+
+Ocurre de dos formas, las dos medidas:
+
+- Las liquidaciones de financiación caen cada 8 h. Con la ventana de reacción de 6
+  velas que usan las demás familias, las ventanas tejen todo el histórico y **no
+  queda ni un instante normal**. Por eso el calendario declara `post=2` para esa
+  familia: con dos velas cabe un hueco y el control son las 04:00/12:00/20:00.
+- Desplazar un vencimiento semanal un número entero de semanas aterriza sobre
+  otro vencimiento semanal.
+
+Los ajustes de cada familia viven en `FAMILY_STUDY_HINTS`, junto al generador que
+la produce, porque el modo de control correcto es una **propiedad de su estructura
+temporal** y no una preferencia de quien lanza el comando.
+
+## Qué NO cubre
+
+Un efecto detectado **no es una estrategia**. Dice que alrededor del evento pasa
+algo medible; no dice que se pueda capturar después de comisiones y
+deslizamiento — y el evento es justo el momento en que el diferencial se abre y la
+profundidad desaparece, así que el coste de ejecución ahí es varias veces el
+normal. El uso inmediato y menos vistoso es el contrario: **saber cuándo no
+ejecutar**.
+
+Y los eventos macro afectan a todos los activos a la vez, así que promediar entre
+activos no reduce la varianza: un estudio sobre diez activos y un calendario tiene
+la potencia de uno sobre un activo, no la de diez.
+
+## Verificación
+
+```bash
+pytest tests/unit/domain/test_event_study.py          # 31 tests · el contraste
+pytest tests/unit/domain/test_economic_calendar.py    # 26 tests · calendario y PIT
+pytest tests/integration/test_calendar_study.py       # 20 tests · almacén y comando
+```

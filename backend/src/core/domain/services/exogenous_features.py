@@ -105,7 +105,23 @@ CHAIN_HEALTH = ExogenousGroup(
           "normalizado contra su propia historia."),
 )
 
-GROUPS: tuple[ExogenousGroup, ...] = (FUNDING, WHALE_FLOW, CHAIN_HEALTH)
+CALENDAR = ExogenousGroup(
+    name="calendar",
+    columns=("cal_high_to_next", "cal_high_since", "cal_high_active"),
+    # Sin caducidad: un instante programado no se queda obsoleto. La caducidad
+    # existe para variables cuyo último valor conocido deja de ser vigente, y una
+    # fecha del calendario no deja de serlo. Se pone un año por simetría del
+    # registro y no se usa para invalidar nada.
+    max_staleness_ms=365 * 24 * _H,
+    source="economic_calendar.derived_calendar",
+    note=("Distancia a eventos programados. Es la única familia de esta lista que "
+          "se puede mirar hacia DELANTE sin cometer lookahead, porque la fecha se "
+          "publica con antelación — y por eso mismo la más fácil de contaminar: "
+          "solo entran eventos anunciados antes de la vela, y nunca el contenido "
+          "del evento, que no existe hasta que ocurre."),
+)
+
+GROUPS: tuple[ExogenousGroup, ...] = (FUNDING, WHALE_FLOW, CHAIN_HEALTH, CALENDAR)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -339,7 +355,58 @@ def chain_health_features(timestamps, points) -> dict[str, np.ndarray]:
     }
 
 
-def assemble(timestamps, funding=None, whale=None, chain=None) -> pd.DataFrame:
+def calendar_features(timestamps, events=None) -> dict[str, np.ndarray]:
+    """Bloque de calendario, reducido a las tres columnas de importancia ALTA.
+
+    El calendario produce tres variables por familia y hay siete familias
+    derivadas: veintiuna columnas para un modelo que tiene diecisiete. Meterlas
+    todas multiplicaría el espacio de búsqueda por encima de lo que la muestra
+    sostiene, y el estudio de importancia repartiría el crédito entre variables
+    casi idénticas —el efecto de sustitución que `feature_importance` ya corrige
+    por conglomerados, pero que es mejor no crear.
+
+    Así que aquí entra el mínimo defendible: la distancia al próximo evento de
+    importancia ALTA, la distancia desde el último y si la vela está dentro de su
+    ventana. Las veintiuna siguen disponibles en `economic_calendar` para el
+    estudio de eventos, que es donde se miran una por una.
+    """
+    ts = np.asarray(timestamps, dtype=np.int64)
+    if not events:
+        return {
+            "cal_high_to_next": np.full(len(ts), np.nan),
+            "cal_high_since": np.full(len(ts), np.nan),
+            "cal_high_active": np.zeros(len(ts)),
+            f"calendar{AVAILABLE_SUFFIX}": np.zeros(len(ts)),
+        }
+
+    from core.domain.services import economic_calendar as cal
+
+    altos = [e for e in events if e.importance == cal.ALTA]
+    if not altos:
+        return {
+            "cal_high_to_next": np.full(len(ts), np.nan),
+            "cal_high_since": np.full(len(ts), np.nan),
+            "cal_high_active": np.zeros(len(ts)),
+            f"calendar{AVAILABLE_SUFFIX}": np.zeros(len(ts)),
+        }
+
+    # Todos los eventos de importancia alta como UNA familia: lo que la variable
+    # dice es «falta poco para algo gordo», no de qué se trata.
+    unificados = [cal.CalendarEvent(key="HIGH", scheduled_at=e.scheduled_at,
+                                    announced_at=e.announced_at,
+                                    importance=cal.ALTA)
+                  for e in altos]
+    bruto = cal.calendar_features(ts, unificados)
+    return {
+        "cal_high_to_next": bruto.get("cal_high_to_next", np.full(len(ts), np.nan)),
+        "cal_high_since": bruto.get("cal_high_since", np.full(len(ts), np.nan)),
+        "cal_high_active": bruto.get("cal_high_active", np.zeros(len(ts))),
+        f"calendar{AVAILABLE_SUFFIX}": np.ones(len(ts)),
+    }
+
+
+def assemble(timestamps, funding=None, whale=None, chain=None,
+             calendar=None) -> pd.DataFrame:
     """
     Ensambla los bloques disponibles en un DataFrame alineado a las velas.
 
@@ -352,6 +419,7 @@ def assemble(timestamps, funding=None, whale=None, chain=None) -> pd.DataFrame:
     out.update(funding_features(ts, funding or []))
     out.update(whale_flow_features(ts, whale or []))
     out.update(chain_health_features(ts, chain or []))
+    out.update(calendar_features(ts, calendar or []))
     return pd.DataFrame(out)
 
 
