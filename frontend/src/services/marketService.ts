@@ -85,6 +85,92 @@ export interface CorrelationMap {
   limits?: string
 }
 
+/**
+ * Ventana de ejecución: ¿ejecuto ahora o espero?
+ *
+ * Tres campos que la interfaz tiene obligación de respetar:
+ *
+ *  · `seasonality_usable` — si es `false`, el estudio de estacionalidad NO encontró
+ *    estructura de hora de la semana y el componente horario no entra en el
+ *    veredicto. Pintar un semáforo horario en ese caso sería un adorno sobre un
+ *    número sin significado.
+ *  · `hours[].established` — si la casilla sobrevivió a la corrección por
+ *    multiplicidad. Las que no, son pistas y no hechos, y se pintan distinto.
+ *  · `hours[].activity` — puede ser `null` cuando no hay base. No se puede asumir
+ *    número.
+ *
+ * Y el `verdict` NUNCA habla de dirección: una hora tranquila no es una hora en la
+ * que suba, es una en la que cuesta menos entrar.
+ */
+export type ExecutionWindowVerdict =
+  | 'FAVORABLE'
+  | 'NEUTRAL'
+  | 'DESFAVORABLE'
+  | 'ESPERAR'
+  | 'EL_TAMANO_MANDA'
+  | 'SIN_BASE_HORARIA'
+  | 'SIN_DATOS'
+
+export interface ExecutionWindowHour {
+  hour_ms: number
+  at: string
+  cell: number
+  day: string
+  hour_utc: number
+  activity: number | null
+  established: boolean
+  events: string[]
+  event_importance: string[]
+  score: number
+}
+
+export interface ExecutionWindowEvent {
+  key: string
+  at: string
+  at_ms: number
+  in_hours: number
+  importance: 'alta' | 'media' | 'baja'
+  note?: string
+}
+
+export interface ExecutionWindow {
+  symbol: string
+  interval: string
+  notional_usd: number
+  verdict: ExecutionWindowVerdict
+  signals: string[]
+  reasons: string[]
+  now: ExecutionWindowHour | null
+  hours: ExecutionWindowHour[]
+  best_window: {
+    from: string
+    to: string
+    in_hours: number
+    length_hours: number
+    score: number
+    events: string[]
+    day: string
+    hour_utc: number
+  } | null
+  upcoming_events: ExecutionWindowEvent[]
+  seasonality_usable: boolean
+  cost_bps_first_step: number | null
+  horizon_hours: number
+  candles?: number
+  seasonality?: {
+    verdict: string
+    rotations: number
+    cells_significant: number
+    mean_abs_return: (number | null)[]
+    per_cell: number[]
+    note: string
+  }
+  calendar_underivable?: string[]
+  protocol?: string
+  note: string
+  limits?: string
+}
+
 export interface FxRates {
   base: 'usd'
   rates: Record<string, number>
@@ -247,6 +333,35 @@ export const marketService = {
       params: query,
     })
     _cSet(key, data, 10 * 60_000)
+    return data
+  },
+
+  /**
+   * Ventana de ejecución de un activo: ¿ahora o espero?
+   * GET /api/market/execution-window/
+   *
+   * La caché local se corta al final de la hora en curso, no a los N minutos: el
+   * veredicto cambia cuando cambia la casilla horaria, así que una caché de
+   * duración fija podría devolver una casilla ya pasada.
+   */
+  async getExecutionWindow(
+    symbol: string,
+    params?: { interval?: string; notional?: number; horizon?: number; window?: number },
+  ): Promise<ExecutionWindow> {
+    const query: Record<string, string | number> = { asset_symbol: symbol }
+    if (params?.interval) query.interval = params.interval
+    if (params?.notional) query.notional = params.notional
+    if (params?.horizon) query.horizon = params.horizon
+    if (params?.window) query.window = params.window
+
+    const key = `exec_window_${JSON.stringify(query)}`
+    const cached = _cGet<ExecutionWindow>(key)
+    if (cached) return cached
+    const { data } = await apiClient.get<ExecutionWindow>('/market/execution-window/', {
+      params: query,
+    })
+    const msHastaFinDeHora = 3_600_000 - (Date.now() % 3_600_000)
+    _cSet(key, data, msHastaFinDeHora)
     return data
   },
 }

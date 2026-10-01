@@ -17,6 +17,7 @@ import OhlcvChart from '@/components/analysis/OhlcvChart'
 import AnalysisPanel from '@/components/analysis/AnalysisPanel'
 import ConfluenceCard from '@/components/analysis/ConfluenceCard'
 import RobustnessPanel from '@/components/analysis/RobustnessPanel'
+import ExecutionWindowPanel from '@/components/market/ExecutionWindowPanel'
 import Skeleton from '@/components/ui/Skeleton'
 
 function AssetDetailPage() {
@@ -160,6 +161,13 @@ function AssetDetailPage() {
 
       {/* Información de proyecto (backend → CoinGecko) */}
       {assetInfo && <ProjectCard info={assetInfo} symbol={asset.symbol} />}
+
+      {/* Ventana de ejecución: ¿ahora o espero?
+          Va ANTES del análisis técnico a propósito. Todo lo que viene debajo
+          responde a «qué comprar», y es inaccionable mientras no se sepa cuánto
+          cuesta actuar en este momento concreto: una ventaja de 30 puntos básicos
+          se la come un diferencial abierto. */}
+      <ExecutionWindowPanel symbol={asset.symbol} />
 
       {/* Panel de análisis técnico avanzado */}
       <AnalysisPanel symbol={asset.symbol} />

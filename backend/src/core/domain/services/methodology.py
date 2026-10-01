@@ -431,6 +431,37 @@ NOTES: tuple[dict, ...] = (
             "movimiento con dirección impredecible es más deslizamiento y más stops "
             "saltados por ruido, así que el uso correcto es evitarla."),
     },
+    {
+        "key": "execution_window",
+        "title": "Ventana de ejecución",
+        "what": (
+            "Un veredicto sobre si el momento actual es caro para ejecutar, y cuál "
+            "es el tramo más barato de las próximas horas. Compone tres cosas: la "
+            "casilla de la rejilla de hora de la semana, los eventos programados "
+            "derivables por regla con su ventana de contagio, y el coste estimado al "
+            "tamaño pedido."),
+        "assumptions": (
+            "Que el patrón semanal del pasado sigue vigente. La estructura de "
+            "sesiones cambia cuando cambia quién opera, así que una rejilla "
+            "estimada sobre años describe un promedio y no el mes que viene. Y que "
+            "el veredicto solo usa el componente horario cuando HAY base: si el "
+            "estudio de estacionalidad no encontró estructura, la hora no entra y la "
+            "salida lo declara en vez de pintar un semáforo sobre un número sin "
+            "significado."),
+        "limits": (
+            "Es un FILTRO DE EJECUCIÓN, no una señal. No dice qué comprar ni hacia "
+            "dónde va el precio, y una hora tranquila no es una hora en la que suba: "
+            "es una en la que cuesta menos entrar. La puntuación por hora es una "
+            "ORDENACIÓN para decidir cuándo mirar, no un contraste estadístico — lo "
+            "que sí lleva contraste es la rejilla, y el campo `established` dice si "
+            "la casilla actual sobrevivió a su corrección por multiplicidad o es "
+            "solo una pista. El calendario únicamente cubre lo derivable por regla, "
+            "así que la ausencia de eventos en la lista NO significa que no haya nada "
+            "previsto: el FOMC, el IPC y las decisiones regulatorias no están. Y el "
+            "coste es de un modelo calibrado con volumen y volatilidad, no una "
+            "lectura del libro: en el momento de un evento el libro real es peor que "
+            "el que el modelo supone."),
+    },
 )
 
 # La regla que gobierna todo lo anterior, en una frase que se pueda citar.

@@ -231,6 +231,16 @@ export default function CorrelationHeatmap({
                   return (
                     <td key={col} className="p-0">
                       <div
+                        // La celda muestra el número, pero no de qué pareja es: un
+                        // lector de pantalla leería «0,62» sin saber entre quiénes.
+                        // El `aria-label` lo completa; el `title` solo cubre el ratón.
+                        aria-label={
+                          i === j
+                            ? fila
+                            : `${fila} con ${col}: ${nivel.toFixed(2)}` +
+                              (cambio ? `, cambio ${mostrado >= 0 ? '+' : ''}${mostrado.toFixed(2)}` : '') +
+                              (notable ? ', cambio mayor que el ruido' : '')
+                        }
                         title={
                           i === j
                             ? fila

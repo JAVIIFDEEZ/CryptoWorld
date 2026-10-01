@@ -1675,3 +1675,99 @@ hora subiera de forma sistemática, se descontaría.
 pytest tests/unit/domain/test_seasonality.py           # 21 tests · el contraste
 pytest tests/integration/test_seasonality_command.py   # 13 tests · almacén y comando
 ```
+
+---
+
+# Ventana de ejecución — la otra mitad del problema
+
+`backend/src/core/domain/services/execution_window.py`
+· `backend/src/core/application/use_cases/execution_window.py`
+· `GET /api/market/execution-window/`
+· `frontend/src/components/market/ExecutionWindowPanel.tsx`
+
+## La pregunta que nadie le responde al que opera con su dinero
+
+Todo el motor de esta plataforma trabaja sobre **qué** comprar. Esto es la otra
+mitad, la que decide cuánto de ese edge llega a la cuenta: **cuándo pulsar el
+botón**. Una ventaja de 30 puntos básicos se la come un diferencial abierto y un
+libro fino, y ni el diferencial ni la profundidad son constantes a lo largo de la
+semana.
+
+No es una intuición. El sector institucional lo tiene medido y lo vende: Talos
+calibra su modelo de impacto sobre más de 50.000 órdenes padre y 50 millones de
+órdenes hijas, y expone una herramienta de **pre-trade** para evaluar el impacto
+esperado antes de mandar la orden. El análisis académico de 1.940 pares en 38
+mercados sitúa el pico de actividad, volatilidad e iliquidez entre las **16:00 y
+17:00 UTC**. Y las liquidaciones de financiación de los perpetuos —00:00, 08:00 y
+16:00 UTC— mueven el precio al liquidarse, que es exactamente la familia que
+nuestro calendario deriva por regla.
+
+La conclusión del sector es la misma que ya estaba escrita en `seasonality`: *el
+tiempo se usa como filtro de ejecución, no como señal de entrada.*
+
+## Lo que entra, y por qué eso
+
+| componente | qué aporta |
+|---|---|
+| casilla de la rejilla semanal | si esta hora es sistemáticamente más convulsa, el deslizamiento esperado es mayor |
+| eventos programados | un vencimiento o una liquidación a dos horas vista es actividad **conocida de antemano** |
+| coste a tu tamaño | lo mismo cuesta distinto a 1.000 y a 1.000.000 USD |
+
+## Los veredictos
+
+| veredicto | cuándo |
+|---|---|
+| `ESPERAR` | evento de importancia alta dentro de su ventana de contagio (2 h) |
+| `DESFAVORABLE` | hora activa (≥1,25× el movimiento medio) **o** evento de importancia media a ≤1 h |
+| `EL_TAMANO_MANDA` | impacto ≥50 bps: lo que hay que cambiar es el tamaño, no la hora |
+| `FAVORABLE` | hora tranquila (≤0,85×) y sin eventos encima |
+| `SIN_BASE_HORARIA` | el estudio de estacionalidad no encontró estructura: **la hora no entra en el veredicto** |
+
+Ese último es el que importa. Si la rejilla no detectó estructura de hora de la
+semana, el componente horario **no se usa** y la salida lo dice, en lugar de pintar
+un semáforo sobre un número que no significa nada. El panel pinta la rejilla en
+gris y lo declara.
+
+## Un defecto que los tests encontraron
+
+Con un **vencimiento mensual a sesenta minutos** el veredicto salía `NEUTRAL`,
+porque solo se miraban los eventos de importancia ALTA. Un vencimiento a una hora
+ensancha el diferencial de verdad. Ahora los de importancia media tienen su propia
+ventana de contagio (1 h) y su propia señal, con menos peso que los grandes.
+
+## Lo que la salida se obliga a declarar
+
+- **La puntuación por hora es una ordenación, no un contraste.** No afirma que una
+  hora sea significativamente peor que otra. Lo que sí lleva contraste es la
+  rejilla, y el campo `established` dice si la casilla actual sobrevivió a su
+  corrección por multiplicidad o es solo una pista — son 168 casillas y al 5 % ocho
+  saldrían por azar.
+- **El recargo por evento se suma, no multiplica.** Multiplicarlo haría que una
+  hora ya activa con un evento pareciera catastrófica y el recargo dejaría de ser
+  legible.
+- **La ventana propuesta salta la hora en curso**, que ya está empezada. Sin eso, la
+  herramienta recomendaría esperar a un momento ya pasado.
+- **El calendario solo cubre lo derivable por regla.** La ausencia de eventos en la
+  lista NO significa que no haya nada previsto: el FOMC, el IPC y las decisiones
+  regulatorias no están, y el panel lo imprime.
+
+## Qué NO dice
+
+Es un **filtro de ejecución, no una señal**. No dice qué comprar ni hacia dónde va
+el precio, y una hora tranquila no es una hora en la que suba: es una en la que
+cuesta menos entrar. Leerlo como un indicador de dirección es leer lo contrario de
+lo que mide — y hay un test que comprueba que ni el veredicto ni las razones
+contienen «comprar», «vender», «subirá», «alcista» ni «bajista» en ninguna rama.
+
+## Verificación
+
+```bash
+pytest tests/unit/domain/test_execution_window.py         # 28 tests · dominio
+pytest tests/integration/test_execution_window_api.py     # 15 tests · endpoint y caché
+npx vitest run src/components/market/ExecutionWindowPanel # 14 tests · presentación
+```
+
+Fuentes consultadas para situar el estado del arte:
+[Talos — Does timing matter when trading BTC?](https://www.talos.com/insights/does-timing-matter-when-trading-btc)
+· [Optimal trade execution in cryptocurrency markets](https://link.springer.com/article/10.1007/s42521-023-00103-y)
+· [Crypto trading hours y sesiones](https://coinbureau.com/education/crypto-trading-hours)

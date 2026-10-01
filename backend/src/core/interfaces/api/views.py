@@ -3750,6 +3750,92 @@ class CorrelationMapView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class ExecutionWindowView(APIView):
+    """
+    GET /api/market/execution-window/?asset_symbol=BTC&notional=10000 — ¿Ejecuto
+    ahora o espero, y hasta cuándo?
+
+    La otra mitad del problema. Todo el motor trabaja sobre QUÉ comprar; esto
+    decide cuánto de ese edge llega a la cuenta, porque una ventaja de 30 puntos
+    básicos se la come un diferencial abierto y un libro fino. Las mesas
+    institucionales tienen herramientas de pre-trade para esto; el retail no.
+
+    Compone tres cosas archivadas, sin pedir nada a ningún exchange:
+
+      · la **casilla horaria** de la rejilla semanal, con su corrección por
+        multiplicidad — el campo `established` dice si la casilla actual sobrevivió
+        a ella o es solo una pista;
+      · los **eventos programados** derivables por regla y su ventana de contagio;
+      · el **coste a tu tamaño**, que puede dominar sobre cualquier consideración
+        horaria.
+
+    Es un FILTRO DE EJECUCIÓN, no una señal: no dice qué comprar ni hacia dónde va
+    el precio, y una hora tranquila no es una hora en la que suba, es una en la que
+    cuesta menos entrar. Si el estudio de estacionalidad no encuentra estructura de
+    hora de la semana, el veredicto horario NO se emite y la respuesta lo declara,
+    en vez de pintar un semáforo sobre un número que no significa nada.
+
+    La caché es de una hora y se alinea con el comienzo de la hora en curso: el
+    veredicto cambia cuando cambia la casilla, no cada minuto.
+    """
+    permission_classes = [IsAuthenticated]
+    _CACHE_TTL = 3600
+
+    def get(self, request):
+        import time
+
+        from core.application.use_cases.execution_window import (
+            DEFAULT_NOTIONAL_USD, ExecutionWindowUseCase,
+        )
+        from core.domain.services import execution_window as ew
+
+        symbol = (request.query_params.get("asset_symbol") or "").upper().strip()
+        if not symbol:
+            return Response({"error": "Falta asset_symbol."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        interval = (request.query_params.get("interval") or "1h").strip()
+
+        try:
+            notional = float(request.query_params.get("notional",
+                                                      DEFAULT_NOTIONAL_USD))
+        except (TypeError, ValueError):
+            notional = -1.0
+        if not 0 < notional <= 1e9:
+            return Response(
+                {"error": "notional ha de ser un número positivo y razonable."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            horizonte = int(request.query_params.get(
+                "horizon", ew.DEFAULT_HORIZON_HOURS))
+            ventana = int(request.query_params.get(
+                "window", ew.DEFAULT_WINDOW_HOURS))
+        except (TypeError, ValueError):
+            return Response({"error": "horizon y window han de ser enteros."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not 6 <= horizonte <= 336 or not 1 <= ventana <= 24:
+            return Response(
+                {"error": ("horizon entre 6 y 336 horas; window entre 1 y 24.")},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        # La clave lleva la hora en curso: dentro de la misma hora el veredicto no
+        # cambia, y sin esto la caché devolvería una casilla ya pasada.
+        hora = int(time.time() * 1000) // 3_600_000
+        clave = (f"execution_window:{symbol}:{interval}:{notional:.0f}:"
+                 f"{horizonte}:{ventana}:{hora}")
+        cached = cache.get(clave)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        result = ExecutionWindowUseCase().execute(
+            asset_symbol=symbol, interval=interval, notional_usd=notional,
+            horizon_hours=horizonte, window_hours=ventana,
+        )
+        if result.get("verdict") != "SIN_DATOS":
+            cache.set(clave, result, self._CACHE_TTL)
+        return Response(result, status=status.HTTP_200_OK)
+
+
 class ExecutionTcaView(APIView):
     """
     GET /api/oms/tca/ — Analítica de coste de ejecución real del usuario:

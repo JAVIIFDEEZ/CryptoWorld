@@ -17,21 +17,77 @@ interface Item {
   path: string
   group: 'Secciones' | 'Activos'
   badge?: string
+  /**
+   * Alias por los que también se encuentra el destino.
+   *
+   * Hacen falta porque nadie busca una sección por el nombre que le pusimos: quien
+   * quiere ver si las correlaciones de su cartera se han movido escribe
+   * «correlaciones» o «calor», no «Mercado». Sin alias, una funcionalidad que
+   * existe es una funcionalidad que no se encuentra.
+   */
+  keywords?: string[]
 }
 
 const NAV_ITEMS: Item[] = [
-  { id: 'nav-dashboard', label: 'Dashboard', path: '/dashboard', group: 'Secciones' },
-  { id: 'nav-market', label: 'Mercado', path: '/market', group: 'Secciones' },
-  { id: 'nav-analysis', label: 'Análisis Técnico', path: '/analysis', group: 'Secciones' },
-  { id: 'nav-blockchain', label: 'Blockchain', path: '/blockchain', group: 'Secciones' },
-  { id: 'nav-strategies', label: 'Generador de estrategias', path: '/strategies', group: 'Secciones' },
-  { id: 'nav-portfolio', label: 'Portfolio', path: '/portfolio', group: 'Secciones' },
-  { id: 'nav-alerts', label: 'Alertas', path: '/alerts', group: 'Secciones' },
-  { id: 'nav-news', label: 'Noticias', path: '/news', group: 'Secciones' },
-  { id: 'nav-learn', label: 'Academia', path: '/learn', group: 'Secciones' },
-  { id: 'nav-settings', label: 'Ajustes de cuenta', path: '/settings', group: 'Secciones' },
-  { id: 'nav-2fa', label: 'Seguridad 2FA', path: '/security/2fa', group: 'Secciones' },
+  { id: 'nav-dashboard', label: 'Dashboard', path: '/dashboard', group: 'Secciones',
+    keywords: ['inicio', 'resumen', 'panel'] },
+  { id: 'nav-market', label: 'Mercado', path: '/market', group: 'Secciones',
+    keywords: ['correlaciones', 'mapa de calor', 'heatmap', 'régimen', 'regimen',
+               'diversificación', 'diversificacion', 'apuestas efectivas',
+               'lead-lag', 'adelanto', 'cotizaciones', 'precios'] },
+  { id: 'nav-analysis', label: 'Análisis Técnico', path: '/analysis', group: 'Secciones',
+    keywords: ['indicadores', 'rsi', 'macd', 'velas', 'gráfico', 'grafico',
+               'confluencia'] },
+  { id: 'nav-blockchain', label: 'Blockchain', path: '/blockchain', group: 'Secciones',
+    keywords: ['on-chain', 'onchain', 'ballenas', 'direcciones', 'forense'] },
+  { id: 'nav-strategies', label: 'Generador de estrategias', path: '/strategies', group: 'Secciones',
+    keywords: ['backtest', 'genético', 'genetico', 'sharpe', 'robustez',
+               'incubación', 'incubacion'] },
+  { id: 'nav-portfolio', label: 'Portfolio', path: '/portfolio', group: 'Secciones',
+    keywords: ['cartera', 'posiciones', 'riesgo', 'hrp', 'tca'] },
+  { id: 'nav-trading', label: 'Trading', path: '/trading', group: 'Secciones',
+    keywords: ['órdenes', 'ordenes', 'paper', 'operar', 'comprar', 'vender',
+               'ejecución', 'ejecucion', 'auditoría', 'auditoria'] },
+  { id: 'nav-alerts', label: 'Alertas', path: '/alerts', group: 'Secciones',
+    keywords: ['avisos', 'notificaciones', 'watchlist'] },
+  { id: 'nav-news', label: 'Noticias', path: '/news', group: 'Secciones',
+    keywords: ['prensa', 'sentimiento'] },
+  { id: 'nav-learn', label: 'Academia', path: '/learn', group: 'Secciones',
+    keywords: ['aprender', 'cursos', 'glosario'] },
+  { id: 'nav-methodology', label: 'Metodología', path: '/metodologia', group: 'Secciones',
+    keywords: ['qué significa', 'que significa', 'límites', 'limites',
+               'supuestos', 'sharpe deflactado', 'rigor', 'cómo se calcula',
+               'como se calcula'] },
+  { id: 'nav-settings', label: 'Ajustes de cuenta', path: '/settings', group: 'Secciones',
+    keywords: ['configuración', 'configuracion', 'perfil', 'idioma', 'moneda'] },
+  { id: 'nav-2fa', label: 'Seguridad 2FA', path: '/security/2fa', group: 'Secciones',
+    keywords: ['contraseña', 'contrasena', 'doble factor', 'autenticación',
+               'autenticacion'] },
 ]
+
+/**
+ * Normaliza para buscar sin acentos.
+ *
+ * «metodologia» tiene que encontrar «Metodología». Sin esto, media funcionalidad
+ * de la aplicación es inalcanzable para quien escribe rápido o con un teclado que
+ * no pone tildes, y la paleta pasa de atajo a obstáculo.
+ */
+export function normalizar(texto: string): string {
+  return texto
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+}
+
+/** ¿Coincide este destino con la consulta, por nombre, subtítulo o alias? */
+export function coincide(item: Item, consulta: string): boolean {
+  const q = normalizar(consulta)
+  if (!q) return true
+  if (normalizar(item.label).includes(q)) return true
+  if (item.sublabel && normalizar(item.sublabel).includes(q)) return true
+  return (item.keywords ?? []).some((k) => normalizar(k).includes(q))
+}
 
 export default function CommandPalette() {
   const navigate = useNavigate()
@@ -82,12 +138,10 @@ export default function CommandPalette() {
   useEffect(() => { if (open) inputRef.current?.focus() }, [open])
 
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = query.trim()
     const all = [...NAV_ITEMS, ...assets]
     if (!q) return all.slice(0, 20)
-    return all
-      .filter((it) => it.label.toLowerCase().includes(q) || (it.sublabel?.toLowerCase().includes(q)))
-      .slice(0, 30)
+    return all.filter((it) => coincide(it, q)).slice(0, 30)
   }, [query, assets])
 
   useEffect(() => { setActive(0) }, [query])

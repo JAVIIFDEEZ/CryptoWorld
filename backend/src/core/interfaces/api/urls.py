@@ -102,6 +102,8 @@ urlpatterns = [
     path("market/regime/", views.MarketRegimeView.as_view(), name="market-regime"),
     path("market/correlation-map/", views.CorrelationMapView.as_view(),
          name="market-correlation-map"),
+    path("market/execution-window/", views.ExecutionWindowView.as_view(),
+         name="market-execution-window"),
     path("market/lead-lag/", views.LeadLagView.as_view(), name="market-lead-lag"),
     path("oms/tca/", views.ExecutionTcaView.as_view(), name="oms-tca"),
     path("data/health/", views.OhlcvHealthView.as_view(), name="data-health"),
