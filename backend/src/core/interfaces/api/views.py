@@ -2703,18 +2703,32 @@ class PaperLivePromotionView(APIView):
     kill-switch anterior.
 
     Activar exige haber superado la INCUBACIÓN: un periodo mínimo funcionando en
-    simulado con operaciones suficientes. Es el único filtro que el sobreajuste
-    no puede burlar —no hay nada que ajustar sobre datos que aún no han
-    ocurrido— y se responde con 409 y el detalle de lo que falta.
+    simulado, con operaciones suficientes y —lo que de verdad manda— con evidencia
+    estadística de que hay ventaja. Es el único filtro que el sobreajuste no puede
+    burlar —no hay nada que ajustar sobre datos que aún no han ocurrido— y se
+    responde con 409 y el detalle de lo que falta, incluido el plazo estimado.
+
+    El criterio estadístico es un Sharpe probabilístico sobre la curva de
+    patrimonio **remuestreada a diaria**, no sobre las instantáneas de cada quince
+    minutos: la serie nativa está autocorrelacionada cuando hay posición abierta y
+    el PSR saldría sobreconfiado. Medido con Sharpe real cero, la serie cruda deja
+    pasar hasta un tercio de las carteras y la diaria el 5 %.
 
     Desactivar nunca se bloquea: cortar la exposición siempre está permitido.
     """
     permission_classes = [IsAuthenticated]
 
+    # Instantáneas que se leen para reconstruir la curva. 20.000 a una cada quince
+    # minutos son unos 200 días: de sobra para el MinTRL de un Sharpe razonable y
+    # acotado para no barrer la tabla entera.
+    _MAX_SNAPSHOTS = 20_000
+
     def post(self, request, account_id: int):
         from django.utils import timezone
         from core.domain.services import incubation
-        from core.infrastructure.persistence.models import ExchangeConnection, PaperTradingAccount
+        from core.infrastructure.persistence.models import (
+            ExchangeConnection, PaperEquitySnapshot, PaperTradingAccount,
+        )
 
         acc = PaperTradingAccount.objects.filter(id=account_id, owner=request.user).first()
         if acc is None:
@@ -2727,11 +2741,25 @@ class PaperLivePromotionView(APIView):
             return Response({"id": acc.id, "live_enabled": False}, status=status.HTTP_200_OK)
 
         # ── Puerta de incubación ──────────────────────────────────────
+        # La curva se lee ascendente para que el remuestreo a diario tome el último
+        # patrimonio de cada día; si se leyera descendente y se recortara, el tramo
+        # que falta sería el más antiguo y la serie quedaría sesgada al presente.
+        curva = list(
+            PaperEquitySnapshot.objects
+            .filter(account=acc).order_by("created_at")
+            .values_list("created_at", "equity")[:self._MAX_SNAPSHOTS]
+        )
+        diarios = incubation.daily_returns_from_curve(
+            [int(t.timestamp() * 1000) for t, _ in curva],
+            [float(e) for _, e in curva],
+        )
+
         incubation_status = incubation.evaluate(incubation.IncubationFacts(
             days_running=(timezone.now() - acc.started_at).total_seconds() / 86400.0,
             trades_count=acc.trades_count,
             realized_pnl=float(acc.realized_pnl or 0.0),
             decayed=bool(acc.decayed),
+            daily_returns=diarios,
         ))
         if not incubation_status["incubated"]:
             return Response(

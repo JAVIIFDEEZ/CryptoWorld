@@ -1771,3 +1771,115 @@ Fuentes consultadas para situar el estado del arte:
 [Talos — Does timing matter when trading BTC?](https://www.talos.com/insights/does-timing-matter-when-trading-btc)
 · [Optimal trade execution in cryptocurrency markets](https://link.springer.com/article/10.1007/s42521-023-00103-y)
 · [Crypto trading hours y sesiones](https://coinbureau.com/education/crypto-trading-hours)
+
+---
+
+# La puerta del dinero real — cinco operaciones no son evidencia
+
+`backend/src/core/domain/services/incubation.py`
+· `POST /api/strategies/paper/<id>/live/`
+· `frontend/src/components/generator/PaperTradingPanel.tsx`
+
+## El hallazgo
+
+La única puerta de esta plataforma al otro lado de la cual hay dinero exigía:
+
+| criterio | valor |
+|---|---|
+| días en simulado | 14 |
+| operaciones | **5** |
+| rentabilidad | **no requerida** |
+
+Y el instrumento que responde a la pregunta correcta ya estaba escrito en este
+mismo motor, **sin usarse aquí**: el Sharpe probabilístico (`significance.py:130`)
+da la probabilidad de que el Sharpe verdadero supere un umbral corrigiendo por
+asimetría y curtosis, y el MinTRL traduce el «todavía no» en «te faltan N días».
+
+El razonamiento que sostenía la puerta —«el sobreajuste no puede falsear datos que
+aún no han ocurrido»— es correcto en especie y falso en grado: con cinco
+operaciones, una moneda al aire deja un historial positivo la mitad de las veces.
+Medido: **la puerta anterior dejaba pasar el 100 %** de las carteras con Sharpe
+real cero que simplemente hubieran existido dos semanas.
+
+Era la única inconsistencia grave del proyecto: rigor en todas partes menos donde
+se mueve el dinero.
+
+## Lo que cuesta, medido
+
+La puerta pasa a exigir **PSR ≥ 0,95** y a publicar el MinTRL como plazo.
+
+| Sharpe real | 30 d | 90 d | 180 d | 365 d |
+|---|---|---|---|---|
+| **0,0** (sin ventaja) | 8 % | 8 % | 6 % | **4 %** |
+| 1,0 | 16 % | 16 % | 18 % | 26 % |
+| 2,0 | 22 % | 28 % | 42 % | 67 % |
+| 3,0 | 28 % | 46 % | 73 % | 92 % |
+
+El 4–8 % con Sharpe cero es el nivel nominal del contraste: **veinte veces mejor
+que el 100 % anterior**. Y es atravesable: con un Sharpe real de 3,0 y un año de
+curva pasa el 92 %. La asimetría justifica la exigencia — un falso positivo es
+dinero real detrás de una estrategia sin ventaja; un falso negativo es esperar.
+
+## Por qué la curva se remuestrea a diaria
+
+Las instantáneas de patrimonio se graban en cada evaluación de la estrategia, o sea
+**cada quince minutos**. Alimentar el PSR con esa serie cruda lo vuelve
+sobreconfiado: el patrimonio de una posición abierta sobre un precio con tendencia
+está autocorrelacionado y el PSR supone independencia.
+
+Medido sobre curvas con Sharpe real **cero**, tasa de paso con PSR ≥ 0,95:
+
+| autocorrelación φ | serie cruda (15 min) | remuestreada a diaria |
+|---|---|---|
+| 0,0 | 3,5 % | 5,0 % |
+| 0,3 | **11,0 %** | 5,0 % |
+| 0,6 | **20,5 %** | 5,0 % |
+| 0,9 | **33,0 %** | 6,5 % |
+
+Con la curva cruda, un tercio de las carteras sin ventaja pasarían. Así que se
+remuestrea, y no es una preferencia de estilo.
+
+Dos detalles del remuestreo que también importan: se toma el **último** patrimonio
+de cada día UTC y no la media —el patrimonio es un nivel, no un flujo, y
+promediarlo suavizaría la varianza e inflaría el Sharpe—, y los días sin
+instantánea **no se rellenan**, porque rellenar con el valor anterior inventaría
+retornos de cero que bajarían la varianza.
+
+## Falla cerrado
+
+Una cartera con 400 días, 500 operaciones y un P&L enorme pero **sin curva
+archivada** no pasa. La ausencia de evidencia no es evidencia, y es la misma regla
+que gobierna los controles de riesgo del OMS: un control que falla abierto es peor
+que no tenerlo, porque da apariencia de protección exactamente cuando no protege.
+
+## Un defecto que la calibración encontró
+
+El MinTRL **diverge** cuando el Sharpe observado roza el umbral, y la primera
+versión producía mensajes como «te faltan **12.643 días**» (34 años). Es
+aritméticamente cierto y comunicativamente desastroso: un número absurdo hace que
+se deje de creer también los que no lo son.
+
+Por encima de un horizonte de 365 días el plazo deja de publicarse como cifra y se
+dice lo que de verdad implica: *a este ritmo no converge, y lo que lo cambiaría es
+un Sharpe mayor, no esperar más.* Verificado: 0 de 400 carteras publican un plazo
+mayor que el horizonte.
+
+## El «no» tenía que explicarse
+
+El backend respondía con un 409 lleno de detalle y el frontend lo descartaba en un
+`catch { /* ignora */ }`: el usuario pulsaba «Activar», no ocurría nada y nadie le
+decía por qué. Un «no» sin explicación es exactamente lo que empuja a buscar la
+forma de rodear la puerta — y con la puerta endurecida eso pasaría mucho más a
+menudo.
+
+Ahora el panel muestra qué falta, la probabilidad de ventaja frente a la exigida y
+el plazo cuando existe. `readIncubationBlock` **nunca devuelve `null`**: cualquier
+fallo, incluso uno que no sea de incubación, produce un mensaje legible.
+
+## Verificación
+
+```bash
+pytest tests/unit/domain/test_incubation_statistical.py   # 19 tests · el contraste
+pytest tests/integration/test_incubation.py              # 11 tests · la puerta real
+npx vitest run src/components/generator/PaperTradingPanel # 12 tests · el «no» legible
+```

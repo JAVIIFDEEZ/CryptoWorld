@@ -17,9 +17,26 @@ from django.utils import timezone
 from core.domain.services import incubation
 
 
-def _facts(days=30.0, trades=10, pnl=100.0, decayed=False):
+def _curva_con_ventaja(dias=180, sharpe=4.0, seed=1):
+    """Curva diaria con ventaja holgada, para aislar los demás criterios.
+
+    Existe porque la puerta pasó a exigir evidencia estadística: sin una curva
+    creíble, TODOS los tests de los otros criterios fallarían por el motivo
+    equivocado y dejarían de probar lo que dicen probar. El Sharpe es
+    deliberadamente alto —4,0— para que el criterio estadístico no sea el que
+    decide en los tests que miran los días, las operaciones o la decadencia.
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    vol = 0.60
+    return tuple(rng.normal(sharpe * vol / 365.0, vol / (365.0 ** 0.5), dias))
+
+
+def _facts(days=30.0, trades=10, pnl=100.0, decayed=False, daily=None):
     return incubation.IncubationFacts(
         days_running=days, trades_count=trades, realized_pnl=pnl, decayed=decayed,
+        daily_returns=_curva_con_ventaja() if daily is None else daily,
     )
 
 
@@ -119,13 +136,56 @@ class TestPromotionEndpoint:
         account.refresh_from_db()
         assert account.live_enabled is False        # y no se activó a medias
 
+    @staticmethod
+    def _sembrar_curva(account, dias=200, sharpe=4.0, seed=3, por_dia=4):
+        """Instantáneas de patrimonio con ventaja real, a varias por día.
+
+        `por_dia=4` reproduce la cadencia nativa —la tarea graba una instantánea
+        por evaluación— para que el test recorra de verdad el remuestreo a diario
+        y no una serie ya diaria que nunca ocurre en producción.
+        """
+        import numpy as np
+
+        from core.infrastructure.persistence.models import PaperEquitySnapshot
+
+        rng = np.random.default_rng(seed)
+        vol = 0.60
+        pasos = dias * por_dia
+        r = rng.normal(sharpe * vol / 365.0 / por_dia,
+                       vol / (365.0 ** 0.5) / (por_dia ** 0.5), pasos)
+        equity = 10_000.0 * np.exp(np.cumsum(r))
+        inicio = timezone.now() - timedelta(days=dias)
+
+        filas = [
+            PaperEquitySnapshot(
+                account=account, equity=round(float(equity[i]), 2),
+                price=100.0, in_position=bool(i % 2),
+            )
+            for i in range(pasos)
+        ]
+        PaperEquitySnapshot.objects.bulk_create(filas)
+        # `created_at` es auto_now_add, así que se reescribe después para repartir
+        # las instantáneas en el tiempo: sin esto todas caerían en el mismo día y
+        # el remuestreo devolvería una sola observación.
+        for i, fila in enumerate(PaperEquitySnapshot.objects
+                                 .filter(account=account).order_by("id")):
+            PaperEquitySnapshot.objects.filter(id=fila.id).update(
+                created_at=inicio + timedelta(hours=24 * i / por_dia))
+
     @pytest.mark.integration
     def test_incubated_account_can_go_live(self, authenticated_client, account, connection):
+        """El camino feliz, que ahora exige además evidencia estadística.
+
+        Antes bastaba con poner 30 días y 12 operaciones en la cartera. Ahora hace
+        falta una curva de patrimonio que sostenga la afirmación de ventaja, que es
+        el punto de todo el cambio.
+        """
         from core.infrastructure.persistence.models import PaperTradingAccount
 
         PaperTradingAccount.objects.filter(id=account.id).update(
-            started_at=timezone.now() - timedelta(days=30), trades_count=12,
+            started_at=timezone.now() - timedelta(days=200), trades_count=12,
         )
+        self._sembrar_curva(account)
 
         resp = authenticated_client.post(
             f"/api/strategies/paper/{account.id}/live/",
@@ -135,6 +195,57 @@ class TestPromotionEndpoint:
         assert resp.status_code == 200
         assert resp.data["live_enabled"] is True
         assert resp.data["incubation"]["incubated"] is True
+        assert resp.data["incubation"]["statistical"]["psr"] >= 0.95
+
+    @pytest.mark.integration
+    def test_sin_curva_de_patrimonio_no_se_abre_la_puerta(
+            self, authenticated_client, account, connection):
+        """Fallo CERRADO, y es el test más importante del fichero.
+
+        Una cartera con 400 días, 500 operaciones y un P&L enorme pero SIN curva
+        archivada no puede pasar: la ausencia de evidencia no es evidencia. Es la
+        misma regla que gobierna los controles de riesgo del OMS, donde un control
+        que falla abierto es peor que no tenerlo.
+        """
+        from core.infrastructure.persistence.models import PaperTradingAccount
+
+        PaperTradingAccount.objects.filter(id=account.id).update(
+            started_at=timezone.now() - timedelta(days=400), trades_count=500,
+            realized_pnl=9999.0,
+        )
+
+        resp = authenticated_client.post(
+            f"/api/strategies/paper/{account.id}/live/",
+            {"enable": True, "connection_id": connection.id}, format="json",
+        )
+
+        assert resp.status_code == 409
+        assert "statistical_edge" in resp.data["incubation"]["missing"]
+        account.refresh_from_db()
+        assert account.live_enabled is False
+
+    @pytest.mark.integration
+    def test_una_curva_sin_ventaja_no_abre_la_puerta(
+            self, authenticated_client, account, connection):
+        """Y el complementario: curva larga, completa y sin ventaja ninguna."""
+        from core.infrastructure.persistence.models import PaperTradingAccount
+
+        PaperTradingAccount.objects.filter(id=account.id).update(
+            started_at=timezone.now() - timedelta(days=200), trades_count=50,
+        )
+        self._sembrar_curva(account, sharpe=0.0, seed=11)
+
+        resp = authenticated_client.post(
+            f"/api/strategies/paper/{account.id}/live/",
+            {"enable": True, "connection_id": connection.id}, format="json",
+        )
+
+        assert resp.status_code == 409
+        assert "statistical_edge" in resp.data["incubation"]["missing"]
+        # Y el 409 trae el plazo o la explicación de por qué no hay plazo.
+        est = resp.data["incubation"]["statistical"]
+        assert est["psr"] is not None and est["psr"] < 0.95
+        assert est["note"]
 
     @pytest.mark.integration
     def test_disabling_is_never_blocked(self, authenticated_client, account):

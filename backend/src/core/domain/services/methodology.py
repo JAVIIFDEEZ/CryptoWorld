@@ -254,15 +254,30 @@ NOTES: tuple[dict, ...] = (
         "key": "incubation",
         "title": "Puerta de incubación",
         "what": (
-            "Periodo mínimo de funcionamiento en simulado, con un número mínimo "
-            "de operaciones y sin degradación, antes de permitir capital real."),
+            "Periodo mínimo de funcionamiento en simulado, con un número mínimo de "
+            "operaciones, sin degradación y —el criterio que de verdad manda— con "
+            "EVIDENCIA ESTADÍSTICA de ventaja: un Sharpe probabilístico (PSR) de al "
+            "menos el 95 % sobre la curva de patrimonio remuestreada a diaria. El "
+            "MinTRL acompaña al veredicto como plazo: cuántos días de curva harían "
+            "falta al ritmo actual."),
         "assumptions": (
-            "Que el periodo incubado es posterior a la fijación de la estrategia."),
+            "Que el periodo incubado es posterior a la fijación de la estrategia. Y "
+            "que la curva se evalúa a cadencia DIARIA: las instantáneas nativas son "
+            "cada quince minutos y están autocorreladas cuando hay posición abierta, "
+            "mientras que el PSR supone independencia. Medido con Sharpe real cero, "
+            "la serie cruda dejaba pasar hasta el 33 % de las carteras y la diaria "
+            "el 5 %."),
         "limits": (
             "Es el único filtro que el sobreajuste no puede burlar, porque no hay "
             "nada que ajustar sobre datos que aún no han ocurrido. A cambio es "
-            "lento, y no dice nada sobre regímenes que no hayan ocurrido durante "
-            "la incubación."),
+            "lento, y no dice nada sobre regímenes que no hayan ocurrido durante la "
+            "incubación. Durante un tiempo esta puerta exigió solo catorce días y "
+            "CINCO operaciones sin pedir rentabilidad, y dejaba pasar el 100 % de "
+            "las carteras con Sharpe real cero; ahora pasa el 5 %, que es el nivel "
+            "nominal. El coste medido de esa exigencia: con un Sharpe real de 2,0 "
+            "pasa el 28 % de las carteras a los 90 días y el 67 % al año. Falla "
+            "CERRADO: sin curva archivada no se abre, porque la ausencia de "
+            "evidencia no es evidencia."),
     },
     {
         "key": "risk_gate",

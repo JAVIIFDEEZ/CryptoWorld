@@ -5,6 +5,13 @@
  * generada e invierte capital ficticio según sus señales, registrando el P&L
  * REALIZADO. Es la verificación hacia delante (forward test) del generador: lo
  * que el backtest promete sobre el pasado, esto lo comprueba en vivo y sin riesgo.
+ *
+ * Y es la pantalla desde la que se cruza al dinero real, así que tiene una
+ * obligación extra: **enseñar por qué la puerta no se abre**. El backend responde
+ * con un 409 que detalla cada requisito que falta y, cuando lo hay, el plazo
+ * estimado. Ese detalle se descartaba en un `catch` vacío: el usuario pulsaba
+ * «Activar», no ocurría nada y nadie le decía por qué. Un «no» sin explicación es
+ * exactamente lo que empuja a buscar la forma de rodear la puerta.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -19,6 +26,101 @@ import {
   type PaperAccountDetail,
 } from '@/services/strategyGeneratorService'
 import { tradingService, type ExchangeConnection } from '@/services/tradingService'
+
+/** Lo que el 409 de la puerta de incubación trae dentro. */
+export interface IncubationBlock {
+  note: string
+  missing: string[]
+  days_remaining?: number
+  trades_remaining?: number
+  psr?: number | null
+  min_psr?: number
+  days_remaining_estimate?: number | null
+  runway_beyond_horizon?: boolean
+  observations?: number
+  observations_required?: number
+}
+
+/**
+ * Extrae el bloque de incubación de un error de axios.
+ *
+ * Devuelve siempre algo legible: si la respuesta no trae el detalle esperado —otro
+ * 4xx, un 500, un corte de red— se produce un mensaje genérico en lugar de `null`.
+ * Devolver `null` dejaría la interfaz igual que con el `catch` vacío que esto
+ * sustituye, que es el defecto que se está corrigiendo.
+ */
+export function readIncubationBlock(err: unknown): IncubationBlock {
+  const data = (err as { response?: { data?: Record<string, unknown> } })?.response?.data
+  const inc = data?.incubation as Record<string, unknown> | undefined
+
+  if (!inc) {
+    const generico = typeof data?.error === 'string'
+      ? data.error
+      : 'No se pudo activar la ejecución real. Inténtalo de nuevo.'
+    return { note: generico, missing: [] }
+  }
+
+  const est = (inc.statistical ?? {}) as Record<string, unknown>
+  return {
+    note: String(inc.note ?? 'La cartera todavía no puede operar en real.'),
+    missing: Array.isArray(inc.missing) ? (inc.missing as string[]) : [],
+    days_remaining: typeof inc.days_remaining === 'number' ? inc.days_remaining : undefined,
+    trades_remaining: typeof inc.trades_remaining === 'number' ? inc.trades_remaining : undefined,
+    psr: typeof est.psr === 'number' ? est.psr : null,
+    min_psr: typeof est.min_psr === 'number' ? est.min_psr : undefined,
+    days_remaining_estimate:
+      typeof est.days_remaining_estimate === 'number' ? est.days_remaining_estimate : null,
+    runway_beyond_horizon: Boolean(est.runway_beyond_horizon),
+    observations: typeof est.observations === 'number' ? est.observations : undefined,
+    observations_required:
+      typeof est.observations_required === 'number' ? est.observations_required : undefined,
+  }
+}
+
+/**
+ * Etiqueta legible de cada requisito que falta.
+ *
+ * `statistical_edge` es el que de verdad importa y el que nadie entendería por su
+ * nombre técnico, así que se traduce a lo que significa: la curva todavía no
+ * demuestra que haya ventaja.
+ */
+export function missingLabel(key: string): string {
+  switch (key) {
+    case 'min_days':
+      return 'tiempo en simulado'
+    case 'min_trades':
+      return 'operaciones'
+    case 'not_decayed':
+      return 'la estrategia se ha degradado'
+    case 'profitable':
+      return 'P&L positivo'
+    case 'statistical_edge':
+      return 'evidencia de que hay ventaja'
+    default:
+      return key
+  }
+}
+
+/**
+ * El plazo, en una frase corta.
+ *
+ * Nunca devuelve un número absurdo: cuando el historial necesario pasa del
+ * horizonte, el backend no publica cifra y aquí se dice lo que de verdad implica —
+ * que lo que falta es un Sharpe mayor, no esperar más.
+ */
+export function runwayText(b: IncubationBlock): string | null {
+  if (b.observations != null && b.observations_required != null
+      && b.observations < b.observations_required) {
+    return `Faltan ${b.observations_required - b.observations} días de curva para poder evaluarlo.`
+  }
+  if (b.days_remaining_estimate != null && b.days_remaining_estimate > 0) {
+    return `Al ritmo actual faltarían unos ${b.days_remaining_estimate} días más.`
+  }
+  if (b.runway_beyond_horizon) {
+    return 'A este ritmo no converge: lo que lo cambiaría es un Sharpe mayor, no esperar más.'
+  }
+  return null
+}
 
 function pnlTone(v: number): string {
   return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-slate-300'
@@ -75,17 +177,25 @@ function PaperCard({ account, connections, onChange }: Readonly<{
   const [liveAudit, setLiveAudit] = useState<LiveOrderAudit | null>(null)
   const [liveConnId, setLiveConnId] = useState<number | ''>('')
   const [liveCap, setLiveCap] = useState('100')
+  const [blocked, setBlocked] = useState<IncubationBlock | null>(null)
 
   async function enableLive() {
     if (!liveConnId) return
     setBusy(true)
+    setBlocked(null)
     try {
       await strategyGeneratorService.setPaperLive(account.id, {
         enable: true, connection_id: Number(liveConnId), cap_usd: Number.parseFloat(liveCap) || 100,
       })
       setShowLive(false)
       onChange()
-    } catch { /* ignora */ } finally { setBusy(false) }
+    } catch (err) {
+      // El 409 de la puerta de incubación trae EXACTAMENTE lo que falta y el plazo
+      // estimado. Descartarlo —como se hacía— dejaba al usuario pulsando un botón
+      // que no hacía nada ni decía por qué, y un «no» sin explicación es lo que
+      // empuja a buscar la forma de saltarse la puerta.
+      setBlocked(readIncubationBlock(err))
+    } finally { setBusy(false) }
   }
 
   async function disableLive() {
@@ -214,9 +324,33 @@ function PaperCard({ account, connections, onChange }: Readonly<{
               </button>
               <button onClick={() => setShowLive(false)} className="text-[11px] text-slate-500 hover:text-slate-300">✕</button>
             </div>
+            {blocked && (
+              <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2">
+                <p className="text-[10px] font-medium text-amber-300">
+                  La puerta de incubación no se ha abierto
+                </p>
+                {blocked.missing.length > 0 && (
+                  <p className="mt-0.5 text-[10px] text-amber-200/90">
+                    Falta: {blocked.missing.map(missingLabel).join(' · ')}
+                  </p>
+                )}
+                {blocked.psr != null && blocked.min_psr != null && (
+                  <p className="mt-0.5 font-mono text-[10px] text-amber-200/80">
+                    probabilidad de ventaja {(blocked.psr * 100).toFixed(0)} % · hace falta{' '}
+                    {(blocked.min_psr * 100).toFixed(0)} %
+                  </p>
+                )}
+                {runwayText(blocked) && (
+                  <p className="mt-0.5 text-[10px] text-amber-200/90">{runwayText(blocked)}</p>
+                )}
+                <p className="mt-1 text-[9px] leading-relaxed text-slate-400">{blocked.note}</p>
+              </div>
+            )}
             <p className="text-[9px] text-slate-500">
               Espeja las señales de esta cartera en tu exchange con tope de nocional por orden.
               Cualquier error del broker desactiva la ejecución (kill-switch).
+              Activar exige evidencia de que la estrategia tiene ventaja, no solo tiempo
+              en simulado.
             </p>
           </div>
         ) : (
