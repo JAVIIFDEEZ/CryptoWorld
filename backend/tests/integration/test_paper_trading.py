@@ -341,19 +341,60 @@ def _live_account(strategy, owner, cap=100.0):
     return acc, conn
 
 
+def _seed_equity_curve(acc, dias=120, sharpe=5.0, seed=17, por_dia=4):
+    """Curva de patrimonio con ventaja holgada, a cadencia nativa.
+
+    `por_dia=4` reproduce que la tarea graba una instantánea por evaluación, de
+    modo que el camino recorre el remuestreo a diario de verdad. El Sharpe es
+    deliberadamente alto para que el criterio estadístico no sea el que decide en
+    los tests que miran otra cosa.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from core.infrastructure.persistence.models import PaperEquitySnapshot
+
+    rng = np.random.default_rng(seed)
+    vol = 0.60
+    pasos = dias * por_dia
+    r = rng.normal(sharpe * vol / 365.0 / por_dia,
+                   vol / (365.0 ** 0.5) / (por_dia ** 0.5), pasos)
+    equity = 10_000.0 * np.exp(np.cumsum(r))
+    inicio = timezone.now() - timedelta(days=dias)
+
+    PaperEquitySnapshot.objects.bulk_create([
+        PaperEquitySnapshot(account=acc, equity=round(float(equity[i]), 2),
+                            price=100.0, in_position=bool(i % 2))
+        for i in range(pasos)
+    ])
+    # `created_at` es auto_now_add: se reescribe para repartir las instantáneas en
+    # el tiempo, porque si todas cayeran en el mismo día el remuestreo devolvería
+    # una sola observación y no habría serie que contrastar.
+    for i, fila in enumerate(PaperEquitySnapshot.objects
+                             .filter(account=acc).order_by("id")):
+        PaperEquitySnapshot.objects.filter(id=fila.id).update(
+            created_at=inicio + timedelta(hours=24 * i / por_dia))
+
+
 def _incubate(acc):
     """Envejece la cartera para que supere la puerta de incubación.
 
-    Promocionar a real exige un periodo mínimo en simulado con operaciones
-    suficientes (ver domain/services/incubation.py). Los tests de este bloque
-    verifican OTRAS cosas —el tope de nocional, el kill-switch, la propiedad de
-    la conexión—, así que la incubación se da por cumplida en lugar de repetirse
-    en cada uno. Su gate tiene sus propios tests en test_incubation.py.
+    Promocionar a real exige un periodo mínimo en simulado, operaciones
+    suficientes y —desde que la puerta se endureció— EVIDENCIA ESTADÍSTICA de
+    ventaja sobre la curva de patrimonio (ver domain/services/incubation.py). Los
+    tests de este bloque verifican OTRAS cosas —el tope de nocional, el
+    kill-switch, la propiedad de la conexión—, así que la incubación se da por
+    cumplida en lugar de repetirse en cada uno. Su gate tiene sus propios tests en
+    test_incubation.py.
+
+    Por eso aquí se siembra además una curva con ventaja holgada: sin ella estos
+    tests fallarían por el criterio estadístico, es decir por el motivo equivocado,
+    y dejarían de probar lo que dicen probar.
     """
     from datetime import timedelta
     from django.utils import timezone
     from core.infrastructure.persistence.models import PaperTradingAccount
 
+    _seed_equity_curve(acc)
     PaperTradingAccount.objects.filter(id=acc.id).update(
         started_at=timezone.now() - timedelta(days=30), trades_count=10,
     )
